@@ -13,6 +13,7 @@ The reference Adapter (ADR-0002): the thin mapping layer binding the Engine's Pr
 | [`skills/heartbeat/`](./skills/heartbeat/) | [`routines.md`](../../protocols/routines.md) | Reports overdue Routines against the manifest and a Brain's `config/routine-state.md`. Nudge-only. |
 | [`skills/capture/`](./skills/capture/) | [`capture.md`](../../protocols/capture.md) | Stamps a manual/text capture into `inbox/raw/<source>/`. |
 | [`skills/triage-plan/`](./skills/triage-plan/) | [`triage.md`](../../protocols/triage.md) | Pass A (script) + Pass B (in-session) classification into a Triage Plan under `inbox/triage/`. |
+| [`skills/execute-triage/`](./skills/execute-triage/) | [`execute.md`](../../protocols/execute.md) | Files or discards a Triage Plan's ticked rows, archives the Raw Capture, logs the action. |
 
 ## Installing into a Brain
 

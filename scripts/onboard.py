@@ -105,6 +105,24 @@ example commented out) at onboarding time.
 ```
 """
 
+ACTION_TYPES = """---
+type: config
+config: action-types
+---
+
+# Action types
+
+Registered action types with their risk tier and current autonomy level
+(ADR-0006). Phase 2 ships exactly two generic, internal & reversible
+types — Execute doesn't do Area/Capability agent dispatch until Phase 3.
+Table only: nothing reads this for graduation logic yet (Phase 5).
+
+| Action type | Risk tier | Autonomy level | Notes |
+|---|---|---|---|
+| file-capture | internal & reversible | confirm-first | Appends a Raw Capture reference into an existing area/project file. |
+| discard-capture | internal & reversible | confirm-first | Archives a Raw Capture with no destination filed. |
+"""
+
 AREA_NOTE = """---
 type: area
 agent: {area_agent}
@@ -165,6 +183,7 @@ def onboard(brain_path: Path, area_name: str, area_agent: str, area_slug: str,
     ))
     track("config/routine-state.md", ROUTINE_STATE)
     track("config/routing-rules.md", ROUTING_RULES)
+    track("config/action-types.md", ACTION_TYPES)
     track(f"areas/{area_slug}/{area_name}.md", AREA_NOTE.format(
         area_name=area_name, area_agent=area_agent,
     ))

@@ -25,7 +25,7 @@ python3 <path-to-goals-os-engine>/scripts/triage.py --brain "<path-to-brain>" --
 
 This writes/updates `inbox/triage/{date}-{source}.md`. It reports how many captures were routed (Pass A) vs left `unmatched` (Pass B pending).
 
-3. If any rows are `Pass B | unmatched`, open the plan file and classify each one yourself, in-session: read the capture (follow its `[[inbox/raw/...]]` link if the preview isn't enough), decide a `destination` (an existing file under `areas/` or `projects/` — never invent a new area/project) and a `confidence`, and edit that row's `destination` and `confidence` cells directly. **Never tick the `approve` box yourself** — that's the user's call, not this skill's.
+3. If any rows are `Pass B | unmatched`, open the plan file and classify each one yourself, in-session: read the capture (follow its `[[inbox/raw/...]]` link if the preview isn't enough), decide a `destination` (an existing file under `areas/` or `projects/` — never invent a new area/project — or the literal word `discard` if it isn't worth keeping) and a `confidence`, and edit that row's `destination` and `confidence` cells directly. **Never tick the `approve` box yourself** — that's the user's call, not this skill's.
 4. Report back: how many rows are Pass A vs Pass B, and ask the user to review and tick the ones they approve before running `execute-triage`.
 
 ## Contract this Adapter fulfils (ADR-0002)

@@ -45,6 +45,8 @@ status: pending
 
 `status` is `pending` until every row is executed, then flips to `executed` and the file moves to `archive/triage/` (see `execute.md`). Every row needs an explicit `[x]` tick before Execute will act on it — regardless of confidence; auto-execution on confidence is graduation, Phase 5.
 
+A destination of literal `discard` (rather than a real path) tells Execute to archive the Raw Capture with nothing filed — the right call when Pass B decides an item isn't worth keeping. Pass A never writes `discard`; only in-session Pass B classification does.
+
 ## Idempotency
 
 Re-running Triage for the same Brain/source/date never duplicates a row: `write_triage_plan()` checks the plan's existing `capture` column (by Raw Capture path) and only appends genuinely new captures. Existing rows — including any Pass-B edits or ticks already made — are left untouched.
