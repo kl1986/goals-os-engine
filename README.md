@@ -16,6 +16,14 @@ Markdown-defined, runtime-independent behaviour specs — what the Engine ships;
 |-----|----------|
 | [`action-log-schema.md`](./protocols/action-log-schema.md) | The Action Log entry schema (v0) — the fields every agent action appends to the Brain's `log/`, per ADR-0005/0006. |
 
+## Adapters
+
+Runtime bindings for the Protocols above — see [`adapters/`](./adapters/). Claude Code is the reference Adapter (ADR-0002):
+
+| Adapter | Status |
+|---|---|
+| [`claude-code/`](./adapters/claude-code/) | First live Protocol execution proven — `log-action` skill appends schema-valid Action Log entries to a cloned Brain. |
+
 ## Decisions
 
 See [`docs/adr/`](./docs/adr/) for the architecture decision records this repo was scaffolded against:
