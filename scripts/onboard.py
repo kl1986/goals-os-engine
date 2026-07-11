@@ -84,6 +84,27 @@ this Brain — machine-updated on completion, don't hand-edit the
 | Metrics pulse | never |
 """
 
+ROUTING_RULES = """---
+type: config
+config: routing-rules
+---
+
+# Routing rules
+
+Deterministic Pass A rules for Triage (`protocols/triage.md`) — structured,
+not prose (PRD Principle 7). Each rule is an `if` / `then` pair;
+`scripts/triage.py` parses this file directly — no YAML library involved.
+Additive-only: append new rules below; don't remove or reorder existing
+ones without checking what currently routes through them. Empty (starter
+example commented out) at onboarding time.
+
+```
+# if: source == "voice" and contains("milk")
+# then: route -> areas/home/_inbox.md
+# confidence: High
+```
+"""
+
 AREA_NOTE = """---
 type: area
 agent: {area_agent}
@@ -143,6 +164,7 @@ def onboard(brain_path: Path, area_name: str, area_agent: str, area_slug: str,
         graduation_min_sessions=graduation_min_sessions,
     ))
     track("config/routine-state.md", ROUTINE_STATE)
+    track("config/routing-rules.md", ROUTING_RULES)
     track(f"areas/{area_slug}/{area_name}.md", AREA_NOTE.format(
         area_name=area_name, area_agent=area_agent,
     ))

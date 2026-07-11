@@ -12,6 +12,7 @@ The reference Adapter (ADR-0002): the thin mapping layer binding the Engine's Pr
 | [`skills/onboard/`](./skills/onboard/) | [`onboarding.md`](../../protocols/onboarding.md) | Interviews the user for one Area, then idempotently materialises `config/` and that Area in a cloned Brain. |
 | [`skills/heartbeat/`](./skills/heartbeat/) | [`routines.md`](../../protocols/routines.md) | Reports overdue Routines against the manifest and a Brain's `config/routine-state.md`. Nudge-only. |
 | [`skills/capture/`](./skills/capture/) | [`capture.md`](../../protocols/capture.md) | Stamps a manual/text capture into `inbox/raw/<source>/`. |
+| [`skills/triage-plan/`](./skills/triage-plan/) | [`triage.md`](../../protocols/triage.md) | Pass A (script) + Pass B (in-session) classification into a Triage Plan under `inbox/triage/`. |
 
 ## Installing into a Brain
 
