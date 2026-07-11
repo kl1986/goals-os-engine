@@ -8,6 +8,14 @@ The Engine contains **zero user data**. It ships protocols, schemas, core routin
 
 See [`CONTEXT.md`](./CONTEXT.md) for the full glossary (Engine, Library, Brain, Protocol, Adapter, Action Log, and the rest of the system's vocabulary).
 
+## Protocols
+
+Markdown-defined, runtime-independent behaviour specs — what the Engine ships; Adapters make them executable. See [`protocols/`](./protocols/):
+
+| Protocol | Defines |
+|-----|----------|
+| [`action-log-schema.md`](./protocols/action-log-schema.md) | The Action Log entry schema (v0) — the fields every agent action appends to the Brain's `log/`, per ADR-0005/0006. |
+
 ## Decisions
 
 See [`docs/adr/`](./docs/adr/) for the architecture decision records this repo was scaffolded against:
