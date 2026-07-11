@@ -1,0 +1,7 @@
+# Two-lane self-improvement: local changes to Brain config, Engine changes go upstream
+
+The Upgrade routine researches external releases/approaches, distils findings into the Brain's knowledge base, and Tune proposes grounded changes report-only (carrying over v1's grounding rule: no citation, no proposal). Proposals split by target: **Brain-owned targets** (routing rules, thresholds, local skills, agent config) apply locally on approval; **Engine-owned targets** (protocols, core agents) are drafted as upstream contributions (PRs/issues to the Engine repo). An instance never edits its own Engine files, preserving the upgrade path — and making every user's Tune loop R&D for the shared product. Decided 11/07/2026.
+
+**Rejected:** a Brain-local override/shadow layer for Engine files (no literal fork, but silently pins stale behaviour and accrues divergence debt); release-mediated improvement only (safe but reduces "the system upgrades itself" to "the maintainer upgrades it").
+
+**Amended 11/07/2026 (adversarial review):** upstream contributions are **drafted by agents but always human-reviewed and human-pushed** — no agent ever has push access to a public repo. Before review, a scrubbing pass verifies the proposal contains only the generalisable technique and no private Brain content (goals, names, figures, sources). Upstreaming is an outward-facing, hard-to-reverse action type that is permanently ineligible for graduation.

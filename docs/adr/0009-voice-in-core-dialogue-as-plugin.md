@@ -1,0 +1,3 @@
+# Voice-in is core capture; two-way voice dialogue is a Library plugin behind an interface
+
+One-way voice (dictation, monologues, planning brain-dumps) is core Engine capture — transcribed text landing as Raw Captures. Two-way conversational voice with Area agents is specified only as an interface contract (a voice frontend reads/writes a per-agent conversation surface in the Brain) and delivered as a Library plugin, so the voice vendor (ElevenLabs, OpenAI Realtime, …) can be swapped without touching the Engine. Decided 11/07/2026 — voice is the most vendor-volatile part of the stack and the least expressible as markdown protocol, so it is kept out of the core despite being a headline feature.
