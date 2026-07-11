@@ -15,7 +15,7 @@ The Claude Code binding for `protocols/action-log-schema.md`. This skill is the 
 ## What to do
 
 1. Determine the Brain path — the cloned Brain repo currently in use (ask if ambiguous; never guess).
-2. Gather the required fields from context: `actor` (you, or the agent that acted), `trigger` (what caused this — a Routine, a user instruction, a delegation), `action-type` (the named category), `action` (one-line description), `confidence` (`High`/`Medium`/`Low`), `outcome` (what happened). `input-link` and `feedback` are optional — omit to default to `—`.
+2. Gather the required fields from context: `actor`, `trigger`, `action-type`, `action`, `confidence`, `outcome`. `input-link` and `feedback` are optional — omit to default to `—`. Field semantics are defined in `protocols/action-log-schema.md`'s field table, not here — read that if any field is unclear.
 3. Run the Engine's script, which does the actual append (no LLM writes to the log file directly — deterministic, git-diffable):
 
 ```bash

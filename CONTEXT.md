@@ -14,7 +14,7 @@ _Avoid_: Plugin repo, marketplace (unless referring to the mechanism)
 
 **Brain**:
 A user's private repo holding everything personal: the knowledge base, goals, agent memories, routing rules, audit logs, and config overrides. Forked/cloned from a Brain Template. One repo = one person's whole life.
-_Avoid_: Vault (that's the Obsidian container), knowledge base (that's only one layer of the Brain)
+_Avoid_: Vault (that's the Obsidian container), knowledge base (that's just the content layer — Wiki + curated layer; the Brain also holds memories, routing rules, logs, and config)
 
 **Brain Template**:
 The blank, example-populated starting Brain a new user clones to begin.
@@ -78,7 +78,7 @@ An un-synthesised input (voice transcript, email, web clip, note) stamped with f
 
 **Wiki**:
 The machine-compiled, concept-organised knowledge layer. A pure function of Raw sources plus validated feedback — never directly human-edited.
-_Avoid_: Knowledge base (that's the whole Brain content layer)
+_Avoid_: Knowledge base (that's the content layer as a whole — Wiki + curated layer; say Wiki specifically)
 
 **Curated layer**:
 The human-authored layer of decisions, standards, and goals per area. The machine reads it; only the user writes it. Boundary test: decided it → curated; learned it → Wiki.

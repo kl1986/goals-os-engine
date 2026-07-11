@@ -19,7 +19,7 @@ The Claude Code binding for `protocols/onboarding.md`. This skill runs the inter
 2. Ask the user, one area at a time:
    - Which life area to set up first (e.g. "Work", "Health")?
    - What name they want for that area's Area agent (can just reuse the area name)?
-   - Whether they want to override the autonomy-policy defaults (3-day review window, 5-session graduation minimum) — most users should take the defaults.
+   - Whether they want to override the autonomy-policy defaults — run `python3 scripts/onboard.py --help` to see the current `--review-window-days` / `--graduation-min-sessions` defaults; most users should take them as-is.
 3. Run the script for that area:
 
 ```bash
