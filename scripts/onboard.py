@@ -61,25 +61,27 @@ config: routine-state
 
 # Routine state
 
-Last-run timestamp per Routine (Engine manifest, ADR-0007, PRD §8). The
-heartbeat due-check reads this at session start. `never` means the
-Routine hasn't run yet in this Brain — machine-updated on completion,
-don't hand-edit the "Last run" column.
+Last-run timestamp per Routine. Cadence and risk tier live in the
+Engine's manifest (`protocols/routines.md`, ADR-0007) — this file only
+ever records *when* a Routine last ran, read by `scripts/heartbeat.py`'s
+due-check at session start. `never` means the Routine hasn't run yet in
+this Brain — machine-updated on completion, don't hand-edit the
+"Last run" column.
 
-| Routine | Cadence | Last run |
-|---|---|---|
-| Capture sweep | continuous/hourly | never |
-| Triage | on new raw / daily | never |
-| Execute | on approval | never |
-| Dashboard | morning | never |
-| Planning session | weekly / on demand | never |
-| Weekly Review | weekly | never |
-| Coaching session | monthly | never |
-| Goal review | quarterly / on demand | never |
-| Upgrade review | fortnightly | never |
-| Architecture review | quarterly | never |
-| Version control | daily | never |
-| Metrics pulse | weekly | never |
+| Routine | Last run |
+|---|---|
+| Capture sweep | never |
+| Triage | never |
+| Execute | never |
+| Dashboard | never |
+| Planning session | never |
+| Weekly Review | never |
+| Coaching session | never |
+| Goal review | never |
+| Upgrade review | never |
+| Architecture review | never |
+| Version control | never |
+| Metrics pulse | never |
 """
 
 AREA_NOTE = """---
