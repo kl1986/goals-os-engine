@@ -15,6 +15,7 @@ Markdown-defined, runtime-independent behaviour specs — what the Engine ships;
 | Protocol | Defines |
 |-----|----------|
 | [`action-log-schema.md`](./protocols/action-log-schema.md) | The Action Log entry schema (v0) — the fields every agent action appends to the Brain's `log/`, per ADR-0005/0006. |
+| [`onboarding.md`](./protocols/onboarding.md) | Turns a blank Brain clone into a working, personalised Brain (v0) — interview + idempotent materialisation of `config/` and one Area at a time, per ADR-0004. |
 
 ## Adapters
 

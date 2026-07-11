@@ -9,6 +9,7 @@ The reference Adapter (ADR-0002): the thin mapping layer binding the Engine's Pr
 | Skill | Protocol | What it does |
 |---|---|---|
 | [`skills/log-action/`](./skills/log-action/) | [`action-log-schema.md`](../../protocols/action-log-schema.md) | Appends a schema-valid Action Log entry to a Brain's `log/` folder. |
+| [`skills/onboard/`](./skills/onboard/) | [`onboarding.md`](../../protocols/onboarding.md) | Interviews the user for one Area, then idempotently materialises `config/` and that Area in a cloned Brain. |
 
 ## Installing into a Brain
 

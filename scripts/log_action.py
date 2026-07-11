@@ -30,17 +30,19 @@ def parse_args(argv):
     return p.parse_args(argv)
 
 
-def build_entry(args, time_str):
+def build_entry(actor, trigger, action_type, action, confidence, outcome,
+                 input_link="—", feedback="—", time_str=None):
+    time_str = time_str or dt.datetime.now().strftime("%H:%M")
     return (
-        f"### {time_str} — {args.action_type}\n\n"
-        f"- **actor:** {args.actor}\n"
-        f"- **trigger:** {args.trigger}\n"
-        f"- **input link:** {args.input_link}\n"
-        f"- **action type:** {args.action_type}\n"
-        f"- **action:** {args.action}\n"
-        f"- **confidence:** {args.confidence}\n"
-        f"- **outcome:** {args.outcome}\n"
-        f"- **feedback:** {args.feedback}\n"
+        f"### {time_str} — {action_type}\n\n"
+        f"- **actor:** {actor}\n"
+        f"- **trigger:** {trigger}\n"
+        f"- **input link:** {input_link}\n"
+        f"- **action type:** {action_type}\n"
+        f"- **action:** {action}\n"
+        f"- **confidence:** {confidence}\n"
+        f"- **outcome:** {outcome}\n"
+        f"- **feedback:** {feedback}\n"
     )
 
 
@@ -68,7 +70,11 @@ def main(argv=None):
     date_str = args.date or now.strftime("%Y-%m-%d")
     time_str = args.time or now.strftime("%H:%M")
 
-    entry = build_entry(args, time_str)
+    entry = build_entry(
+        actor=args.actor, trigger=args.trigger, action_type=args.action_type,
+        action=args.action, confidence=args.confidence, outcome=args.outcome,
+        input_link=args.input_link, feedback=args.feedback, time_str=time_str,
+    )
     log_file = append_entry(brain_path, date_str, entry)
     print(f"Appended entry to {log_file}")
 
