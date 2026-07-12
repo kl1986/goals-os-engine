@@ -16,6 +16,7 @@ The reference Adapter (ADR-0002): the thin mapping layer binding the Engine's Pr
 | [`skills/execute-triage/`](./skills/execute-triage/) | [`execute.md`](../../protocols/execute.md) | Files or discards a Triage Plan's ticked rows, archives the Raw Capture, logs the action. |
 | [`skills/dashboard/`](./skills/dashboard/) | [`dashboard.md`](../../protocols/dashboard.md) | Regenerates `Dashboard.md` — overdue Routines, pending Triage Plans, today's Action Log summary. |
 | [`skills/version-control/`](./skills/version-control/) | [`version-control.md`](../../protocols/version-control.md) | Commits, pushes, and tags a Brain checkpoint. No-ops on a clean tree. |
+| [`skills/ea/`](./skills/ea/) | [`charters/ea.md`](../../protocols/charters/ea.md) | The front-door persona — routes a request to whichever of the above it needs, rather than the user naming a skill directly. |
 
 ## Installing into a Brain
 
