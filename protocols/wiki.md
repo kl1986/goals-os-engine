@@ -26,3 +26,13 @@ The Librarian compiles archived raw captures and validated feedback into Wiki ar
 - **Incremental trigger**: Compile is its own Routine, batched per run. Each run scans everything archived or newly-validated since the last Compile run, groups by concept, and resynthesizes any concept that received **≥1** new item. This is batched to save tokens, as resynthesis is always permitted and never lossy (ADR-0010).
 - **Routine-state bookkeeping**: As a heartbeat-checkable (daily) Routine, every successful Compile run bumps its own row in `config/routine-state.md` to track when it last ran.
 - **Model routing**: The default model tier (`claude-sonnet-5`) performs synthesis as it is bounded summarization. This is explicitly configured in `config/model-routing.md` under `wiki-compile`.
+
+## Audit
+
+Audit checks the Wiki for stale, dead, duplicate, and orphaned articles. The verb is split into two passes:
+- **Mechanical checks**: Dead links (broken wikilinks) and orphaned articles (a file not listed in the index, or an index entry pointing nowhere). These are pure script diffs and require zero LLM calls.
+- **Semantic checks**: Stale articles (content superseded by newer captures) and duplicate articles (two articles that represent one concept). These require a model's semantic judgment.
+
+All Audit findings are **confirm-first** in Phase 4. There is no auto-fix shortcut. Each finding's action type is explicitly tagged with its eventual ADR-0006 risk tier (e.g., `wiki-audit-fix-dead-link` is internal & reversible; `wiki-audit-merge-duplicate` is outward/hard-to-reverse) so Phase 5's graduation engine can pick it up automatically in the future without further design work.
+
+Once a finding is confirmed and approved, **Audit executes its own actions directly**. Unlike the Triage and Execute split (which exists because Triage handles untrusted capture content), Audit's input is the already-trusted Wiki, so it does not require a separate execute-style handoff. Furthermore, there is no `archive/wiki/` folder for deleted articles. Since the Wiki is not treated as precious and is freely rebuildable (ADR-0010), git history serves as the safety net, and any deletions or merges are performed as direct file operations.
