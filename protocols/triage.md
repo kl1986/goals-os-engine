@@ -4,7 +4,9 @@ Classifies Raw Captures against structured routing rules and writes a Triage Pla
 
 ## Principle 10 — classify-only
 
-This Protocol can write **nothing but a Triage Plan file.** That's structural, not a policy choice: Raw Captures are untrusted input (PRD Principle 10), and a Triage Plan is inert — a table of proposed routes awaiting a human tick — so nothing captured can itself trigger an action just by being classified. Execution only ever happens from an approved plan, in `execute.md`.
+This Protocol can write **nothing capture-derived but a Triage Plan file.** That's structural, not a policy choice: Raw Captures are untrusted input (PRD Principle 10), and a Triage Plan is inert — a table of proposed routes awaiting a human tick — so nothing captured can itself trigger an action just by being classified. Execution only ever happens from an approved plan, in `execute.md`.
+
+The one exception is bookkeeping: each run also bumps its own `Triage` row in `config/routine-state.md` (`heartbeat.update_last_run`), so Heartbeat's due-check reflects that Triage actually ran. This write is fixed — a routine name and a timestamp, never anything read from a capture — so nothing an attacker controls can influence it; it doesn't reopen the surface Principle 10 closes.
 
 ## Two-pass classification
 

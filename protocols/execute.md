@@ -17,7 +17,7 @@ Registered in `config/action-types.md` (materialised at onboarding), both `inter
 | a real path, e.g. `areas/home/_inbox.md` | `file-capture` | Appends a dated bullet — a link back to the Raw Capture plus its preview — into that **existing** file. Never creates a new area or project; the destination's parent directory must already exist. |
 | literal `discard` | `discard-capture` | Writes no destination at all. |
 
-Both cases then: move the Raw Capture from `inbox/raw/<source>/` to `archive/inbox/<source>/` (collision-safe), and append one Action Log entry (`log_action.build_entry`/`append_entry`, dogfooding `action-log-schema.md`).
+Both cases then: move the Raw Capture from `inbox/raw/<source>/` to `archive/inbox/<source>/` (collision-safe), and append one Action Log entry (`log_action.build_entry`/`append_entry`, dogfooding `action-log-schema.md`). Every run — whether or not any row was ticked — also bumps Execute's own row in `config/routine-state.md` (`heartbeat.bump`), so its Last-run state is accurate even though Execute is event-triggered and outside Heartbeat's overdue-checking (`routines.md`).
 
 ## Row state machine
 

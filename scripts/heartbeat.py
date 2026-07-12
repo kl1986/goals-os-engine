@@ -52,6 +52,41 @@ def parse_routine_state(path: Path) -> dict:
     return {r["Routine"]: r["Last run"] for r in rows if "Routine" in r and "Last run" in r}
 
 
+def update_last_run(path: Path, routine: str, timestamp_str: str) -> bool:
+    """Rewrite one Routine's Last-run cell in a 2-column routine-state.md.
+
+    Shared by every script that implements a Routine (version_control.py,
+    triage.py, execute.py, dashboard.py, stamp.py) — each bumps its own
+    row after a successful run, so this due-check reflects reality. A
+    silent no-op if the file or the row doesn't exist (e.g. a Brain not
+    yet onboarded) — the routine still ran; there's just nowhere to
+    record it. Returns True if the row was found and updated.
+    """
+    if not path.exists():
+        return False
+    text = path.read_text()
+    if not any(r.get("Routine") == routine for r in parse_table(text)):
+        return False
+
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if line.strip().startswith(f"| {routine} |"):
+            lines[i] = f"| {routine} | {timestamp_str} |"
+            break
+    path.write_text("\n".join(lines) + ("\n" if text.endswith("\n") else ""))
+    return True
+
+
+def bump(brain_path: Path, routine: str, now: dt.datetime) -> bool:
+    """Convenience wrapper: bump `routine`'s row in `<brain_path>/config/routine-state.md`.
+
+    Every Routine-implementing script's own call site reduces to this one
+    line — the `config/routine-state.md` path and the timestamp format
+    stay in one place (here) rather than repeated at each call site.
+    """
+    return update_last_run(brain_path / "config" / "routine-state.md", routine, now.strftime(TIMESTAMP_FORMAT))
+
+
 def _cadence_days(cadence_cell: str):
     match = re.search(
         r"\b(hourly|daily|weekly|fortnightly|monthly|quarterly)\b", cadence_cell.lower()

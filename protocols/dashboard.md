@@ -6,6 +6,8 @@ A generated, Obsidian-renderable `Dashboard.md` at the Brain root — PRD §9's 
 
 The Dashboard is safe to overwrite every run, unlike the append-only Action Log. `scripts/dashboard.py` computes everything fresh from source each time — overdue Routines (via `heartbeat.py`), pending Triage Plans (via `execute.py`'s row parsing), and today's Action Log — and rewrites the whole file. There is no dashboard history; yesterday's `Dashboard.md` is gone the moment today's run happens.
 
+After writing the file, it also bumps its own `Dashboard` row in `config/routine-state.md` (`heartbeat.update_last_run`), so Heartbeat's due-check reflects that this run happened. The bump comes *after* computing the "overdue" section, so this run's own render still shows whatever was true coming in — the Dashboard reports on itself honestly, then updates state for whoever asks next (Heartbeat, or tomorrow's Dashboard).
+
 ## What "approve/feedback affordances" means in Phase 2
 
 The Dashboard itself is **read/link-only — it executes nothing.** "Affordances" means:

@@ -2,10 +2,12 @@
 """Classify-only Triage: Pass A deterministic rule matching + Triage Plan writing.
 
 Implements protocols/triage.md's Principle-10 constraint — this script can
-write nothing but a Triage Plan file. Pass A (this script) matches
-captures against config/routing-rules.md, a hand-written if/then DSL (not
-YAML — zero third-party deps, no parser library needed). Anything Pass A
-can't resolve comes back as "unmatched"; Pass B (in-session model
+write nothing capture-derived but a Triage Plan file (it also bumps its
+own fixed, non-capture-derived "Triage" row in config/routine-state.md —
+see protocols/triage.md). Pass A (this script) matches captures against
+config/routing-rules.md, a hand-written if/then DSL (not YAML — zero
+third-party deps, no parser library needed). Anything Pass A can't
+resolve comes back as "unmatched"; Pass B (in-session model
 classification) is the Adapter's job, not this script's.
 """
 
@@ -14,6 +16,9 @@ import datetime as dt
 import re
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+import heartbeat  # noqa: E402
 
 IF_RE = re.compile(
     r'^if:\s*source\s*==\s*"([^"]+)"(?:\s+and\s+contains\("([^"]+)"\))?\s*$', re.IGNORECASE
@@ -210,25 +215,45 @@ def parse_args(argv):
     return p.parse_args(argv)
 
 
+def run(brain_path: Path, source: str, now: dt.datetime = None) -> dict:
+    """Sweep, Pass-A classify, and write the plan — bumping Triage's own
+    Last-run cell regardless of whether there was anything new to triage
+    (the routine ran and checked; that's what Heartbeat needs to know).
+    """
+    now = now or dt.datetime.now()
+
+    rules_path = brain_path / "config" / "routing-rules.md"
+    rules = parse_routing_rules(rules_path.read_text()) if rules_path.exists() else []
+
+    captures = read_captures(brain_path, source)
+    result = {"routed": [], "unmatched": []}
+    plan_path = None
+    if captures:
+        result = match_captures(captures, rules)
+        plan_path = write_triage_plan(brain_path, source, result, date_str=now.strftime("%Y-%m-%d"))
+
+    # Bumped after the sweep, regardless of outcome — Triage ran and
+    # checked, even when there was nothing new to classify.
+    heartbeat.bump(brain_path, "Triage", now)
+
+    return {"captures_found": bool(captures), "routed": result["routed"], "unmatched": result["unmatched"], "plan_path": plan_path}
+
+
 def main(argv=None):
     args = parse_args(argv)
     brain_path = Path(args.brain).expanduser().resolve()
     if not brain_path.is_dir():
         sys.exit(f"Brain path does not exist: {brain_path}")
 
-    rules_path = brain_path / "config" / "routing-rules.md"
-    rules = parse_routing_rules(rules_path.read_text()) if rules_path.exists() else []
+    result = run(brain_path, args.source)
 
-    captures = read_captures(brain_path, args.source)
-    if not captures:
+    if not result["captures_found"]:
         print(f"No Raw Captures found in inbox/raw/{args.source}/.")
         return
 
-    result = match_captures(captures, rules)
-    plan_path = write_triage_plan(brain_path, args.source, result)
-
     print(f"Pass A: {len(result['routed'])} routed, {len(result['unmatched'])} unmatched (Pass B pending).")
-    if plan_path.exists():
+    plan_path = result["plan_path"]
+    if plan_path and plan_path.exists():
         print(f"Triage Plan: {plan_path}")
     else:
         print("Every capture is already tracked in an existing open Triage Plan — nothing new to add.")

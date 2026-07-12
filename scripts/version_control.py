@@ -14,28 +14,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from heartbeat import parse_table, TIMESTAMP_FORMAT  # noqa: E402
+import heartbeat  # noqa: E402
 
 
 def _git(brain_path: Path, *args) -> subprocess.CompletedProcess:
     return subprocess.run(["git", "-C", str(brain_path), *args], capture_output=True, text=True)
-
-
-def update_last_run(path: Path, routine: str, timestamp_str: str) -> bool:
-    """Rewrite one Routine's Last-run cell in a 2-column routine-state.md. Returns True if found."""
-    if not path.exists():
-        return False
-    text = path.read_text()
-    if not any(r.get("Routine") == routine for r in parse_table(text)):
-        return False
-
-    lines = text.splitlines()
-    for i, line in enumerate(lines):
-        if line.strip().startswith(f"| {routine} |"):
-            lines[i] = f"| {routine} | {timestamp_str} |"
-            break
-    path.write_text("\n".join(lines) + ("\n" if text.endswith("\n") else ""))
-    return True
 
 
 def run(brain_path: Path, now: dt.datetime = None) -> dict:
@@ -47,7 +30,7 @@ def run(brain_path: Path, now: dt.datetime = None) -> dict:
         return {"committed": False, "commit_hash": None, "tag": None, "pushed": False}
 
     # Bump routine-state before staging, so the checkpoint commit records its own run.
-    update_last_run(brain_path / "config" / "routine-state.md", "Version control", now.strftime(TIMESTAMP_FORMAT))
+    heartbeat.bump(brain_path, "Version control", now)
 
     _git(brain_path, "add", "-A")
 

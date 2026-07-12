@@ -1,3 +1,4 @@
+import datetime as dt
 import sys
 import tempfile
 import unittest
@@ -149,6 +150,39 @@ class TestWriteTriagePlan(unittest.TestCase):
         text = path.read_text()
         self.assertIn("2026-07-11-140203-buy-milk", text)
         self.assertIn("2026-07-11-150000-new-item", text)
+
+
+class TestRun(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.brain_path = Path(self._tmp.name)
+        (self.brain_path / "config").mkdir()
+        self.routine_state = self.brain_path / "config" / "routine-state.md"
+        self.routine_state.write_text("| Routine | Last run |\n|---|---|\n| Triage | never |\n")
+        self.now = dt.datetime(2026, 7, 12, 9, 0)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _write_capture(self, source, capture_id, title, body):
+        source_dir = self.brain_path / "inbox" / "raw" / source
+        source_dir.mkdir(parents=True, exist_ok=True)
+        (source_dir / f"{capture_id}.md").write_text(f"---\nid: {capture_id}\n---\n\n# {title}\n\n{body}\n")
+
+    def test_bumps_triage_last_run_when_captures_found(self):
+        self._write_capture("voice", "2026-07-12-090000-buy-milk", "Buy milk", "Remember to buy milk")
+
+        result = triage.run(self.brain_path, "voice", now=self.now)
+
+        self.assertTrue(result["captures_found"])
+        self.assertIn("| Triage | 2026-07-12 09:00 |", self.routine_state.read_text())
+
+    def test_bumps_triage_last_run_even_with_nothing_to_triage(self):
+        result = triage.run(self.brain_path, "voice", now=self.now)
+
+        self.assertFalse(result["captures_found"])
+        self.assertIsNone(result["plan_path"])
+        self.assertIn("| Triage | 2026-07-12 09:00 |", self.routine_state.read_text())
 
 
 if __name__ == "__main__":

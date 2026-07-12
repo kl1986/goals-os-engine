@@ -38,6 +38,10 @@ Once written, a Raw Capture file is never edited or deleted. Triage and synthesi
 
 The filename (and `id`) is `{date}-{HHMMSS}-{slug-of-title}`. If a second capture in the same source lands in the same second with the same title (vanishingly rare for manual capture, but possible under scripted/batch use), a numeric suffix (`-2`, `-3`, …) is appended until the name is free. `scripts/stamp.py`'s `stamp()` function guarantees this — never construct a Raw Capture filename by hand.
 
+## Routine-state bookkeeping
+
+Every successful `stamp()` call also bumps Capture sweep's own row in `config/routine-state.md` (`heartbeat.bump`) — a fixed write untouched by the immutability contract above (it records that a capture happened, not the capture's content). It's inert today: Capture sweep is event-triggered and outside Heartbeat's overdue-checking (`routines.md`) until a real puller exists, but the bookkeeping is correct in advance of that.
+
 ## Non-goals (v0)
 
 - **Manual/text capture only.** Phase 2 ships one path: a human (or an Adapter skill on their behalf) supplies source + title + body. No Gmail fetcher, no voice-transcription pipeline, no meeting-recorder integration — those are Library plugins, later phases (§12 of the PRD; roadmap Phase 3+).

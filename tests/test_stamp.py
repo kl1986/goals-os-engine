@@ -45,6 +45,21 @@ class TestStamp(unittest.TestCase):
         self.assertEqual(stamp.slugify("Buy milk & eggs!"), "buy-milk-eggs")
         self.assertEqual(stamp.slugify(""), "capture")
 
+    def test_bumps_capture_sweep_last_run_when_routine_state_exists(self):
+        (self.brain_path / "config").mkdir()
+        routine_state = self.brain_path / "config" / "routine-state.md"
+        routine_state.write_text("| Routine | Last run |\n|---|---|\n| Capture sweep | never |\n")
+        now = dt.datetime(2026, 7, 11, 14, 2, 3)
+
+        stamp.stamp(self.brain_path, "voice", "Buy milk", "Remember to buy milk", now=now)
+
+        self.assertIn("| Capture sweep | 2026-07-11 14:02 |", routine_state.read_text())
+
+    def test_no_routine_state_file_does_not_crash(self):
+        # No config/ dir at all — same as every other test in this file.
+        path = stamp.stamp(self.brain_path, "voice", "Buy milk", "Remember to buy milk")
+        self.assertTrue(path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

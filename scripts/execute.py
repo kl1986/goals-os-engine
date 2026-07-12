@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import heartbeat  # noqa: E402
 import log_action  # noqa: E402
 
 ROW_RE = re.compile(
@@ -145,6 +146,10 @@ def execute_plan(brain_path: Path, plan_path: Path, now: dt.datetime = None) -> 
         final_text = FRONTMATTER_STATUS_RE.sub("status: executed", new_text, count=1)
         plan_path.write_text(final_text)
         archived_to = _move_collision_safe(plan_path, brain_path / "archive" / "triage")
+
+    # Bumped after processing, regardless of outcome — Execute ran and
+    # checked, even when nothing was ticked this time.
+    heartbeat.bump(brain_path, "Execute", now)
 
     return {
         "filed": filed, "discarded": discarded, "errors": errors,

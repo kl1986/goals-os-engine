@@ -1,5 +1,6 @@
 import datetime as dt
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -70,6 +71,52 @@ class TestComputeOverdue(unittest.TestCase):
         overdue = heartbeat.compute_overdue(manifest, routine_state)
         overdue_names = {item["routine"] for item in overdue}
         self.assertEqual(overdue_names, {"Triage", "Dashboard", "Version control"})
+
+
+class TestUpdateLastRun(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self._tmp.name) / "routine-state.md"
+        self.path.write_text("| Routine | Last run |\n|---|---|\n| Triage | never |\n| Dashboard | never |\n")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_updates_the_named_routines_cell_only(self):
+        found = heartbeat.update_last_run(self.path, "Triage", "2026-07-12 09:00")
+        self.assertTrue(found)
+        text = self.path.read_text()
+        self.assertIn("| Triage | 2026-07-12 09:00 |", text)
+        self.assertIn("| Dashboard | never |", text)
+
+    def test_unknown_routine_is_a_noop(self):
+        found = heartbeat.update_last_run(self.path, "Weekly Review", "2026-07-12 09:00")
+        self.assertFalse(found)
+        self.assertNotIn("Weekly Review", self.path.read_text())
+
+    def test_missing_file_is_a_noop_not_a_crash(self):
+        missing = Path(self._tmp.name) / "does-not-exist.md"
+        found = heartbeat.update_last_run(missing, "Triage", "2026-07-12 09:00")
+        self.assertFalse(found)
+
+
+class TestBump(unittest.TestCase):
+    def test_joins_brain_path_and_formats_timestamp(self):
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            brain_path = Path(tmp.name)
+            (brain_path / "config").mkdir()
+            (brain_path / "config" / "routine-state.md").write_text(
+                "| Routine | Last run |\n|---|---|\n| Dashboard | never |\n"
+            )
+            found = heartbeat.bump(brain_path, "Dashboard", dt.datetime(2026, 7, 12, 9, 5))
+            self.assertTrue(found)
+            self.assertIn(
+                "| Dashboard | 2026-07-12 09:05 |",
+                (brain_path / "config" / "routine-state.md").read_text(),
+            )
+        finally:
+            tmp.cleanup()
 
 
 if __name__ == "__main__":

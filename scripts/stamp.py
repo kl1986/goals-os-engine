@@ -12,6 +12,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent))
+import heartbeat  # noqa: E402
+
 
 def slugify(text: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
@@ -55,6 +58,9 @@ def stamp(brain_path: Path, source: str, title: str, body: str, now: dt.datetime
     path = dest_dir / f"{capture_id}.md"
     content = build_frontmatter(date_str, source, capture_id) + f"\n# {title}\n\n{body}\n"
     path.write_text(content)
+
+    # Bumped after writing, so a crash mid-write never falsely records a run.
+    heartbeat.bump(brain_path, "Capture sweep", now)
     return path
 
 

@@ -3,9 +3,10 @@
 
 Implements protocols/dashboard.md: surfaces overdue Routines (via
 heartbeat.py), pending Triage Plans (via execute.py's row parsing), and a
-same-day Action Log summary. Read/link-only — writes nothing but
-<brain>/Dashboard.md itself; approval and feedback happen in the linked
-files, not here.
+same-day Action Log summary. Read/link-only — writes <brain>/Dashboard.md,
+plus bumping its own "Dashboard" row in config/routine-state.md
+afterward (bookkeeping only — see protocols/dashboard.md); approval and
+feedback happen in the linked files, not here.
 """
 
 import argparse
@@ -113,10 +114,15 @@ def render_dashboard(data: dict) -> str:
 
 
 def write_dashboard(brain_path: Path, now: dt.datetime = None) -> Path:
+    now = now or dt.datetime.now()
     data = compute_dashboard_data(brain_path, now=now)
     text = render_dashboard(data)
     path = brain_path / "Dashboard.md"
     path.write_text(text)
+
+    # Bumped after computing "overdue" above, so this run's own Dashboard
+    # entry (if it was overdue coming in) still shows in what it renders.
+    heartbeat.bump(brain_path, "Dashboard", now)
     return path
 
 

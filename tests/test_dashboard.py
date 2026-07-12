@@ -77,6 +77,17 @@ class TestWriteDashboard(unittest.TestCase):
         self.assertIn("2 entries logged today", text)
         self.assertIn("2 awaiting your feedback", text)
 
+    def test_bumps_dashboards_own_last_run_but_reflects_pre_run_overdue_state(self):
+        path = dashboard.write_dashboard(self.brain_path, now=self.now)
+        # This run's own rendered output still shows it as overdue coming in...
+        self.assertIn("Dashboard (last run: never)", path.read_text())
+        # ...but routine-state.md is bumped for the *next* run to see.
+        state_text = (self.brain_path / "config" / "routine-state.md").read_text()
+        self.assertIn("| Dashboard | 2026-07-11 21:50 |", state_text)
+
+        second_path = dashboard.write_dashboard(self.brain_path, now=self.now)
+        self.assertNotIn("Dashboard (last run:", second_path.read_text())
+
     def test_second_run_has_no_stale_content_after_state_changes(self):
         dashboard.write_dashboard(self.brain_path, now=self.now)
 

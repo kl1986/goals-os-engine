@@ -121,6 +121,15 @@ class TestExecutePlan(unittest.TestCase):
         self.assertEqual(len(result["errors"]), 1)
         self.assertIn("unmatched", result["errors"][0])
 
+    def test_bumps_execute_last_run_when_routine_state_exists(self):
+        (self.brain_path / "config").mkdir()
+        routine_state = self.brain_path / "config" / "routine-state.md"
+        routine_state.write_text("| Routine | Last run |\n|---|---|\n| Execute | never |\n")
+
+        execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
+
+        self.assertIn("| Execute | 2026-07-11 15:00 |", routine_state.read_text())
+
 
 if __name__ == "__main__":
     unittest.main()
