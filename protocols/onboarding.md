@@ -11,7 +11,7 @@ Turns a freshly cloned, blank Brain Template into a working, personalised Brain 
 2. **Materialise** (`scripts/onboard.py`, deterministic, no LLM judgement) — for the Brain passed in:
    - `config/model-routing.md`, `config/autonomy-policy.md`, `config/routine-state.md` — created only if missing.
    - `areas/<slug>/<Area Name>.md` + `areas/<slug>/_memory.md` for the requested area — created only if missing.
-3. **Record** — the run itself appends an Action Log entry (dogfoods `action-log-schema.md`, ticket 03), so onboarding is visible in the same audit trail as everything else the Brain will ever log.
+3. **Record** — the run itself appends an Action Log entry (dogfoods `action-log-schema.md`, ticket 03), so onboarding is visible in the same audit trail as everything else the Brain will ever log. `actor` is `EA` — onboarding has no dedicated agent identity of its own, and `action-log-schema.md`'s `actor` field is a closed taxonomy (System/Area/Capability agent); a Protocol's own name is never a valid `actor` (corrected 12/07/2026 — earlier onboarding runs had logged `actor: Onboarding Protocol`, fixed retroactively in the Brain's log).
 
 ## Idempotency contract
 

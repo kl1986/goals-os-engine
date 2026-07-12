@@ -51,20 +51,38 @@ class TestOpenWaitingFor(unittest.TestCase):
     def _write_hub(self, filename, body):
         (self.brain_path / "people" / filename).write_text(body)
 
-    def test_finds_open_items_and_skips_closed_ones(self):
+    def test_finds_open_items_with_canonical_schema_heading(self):
+        # protocols/people-tracking.md's schema heading, exactly as authored.
         self._write_hub(
             "Jane Doe.md",
             "---\nname: Jane Doe\n---\n\n"
-            "## Waiting For\n"
+            "# Jane Doe\n> Some Role\n\n"
+            "## ⏳ Waiting For\n"
             "- [ ] #waiting-for Jane to send over the draft budget\n"
             "- [x] #waiting-for Jane to share the meeting agenda\n"
             "- [ ] ~~#waiting-for Already closed via strikethrough~~ done 19/06\n"
-            "\n## Context\n- some context\n",
+            "\n## 🧠 Context\n- some context\n",
         )
         items = dashboard._open_waiting_for(self.brain_path)
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["person"], "Jane Doe")
         self.assertIn("send over the draft budget", items[0]["text"])
+
+    def test_tolerates_a_heading_without_the_emoji(self):
+        # Real v1 hub data was inconsistent here before migration (some hubs
+        # used "## Waiting For" with no emoji) — the regex is deliberately
+        # tolerant of this, so this fixture exercises that tolerance
+        # specifically, separate from the canonical-heading case above.
+        self._write_hub(
+            "John Smith.md",
+            "---\nname: John Smith\n---\n\n"
+            "## Waiting For\n"
+            "- [ ] #waiting-for John to send over the draft budget\n"
+            "\n## Context\n- some context\n",
+        )
+        items = dashboard._open_waiting_for(self.brain_path)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["person"], "John Smith")
 
     def test_ignores_alias_file_and_missing_people_dir(self):
         self._write_hub("_aliases.md", "## Waiting For\n- [ ] #waiting-for should not count\n")

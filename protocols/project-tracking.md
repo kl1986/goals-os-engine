@@ -48,7 +48,7 @@ v1's Project template also had `Agent Tasks` and `Files` sections; this schema d
 
 ## How a Project note gets created or updated
 
-No script. Whichever Adapter (or Kelvin directly) is creating or updating a Project note writes the file following this schema, then logs the change via the already-existing generic `log-action` skill (`action-log-schema.md`) — `action type` is `project-update` (or `project-create` for a new one), `actor` is whoever made the change, `input link` is the Project note's path.
+No script. Whichever Adapter (or Kelvin directly) is creating or updating a Project note writes the file following this schema, then logs the change via the already-existing generic `log-action` skill (`action-log-schema.md`) — `action type` is `project-update` (or `project-create` for a new one), `input link` is the Project note's path. `actor` follows `action-log-schema.md`'s closed taxonomy: `EA` when no more specific Area/Capability agent is directing the change (the common case for a direct migration or ad hoc update), or the addressing Area agent's name when a Planning session is what triggered the update. Never a Protocol's own name — a Protocol isn't an agent and can't be the executor.
 
 ## Non-goals (v0)
 
