@@ -65,12 +65,12 @@ class TestComputeOverdue(unittest.TestCase):
         overdue = heartbeat.compute_overdue(manifest, {"Dashboard": last_run}, now=now)
         self.assertEqual(len(overdue), 1)
 
-    def test_real_manifest_parses_and_flags_only_the_three_daily_routines(self):
+    def test_real_manifest_parses_and_flags_only_implemented_heartbeat_checkable_routines(self):
         manifest = heartbeat.parse_manifest()
         routine_state = {row["Routine"]: "never" for row in manifest}
         overdue = heartbeat.compute_overdue(manifest, routine_state)
         overdue_names = {item["routine"] for item in overdue}
-        self.assertEqual(overdue_names, {"Triage", "Dashboard", "Version control"})
+        self.assertEqual(overdue_names, {"Triage", "Dashboard", "Version control", "Planning session"})
 
 
 class TestUpdateLastRun(unittest.TestCase):

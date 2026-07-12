@@ -10,7 +10,7 @@ The Engine's single source of truth for every Routine's cadence and risk tier (A
 | Triage | [`triage.md`](./triage.md) | on new raw / daily — heartbeat-checkable (daily fallback) | classify-only, writes nothing but a Triage Plan (Principle 10) | EA | implemented (ticket 09) |
 | Execute | [`execute.md`](./execute.md) | on approval — event-triggered | varies by action type — see `config/action-types.md` | EA → agents | implemented (ticket 10) |
 | Dashboard | [`dashboard.md`](./dashboard.md) | morning — heartbeat-checkable (daily) | internal & reversible (read/link-only, executes nothing) | EA | implemented (ticket 11) |
-| Planning session | — | weekly / on demand — heartbeat-checkable (weekly) | — | Area agents | declared, not implemented (Phase 3) |
+| Planning session | [`planning-session.md`](./planning-session.md) | weekly / on demand — heartbeat-checkable (weekly) | internal & reversible (area note + memory + Action Log only, conversational) | Area agents | implemented (ticket 16) |
 | Weekly Review | — | weekly — heartbeat-checkable | — | EA + Librarian + Coach | declared, not implemented (Phase 6) |
 | Coaching session | — | monthly — heartbeat-checkable | — | Coach | declared, not implemented (Phase 6) |
 | Goal review | — | quarterly / on demand — heartbeat-checkable (quarterly) | — | Coach + Area agents | declared, not implemented (Phase 6) |

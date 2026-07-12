@@ -56,8 +56,9 @@ def update_last_run(path: Path, routine: str, timestamp_str: str) -> bool:
     """Rewrite one Routine's Last-run cell in a 2-column routine-state.md.
 
     Shared by every script that implements a Routine (version_control.py,
-    triage.py, execute.py, dashboard.py, stamp.py) — each bumps its own
-    row after a successful run, so this due-check reflects reality. A
+    triage.py, execute.py, dashboard.py, stamp.py, planning_session.py) —
+    each bumps its own row after a successful run, so this due-check
+    reflects reality. A
     silent no-op if the file or the row doesn't exist (e.g. a Brain not
     yet onboarded) — the routine still ran; there's just nowhere to
     record it. Returns True if the row was found and updated.

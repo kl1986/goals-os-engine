@@ -17,6 +17,7 @@ The reference Adapter (ADR-0002): the thin mapping layer binding the Engine's Pr
 | [`skills/dashboard/`](./skills/dashboard/) | [`dashboard.md`](../../protocols/dashboard.md) | Regenerates `Dashboard.md` — overdue Routines, pending Triage Plans, today's Action Log summary. |
 | [`skills/version-control/`](./skills/version-control/) | [`version-control.md`](../../protocols/version-control.md) | Commits, pushes, and tags a Brain checkpoint. No-ops on a clean tree. |
 | [`skills/ea/`](./skills/ea/) | [`charters/ea.md`](../../protocols/charters/ea.md) | The front-door persona — routes a request to whichever of the above it needs, rather than the user naming a skill directly. |
+| [`skills/planning-session/`](./skills/planning-session/) | [`charters/area-ceo.md`](../../protocols/charters/area-ceo.md), [`planning-session.md`](../../protocols/planning-session.md) | Instantiates an addressable Area agent (e.g. Will) and runs a Planning session — decomposes goals into next actions, updates the area note, logs and bumps routine-state via `scripts/planning_session.py`. |
 
 ## Installing into a Brain
 
