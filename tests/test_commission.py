@@ -49,6 +49,20 @@ class TestRun(unittest.TestCase):
         log_text = log_path.read_text()
         self.assertIn("**confidence:** Medium", log_text)
 
+    def test_parent_reference_threads_through(self):
+        log_path = commission.run(
+            self.brain_path,
+            commissioning_agent="EA",
+            capability_role="Reviewer",
+            task_summary="Review output.",
+            outcome="Passed.",
+            parent_reference="log12345",
+            now=self.now,
+        )
+
+        log_text = log_path.read_text()
+        self.assertIn("**parent reference:** log12345", log_text)
+
 
 if __name__ == "__main__":
     unittest.main()

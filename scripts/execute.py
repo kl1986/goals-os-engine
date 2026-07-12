@@ -198,6 +198,8 @@ def main(argv=None):
     result = execute_plan(brain_path, plan_path)
 
     print(f"Filed: {len(result['filed'])}, discarded: {len(result['discarded'])}, dispatched: {len(result['agent_dispatched'])}, errors: {len(result['errors'])}")
+    for row in result["agent_dispatched"]:
+        print(f"  -> Dispatched row {row['n']} ({row['capture']}) with log_id: {row['log_id']}")
     for err in result["errors"]:
         print(f"  ! {err}")
     if result["plan_executed"]:

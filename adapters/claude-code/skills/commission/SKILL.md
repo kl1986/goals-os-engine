@@ -30,7 +30,8 @@ The Claude Code binding for [`protocols/commissioning.md`](../../../protocols/co
      --capability-role "<Role Name>" \
      --task-summary "<One sentence summary of the prompt>" \
      --outcome "<Short outcome summary>" \
-     --confidence "<High|Medium|Low>"
+     --confidence "<High|Medium|Low>" \
+     --parent-reference "<ID of the parent action, if provided (e.g. log_id from execute-triage)>"
    ```
 5. **Return Output:** Present the subagent's findings or output back to the user/session.
 
