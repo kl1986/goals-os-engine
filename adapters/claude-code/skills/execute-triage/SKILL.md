@@ -21,7 +21,9 @@ The Claude Code binding for `protocols/execute.md`. All the logic — which rows
 python3 <path-to-goals-os-engine>/scripts/execute.py --brain "<path-to-brain>" --plan "<path-to-plan-or-relative-to-brain>"
 ```
 
-3. Report back: how many rows were filed, how many discarded, and relay any errors verbatim (a row referencing a missing Raw Capture, a destination directory that doesn't exist, or a still-`unmatched` destination — none of these crash the run, but they need the user's attention). If the plan's every row is now done, tell the user it's been archived to `archive/triage/`.
+3. Report back: how many rows were filed, how many discarded, how many dispatched, and relay any errors verbatim (a row referencing a missing Raw Capture, a destination directory that doesn't exist, or a still-`unmatched` destination — none of these crash the run, but they need the user's attention). 
+4. If there are any `agent-dispatched` rows, you MUST invoke the `commission` skill to dispatch them to the Reviewer gate. Frame a clear task, wait for the Reviewer's pass/fail, and append the result as a chained Action Log entry. Then update the row in the Triage Plan from `[x] (dispatched)` to `[x] (done)` if it passed.
+5. If the plan's every row is now done, tell the user it's been archived to `archive/triage/`.
 
 ## Contract this Adapter fulfils (ADR-0002)
 

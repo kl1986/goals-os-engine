@@ -21,7 +21,7 @@ import log_action  # noqa: E402
 ROW_RE = re.compile(
     r'^\|\s*(?P<n>\d+)\s*\|\s*\[\[(?P<capture>[^\]]+)\]\]\s*\|\s*(?P<preview>.*?)\s*\|'
     r'\s*(?P<route>Pass [AB])\s*\|\s*(?P<destination>.*?)\s*\|\s*(?P<confidence>.*?)\s*\|'
-    r'\s*(?P<approve>\[[ x]\](?:\s*\(done\))?)\s*\|\s*$'
+    r'\s*(?P<approve>\[[ x]\](?:\s*\((?:done|dispatched)\))?)\s*\|\s*$'
 )
 FRONTMATTER_STATUS_RE = re.compile(r'^status:\s*\S+\s*$', re.MULTILINE)
 
@@ -31,6 +31,8 @@ class ExecuteError(Exception):
 
 
 def action_type_for(destination: str) -> str:
+    if destination.strip().lower().startswith("agent:"):
+        return "agent-dispatched"
     return "discard-capture" if destination.strip().lower() == "discard" else "file-capture"
 
 
@@ -47,6 +49,11 @@ def parse_plan_rows(text: str) -> list:
 def _mark_done(line: str, match: re.Match) -> str:
     start, end = match.span("approve")
     return line[:start] + "[x] (done)" + line[end:]
+
+
+def _mark_dispatched(line: str, match: re.Match) -> str:
+    start, end = match.span("approve")
+    return line[:start] + "[x] (dispatched)" + line[end:]
 
 
 def _move_collision_safe(src: Path, dest_dir: Path) -> Path:
@@ -80,7 +87,7 @@ def execute_plan(brain_path: Path, plan_path: Path, now: dt.datetime = None) -> 
     text = plan_path.read_text()
     rows = parse_plan_rows(text)
 
-    filed, discarded, skipped, errors = [], [], [], []
+    filed, discarded, agent_dispatched, skipped, errors = [], [], [], [], []
     lines = text.splitlines()
 
     for i, line in enumerate(lines):
@@ -114,6 +121,10 @@ def execute_plan(brain_path: Path, plan_path: Path, now: dt.datetime = None) -> 
                 outcome = f"Filed to {destination}"
                 action_desc = f"Filed capture (row {row['n']}) to {destination}."
                 filed.append(row["capture"])
+            elif action_type == "agent-dispatched":
+                outcome = f"Dispatched to {destination} (Reviewer gate pending)"
+                action_desc = f"Dispatched capture (row {row['n']}) to {destination}."
+                agent_dispatched.append(row)
             else:
                 outcome = "Discarded — no destination filed"
                 action_desc = f"Discarded capture (row {row['n']}) — no destination."
@@ -122,7 +133,8 @@ def execute_plan(brain_path: Path, plan_path: Path, now: dt.datetime = None) -> 
             errors.append(f"Row {row['n']}: {e}")
             continue
 
-        _move_collision_safe(raw_path, brain_path / "archive" / "inbox" / source)
+        if action_type != "agent-dispatched":
+            _move_collision_safe(raw_path, brain_path / "archive" / "inbox" / source)
 
         entry = log_action.build_entry(
             actor="EA",
@@ -135,7 +147,10 @@ def execute_plan(brain_path: Path, plan_path: Path, now: dt.datetime = None) -> 
         )
         log_action.append_entry(brain_path, date_str, entry)
 
-        lines[i] = _mark_done(line, m)
+        if action_type == "agent-dispatched":
+            lines[i] = _mark_dispatched(line, m)
+        else:
+            lines[i] = _mark_done(line, m)
 
     new_text = "\n".join(lines) + ("\n" if text.endswith("\n") else "")
     plan_path.write_text(new_text)
@@ -152,8 +167,8 @@ def execute_plan(brain_path: Path, plan_path: Path, now: dt.datetime = None) -> 
     heartbeat.bump(brain_path, "Execute", now)
 
     return {
-        "filed": filed, "discarded": discarded, "errors": errors,
-        "plan_executed": archived_to is not None, "archived_to": archived_to,
+        "filed": filed, "discarded": discarded, "agent_dispatched": agent_dispatched,
+        "errors": errors, "plan_executed": archived_to is not None, "archived_to": archived_to,
     }
 
 
@@ -178,7 +193,7 @@ def main(argv=None):
 
     result = execute_plan(brain_path, plan_path)
 
-    print(f"Filed: {len(result['filed'])}, discarded: {len(result['discarded'])}, errors: {len(result['errors'])}")
+    print(f"Filed: {len(result['filed'])}, discarded: {len(result['discarded'])}, dispatched: {len(result['agent_dispatched'])}, errors: {len(result['errors'])}")
     for err in result["errors"]:
         print(f"  ! {err}")
     if result["plan_executed"]:

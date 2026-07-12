@@ -121,6 +121,7 @@ Table only: nothing reads this for graduation logic yet (Phase 5).
 |---|---|---|---|
 | file-capture | internal & reversible | confirm-first | Appends a Raw Capture reference into an existing area/project file. |
 | discard-capture | internal & reversible | confirm-first | Archives a Raw Capture with no destination filed. |
+| agent-dispatched | internal & reversible | confirm-first | Routes through a Reviewer commission before output surfaces. |
 """
 
 AREA_NOTE = """---
