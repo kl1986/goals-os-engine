@@ -2,11 +2,13 @@
 """Generate Dashboard.md — a pure derivation, safe to overwrite every run.
 
 Implements protocols/dashboard.md: surfaces overdue Routines (via
-heartbeat.py), pending Triage Plans (via execute.py's row parsing), and a
-same-day Action Log summary. Read/link-only — writes <brain>/Dashboard.md,
-plus bumping its own "Dashboard" row in config/routine-state.md
-afterward (bookkeeping only — see protocols/dashboard.md); approval and
-feedback happen in the linked files, not here.
+heartbeat.py), pending Triage Plans (via execute.py's row parsing), a
+same-day Action Log summary, and open Waiting For items (scanned from
+people/*.md). Read/link-only — writes <brain>/Dashboard.md, plus bumping
+its own "Dashboard" row in config/routine-state.md afterward (bookkeeping
+only — see protocols/dashboard.md); approval and feedback happen in the
+linked files, not here — Waiting For items are only ever logged on a
+Person Hub, never here.
 """
 
 import argparse
@@ -40,6 +42,36 @@ def _pending_plans(brain_path: Path) -> list:
     return plans
 
 
+def _open_waiting_for(brain_path: Path) -> list:
+    people_dir = brain_path / "people"
+    if not people_dir.is_dir():
+        return []
+
+    items = []
+    for path in sorted(people_dir.glob("*.md")):
+        if path.name.startswith("_"):
+            continue
+        text = path.read_text()
+        name_match = re.search(r'^name:\s*(.+)$', text, re.MULTILINE)
+        name = name_match.group(1).strip() if name_match else path.stem
+
+        section_match = re.search(
+            r'^## .*Waiting For\s*\n(.*?)(?=\n## |\Z)', text, re.MULTILINE | re.DOTALL
+        )
+        if not section_match:
+            continue
+
+        for line in section_match.group(1).splitlines():
+            stripped = line.strip()
+            if "#waiting-for" not in stripped:
+                continue
+            if stripped.startswith("- [x]") or stripped.startswith("~~") or "~~" in stripped:
+                continue
+            item_text = re.sub(r'^-\s*(\[\s?\]\s*)?', "", stripped).strip()
+            items.append({"person": name, "path": path, "text": item_text})
+    return items
+
+
 def _action_log_summary(brain_path: Path, date_str: str) -> dict:
     log_path = brain_path / "log" / f"{date_str}.md"
     if not log_path.exists():
@@ -60,6 +92,7 @@ def compute_dashboard_data(brain_path: Path, now: dt.datetime = None) -> dict:
         "date_str": now.strftime("%Y-%m-%d"),
         "overdue": heartbeat.compute_overdue(manifest, routine_state, now=now),
         "pending_plans": _pending_plans(brain_path),
+        "waiting_for": _open_waiting_for(brain_path),
         "action_log": _action_log_summary(brain_path, now.strftime("%Y-%m-%d")),
     }
 
@@ -93,6 +126,14 @@ def render_dashboard(data: dict) -> str:
             )
     else:
         lines.append("No pending Triage Plans.")
+
+    lines += ["", "## Waiting For", ""]
+    if data["waiting_for"]:
+        for item in data["waiting_for"]:
+            rel = item["path"].as_posix().split("people/", 1)[-1]
+            lines.append(f"- **{item['person']}** — {item['text']} ([[people/{rel}]])")
+    else:
+        lines.append("Nothing open.")
 
     lines += ["", "## Today's Action Log", ""]
     log = data["action_log"]
