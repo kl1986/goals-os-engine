@@ -7,6 +7,7 @@ The Engine's single source of truth for every Routine's cadence and risk tier (A
 | Routine | Protocol | Cadence | Risk tier | Owner | Phase 2 status |
 |---|---|---|---|---|---|
 | Capture sweep | [`capture.md`](./capture.md) | continuous/hourly — event-triggered (fires per manual capture call; no automated puller exists yet, so the "hourly" cadence is aspirational) | internal & reversible | scripts | implemented (ticket 08) |
+| Compile | [`wiki.md`](./wiki.md) | daily or on-demand — heartbeat-checkable (daily) | internal & reversible | Librarian | implemented (ticket 02) |
 | Triage | [`triage.md`](./triage.md) | on new raw / daily — heartbeat-checkable (daily fallback) | classify-only, writes nothing but a Triage Plan (Principle 10) | EA | implemented (ticket 09) |
 | Execute | [`execute.md`](./execute.md) | on approval — event-triggered | varies by action type — see `config/action-types.md` | EA → agents | implemented (ticket 10) |
 | Dashboard | [`dashboard.md`](./dashboard.md) | morning — heartbeat-checkable (daily) | internal & reversible (read/link-only, executes nothing) | EA | implemented (ticket 11) |
