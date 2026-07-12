@@ -18,6 +18,7 @@ The reference Adapter (ADR-0002): the thin mapping layer binding the Engine's Pr
 | [`skills/version-control/`](./skills/version-control/) | [`version-control.md`](../../protocols/version-control.md) | Commits, pushes, and tags a Brain checkpoint. No-ops on a clean tree. |
 | [`skills/ea/`](./skills/ea/) | [`charters/ea.md`](../../protocols/charters/ea.md) | The front-door persona — routes a request to whichever of the above it needs, rather than the user naming a skill directly. |
 | [`skills/planning-session/`](./skills/planning-session/) | [`charters/area-ceo.md`](../../protocols/charters/area-ceo.md), [`planning-session.md`](../../protocols/planning-session.md) | Instantiates an addressable Area agent (e.g. Will) and runs a Planning session — decomposes goals into next actions, updates the area note, logs and bumps routine-state via `scripts/planning_session.py`. |
+| [`skills/commission/`](./skills/commission/) | [`commissioning.md`](../../protocols/commissioning.md) | Commissions a scoped Capability agent (e.g., Researcher, Coder) for legwork via the Claude Code native Agent tool, logs the commission to Action Log via `scripts/commission.py`. |
 
 ## Installing into a Brain
 

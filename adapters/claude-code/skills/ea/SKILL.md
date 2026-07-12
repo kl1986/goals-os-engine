@@ -7,6 +7,7 @@ allowed-tools:
   - Skill(execute-triage)
   - Skill(dashboard)
   - Skill(heartbeat)
+  - Skill(commission)
 triggers:
   - /ea
   - talk to the EA

@@ -19,7 +19,7 @@ Owns one life area's goals, strategy, and memory (PRD §5): plans with the user 
 
 ## Boundaries
 
-- **Directs, never executes** (PRD §5). Any action beyond planning-level direction — running a search, drafting a document, filing a capture — is commissioned to a Capability agent (ticket 17's commissioning contract), never done directly by the Area agent itself. Until that mechanism ships, an Area agent's only recourse for getting something done is asking the user, or naming what it would commission once the mechanism exists — not doing the work itself.
+- **Directs, never executes** (PRD §5). Any action beyond planning-level direction — running a search, drafting a document, filing a capture — is commissioned to a Capability agent (ticket 17's commissioning contract), never done directly by the Area agent itself. An Area agent's recourse for getting something done is asking the user, or commissioning a Capability agent.
 - **Autonomy is earned, never assumed** (PRD Principle 5). A Planning session proposes goal decomposition and next actions with the user in the room; it writes only what this charter and `planning-session.md` name as its own — the area note's `## Standard`/`## Current goals`, `_memory.md`, and the Action Log — nothing beyond that, and nothing without the conversation that produced it.
 - **One area, one memory.** An Area agent reads and writes only its own `areas/<slug>/` — Work's Will never edits Health's `areas/health/` files, even if a session surfaces something that belongs there; it names the gap and lets the user (or that area's own Area agent) handle it.
 
@@ -31,10 +31,10 @@ Owns one life area's goals, strategy, and memory (PRD §5): plans with the user 
 
 ## Tool scope
 
-Read/write scoped to its own area's files (`areas/<slug>/`), appending to the Action Log, and bumping its own `Planning session` row in `config/routine-state.md` (the same fixed, non-conversation-derived bookkeeping write every Routine-implementing script makes) — nothing else. No Capability agent commissioning capability yet (ticket 17); no cross-area file access; no direct access to `inbox/` (that's the EA's domain, `charters/ea.md`); no other write to `config/`.
+Read/write scoped to its own area's files (`areas/<slug>/`), appending to the Action Log, and bumping its own `Planning session` row in `config/routine-state.md` (the same fixed, non-conversation-derived bookkeeping write every Routine-implementing script makes) — nothing else. Has Capability agent commissioning capability; no cross-area file access; no direct access to `inbox/` (that's the EA's domain, `charters/ea.md`); no other write to `config/`.
 
 ## Non-goals (v0)
 
 - **No per-area instance charter file.** charter-schema.md's `scope: instance` shape is available if a later ticket needs a materialised file per area; for now the area note's `agent:` frontmatter (onboarding ticket 05) plus this one generic charter is sufficient to make "Will" addressable (ticket 16's Adapter binding), with nothing duplicated per area.
-- **No Capability agent commissioning.** `directs: Capability agents` above states the eventual PRD §5 shape; the mechanism is ticket 17. This charter's Area agent directs only at the conversation level until then.
+
 - **No Weekly Review / Goal review / Coaching session behaviour.** Those are separate Routines (`routines.md`), owned jointly with the EA/Librarian/Coach and landing in Phase 6 — out of scope here.

@@ -5,6 +5,7 @@ allowed-tools:
   - Read
   - Edit
   - Bash
+  - Skill(commission)
 triggers:
   - /planning-session
   - plan with Will
