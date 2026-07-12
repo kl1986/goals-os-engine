@@ -9,6 +9,7 @@ Each entry is a level-3 heading (`### HH:MM — <action type>`, 24h clock, local
 ```markdown
 ### 14:32 — file-email
 
+- **entry id:** a1b2c3d4
 - **actor:** EA
 - **trigger:** Triage (Routine)
 - **input link:** inbox/raw/email/2026-07-11-school-newsletter.md
@@ -16,6 +17,7 @@ Each entry is a level-3 heading (`### HH:MM — <action type>`, 24h clock, local
 - **action:** Filed under Kids > School comms; no reply needed.
 - **confidence:** High
 - **outcome:** Filed to areas/kids/_inbox/
+- **parent reference:** —
 - **feedback:** —
 ```
 
@@ -25,6 +27,7 @@ A worked example spanning several entries: [`examples/action-log/2026-07-11.md`]
 
 | Field | Meaning |
 |---|---|
+| `entry id` | A unique identifier for this log entry (e.g., an 8-character hex string). |
 | `actor` | The agent that **executed** the action — a System agent (`EA`, `Librarian`, `Coach`), an Area agent (the Brain-chosen name for that area's agent), or a Capability agent noted with its commissioner, e.g. `Researcher (via Will)`. Always the executor, never the approver. |
 | `trigger` | What caused this action to run: a Routine name (`Triage`, `Capture sweep`, …), a direct user instruction, or another agent's delegation (`commissioned by Will`). Distinguishes routine-driven autonomy from a one-off ask. |
 | `input link` | A relative path (or `[[wikilink]]` when the Brain is opened in Obsidian) to the Raw Capture, project note, or other source file this action acted on or derived from. `—` when the action has no single input, e.g. a scheduled Routine firing with nothing new to act on. |
@@ -32,6 +35,7 @@ A worked example spanning several entries: [`examples/action-log/2026-07-11.md`]
 | `action` | A one-line, human-readable description of what was actually done — specific enough that a user skimming the day's log understands the entry without opening the input link. |
 | `confidence` | The acting agent's self-assessed confidence at the point of decision (`High` / `Medium` / `Low`). Determines, together with the action type's current autonomy level, whether the action executed immediately or awaited confirmation. |
 | `outcome` | What actually happened — success or failure plus a short specific (`Filed to areas/kids/_inbox/`, `Failed — API timeout, retried once`). Written by the acting agent immediately; never backfilled or inferred later. |
+| `parent reference` | A unique ID linking this action to a parent action (e.g. a capability commission chained to an execute dispatch). `—` if this action has no parent. |
 | `feedback` | The user's judgement, written after the fact. **`—` means "not yet reviewed" — it is never itself a signal of approval.** For internal & reversible action types, an unreviewed entry that has aged past the review window counts as approval when the graduation routine computes it (ADR-0006), but the field stays `—`; only an explicit validation (e.g. `✓`) or a correction (free text stating what the user would have wanted) is ever written into the slot. Corrections must carry enough detail to update a routing rule. |
 
 ## Sharding contingency (ADR-0005 amendment)

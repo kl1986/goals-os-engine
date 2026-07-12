@@ -17,8 +17,8 @@ import log_action  # noqa: E402
 
 
 def run(brain_path: Path, commissioning_agent: str, capability_role: str,
-        task_summary: str, outcome: str, confidence: str = "High",
-        now: dt.datetime = None) -> Path:
+        task_summary: str, outcome: str, parent_reference: str = "—",
+        confidence: str = "High", now: dt.datetime = None) -> Path:
     """Log one commission event to the Action Log."""
     now = now or dt.datetime.now()
 
@@ -31,6 +31,7 @@ def run(brain_path: Path, commissioning_agent: str, capability_role: str,
         action=f"Commissioned {capability_role}: {task_summary}",
         confidence=confidence,
         outcome=outcome,
+        parent_reference=parent_reference,
         time_str=now.strftime("%H:%M"),
     )
     log_path = log_action.append_entry(brain_path, now.strftime("%Y-%m-%d"), entry)
@@ -44,6 +45,7 @@ def parse_args(argv):
     p.add_argument("--capability-role", required=True, help='The capability role, e.g. "Researcher"')
     p.add_argument("--task-summary", required=True, help="Short summary of what the capability agent was asked to do")
     p.add_argument("--outcome", required=True, help="Short outcome of the commission, e.g. 'Found 3 relevant sources.'")
+    p.add_argument("--parent-reference", default="—", help="Unique ID of the parent action this commission is chained to")
     p.add_argument("--confidence", required=True, choices=log_action.CONFIDENCE_LEVELS,
                     help="The commissioning agent's confidence in the result")
     return p.parse_args(argv)
@@ -57,7 +59,8 @@ def main(argv=None):
 
     log_path = run(
         brain_path, args.commissioning_agent, args.capability_role,
-        args.task_summary, args.outcome, confidence=args.confidence,
+        args.task_summary, args.outcome, parent_reference=args.parent_reference,
+        confidence=args.confidence,
     )
     print(f"Commission event logged to: {log_path}")
 

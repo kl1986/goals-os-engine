@@ -9,6 +9,7 @@ field semantics.
 import argparse
 import datetime as dt
 import sys
+import uuid
 from pathlib import Path
 
 CONFIDENCE_LEVELS = ("High", "Medium", "Low")
@@ -18,11 +19,13 @@ def parse_args(argv):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--brain", required=True, help="Path to the Brain (contains log/)")
     p.add_argument("--actor", required=True)
+    p.add_argument("--entry-id", default=None, help="Unique ID for this entry, defaults to generating one")
     p.add_argument("--trigger", required=True)
     p.add_argument("--action-type", required=True)
     p.add_argument("--action", required=True, help="One-line description of what was done")
     p.add_argument("--confidence", required=True, choices=CONFIDENCE_LEVELS)
     p.add_argument("--outcome", required=True)
+    p.add_argument("--parent-reference", default="—")
     p.add_argument("--input-link", default="—")
     p.add_argument("--feedback", default="—")
     p.add_argument("--date", default=None, help="YYYY-MM-DD, defaults to today")
@@ -31,10 +34,12 @@ def parse_args(argv):
 
 
 def build_entry(actor, trigger, action_type, action, confidence, outcome,
-                 input_link="—", feedback="—", time_str=None):
+                 parent_reference="—", input_link="—", feedback="—", time_str=None, entry_id=None):
     time_str = time_str or dt.datetime.now().strftime("%H:%M")
+    entry_id = entry_id or uuid.uuid4().hex[:8]
     return (
         f"### {time_str} — {action_type}\n\n"
+        f"- **entry id:** {entry_id}\n"
         f"- **actor:** {actor}\n"
         f"- **trigger:** {trigger}\n"
         f"- **input link:** {input_link}\n"
@@ -42,6 +47,7 @@ def build_entry(actor, trigger, action_type, action, confidence, outcome,
         f"- **action:** {action}\n"
         f"- **confidence:** {confidence}\n"
         f"- **outcome:** {outcome}\n"
+        f"- **parent reference:** {parent_reference}\n"
         f"- **feedback:** {feedback}\n"
     )
 
@@ -73,7 +79,9 @@ def main(argv=None):
     entry = build_entry(
         actor=args.actor, trigger=args.trigger, action_type=args.action_type,
         action=args.action, confidence=args.confidence, outcome=args.outcome,
+        parent_reference=args.parent_reference,
         input_link=args.input_link, feedback=args.feedback, time_str=time_str,
+        entry_id=args.entry_id,
     )
     log_file = append_entry(brain_path, date_str, entry)
     print(f"Appended entry to {log_file}")

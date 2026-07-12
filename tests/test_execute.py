@@ -32,6 +32,10 @@ class TestActionTypeFor(unittest.TestCase):
     def test_path_destination_is_file_capture(self):
         self.assertEqual(execute.action_type_for("areas/home/_inbox.md"), "file-capture")
 
+    def test_agent_destination_is_agent_dispatched(self):
+        self.assertEqual(execute.action_type_for("agent: Researcher"), "agent-dispatched")
+        self.assertEqual(execute.action_type_for("Agent: Writer "), "agent-dispatched")
+
 
 class TestParsePlanRows(unittest.TestCase):
     def test_parses_all_three_rows(self):
@@ -39,6 +43,14 @@ class TestParsePlanRows(unittest.TestCase):
         self.assertEqual(len(rows), 3)
         self.assertEqual(rows[0]["approve"], "[x]")
         self.assertEqual(rows[2]["approve"], "[ ]")
+
+    def test_parses_dispatched_and_done_rows(self):
+        text = "| 1 | [[inbox/raw/x.md]] | p | Pass A | d | High | [x] (dispatched) |\n"
+        text += "| 2 | [[inbox/raw/y.md]] | p | Pass A | d | High | [x] (done) |\n"
+        rows = execute.parse_plan_rows(text)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["approve"], "[x] (dispatched)")
+        self.assertEqual(rows[1]["approve"], "[x] (done)")
 
 
 class TestExecutePlan(unittest.TestCase):
@@ -129,6 +141,26 @@ class TestExecutePlan(unittest.TestCase):
         execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
 
         self.assertIn("| Execute | 2026-07-11 15:00 |", routine_state.read_text())
+
+    def test_agent_dispatched_leaves_raw_capture_and_returns_log_id(self):
+        text = PLAN_TEXT.replace(
+            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | areas/home/_inbox.md | High | [x] |",
+            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | agent: Reviewer | High | [x] |",
+        )
+        self.plan_path.write_text(text)
+        result = execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
+        
+        self.assertEqual(len(result["agent_dispatched"]), 1)
+        dispatched_row = result["agent_dispatched"][0]
+        self.assertIn("log_id", dispatched_row)
+        
+        # Raw capture should NOT be moved to archive
+        self.assertTrue((self.brain_path / "inbox" / "raw" / "voice" / "2026-07-11-140203-buy-milk.md").exists())
+        self.assertFalse((self.brain_path / "archive" / "inbox" / "voice" / "2026-07-11-140203-buy-milk.md").exists())
+        
+        # Plan should be updated to [x] (dispatched)
+        plan_text = self.plan_path.read_text()
+        self.assertIn("[x] (dispatched)", plan_text)
 
 
 if __name__ == "__main__":

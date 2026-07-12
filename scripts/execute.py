@@ -12,6 +12,7 @@ import argparse
 import datetime as dt
 import re
 import sys
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -114,6 +115,8 @@ def execute_plan(brain_path: Path, plan_path: Path, now: dt.datetime = None) -> 
             continue
 
         action_type = action_type_for(destination)
+        log_id = uuid.uuid4().hex[:8]
+        row["log_id"] = log_id
         try:
             if action_type == "file-capture":
                 entry_line = f"- {date_str} — [[{row['capture']}]] — {row['preview']}\n"
@@ -144,6 +147,7 @@ def execute_plan(brain_path: Path, plan_path: Path, now: dt.datetime = None) -> 
             confidence=row["confidence"] or "Medium",
             outcome=outcome,
             input_link=row["capture"],
+            entry_id=log_id,
         )
         log_action.append_entry(brain_path, date_str, entry)
 

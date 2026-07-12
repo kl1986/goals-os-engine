@@ -113,8 +113,8 @@ config: action-types
 # Action types
 
 Registered action types with their risk tier and current autonomy level
-(ADR-0006). Phase 2 ships exactly two generic, internal & reversible
-types — Execute doesn't do Area/Capability agent dispatch until Phase 3.
+(ADR-0006). Phase 2/3 ship generic, internal & reversible types including
+agent dispatch (Reviewer gated).
 Table only: nothing reads this for graduation logic yet (Phase 5).
 
 | Action type | Risk tier | Autonomy level | Notes |
@@ -164,8 +164,6 @@ def ensure_file(path: Path, content: str) -> bool:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
     return True
-
-
 def onboard(brain_path: Path, area_name: str, area_agent: str, area_slug: str,
             review_window_days: int, graduation_min_sessions: int) -> dict:
     created, skipped = [], []
@@ -175,6 +173,12 @@ def onboard(brain_path: Path, area_name: str, area_agent: str, area_slug: str,
         if ensure_file(target, content):
             created.append(rel_path)
         else:
+            if rel_path == "config/action-types.md":
+                existing = target.read_text()
+                if "agent-dispatched" not in existing:
+                    target.write_text(existing.rstrip() + "\n| agent-dispatched | internal & reversible | confirm-first | Routes through a Reviewer commission before output surfaces. |\n")
+                    created.append(rel_path + " (updated)")
+                    return
             skipped.append(rel_path)
 
     track("config/model-routing.md", MODEL_ROUTING)
