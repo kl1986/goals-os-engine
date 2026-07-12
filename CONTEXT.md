@@ -52,6 +52,16 @@ _Avoid_: Area Lead (v1 term), CEO alone (ambiguous)
 An ephemeral, tool-scoped worker (Researcher, Analyst, Writer, Reviewer, Coder…) commissioned by System or Area agents. Extendable via the Library.
 _Avoid_: Worker, subagent (that's a runtime mechanism)
 
+**Charter**:
+The markdown spec defining an agent's role, tool scope, and delegation relationships. Every System, Area, and Capability agent has exactly one.
+
+**Generic charter**:
+An Engine-owned Charter defining a role once for every Brain (e.g. "the Area CEO charter," "the EA charter").
+
+**Instance**:
+A Brain-owned Charter materialised from a generic charter for one named, concrete agent — e.g. `Will`, materialised from the Area CEO generic charter for the Work area. Currently only Area agents have instances; System and Capability agents are addressed directly from their generic charter.
+_Avoid_: Charter alone when the generic/instance distinction matters — be specific.
+
 ## Learning
 
 **Action Log**:
