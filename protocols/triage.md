@@ -49,7 +49,7 @@ A destination of literal `discard` (rather than a real path) tells Execute to ar
 
 ## Idempotency
 
-Re-running Triage for the same Brain/source/date never duplicates a row: `write_triage_plan()` checks the plan's existing `capture` column (by Raw Capture path) and only appends genuinely new captures. Existing rows — including any Pass-B edits or ticks already made — are left untouched.
+Re-running Triage never duplicates a row, even across a day boundary: `write_triage_plan()` checks the `capture` column of *every still-open* plan for that source (`inbox/triage/*-{source}.md`, any date — executed plans have already moved to `archive/triage/`) and only appends genuinely new captures. A capture that's still un-executed the next day doesn't get a second row in tomorrow's plan just because Triage ran again. Existing rows — including any Pass-B edits or ticks already made — are left untouched.
 
 ## Adapter binding
 

@@ -116,6 +116,25 @@ class TestWriteTriagePlan(unittest.TestCase):
         self.assertEqual(text.count("2026-07-11-140203-buy-milk"), 1)
         self.assertEqual(text.count("2026-07-11-140500-standup-notes"), 1)
 
+    def test_still_open_capture_from_a_previous_day_is_not_duplicated(self):
+        # Day 1: triage writes a plan with one Pass B row, left un-executed (still un-ticked).
+        triage.write_triage_plan(self.brain_path, "voice", self._match_result(), date_str="2026-07-11")
+
+        # Day 2: the same still-un-executed capture is swept again (it's still in inbox/raw/).
+        day_two_result = {
+            "routed": [],
+            "unmatched": [{
+                "id": "2026-07-11-140500-standup-notes", "source": "meetings",
+                "title": "Standup notes", "body": "discussed the roadmap",
+            }],
+        }
+        day_two_path = triage.write_triage_plan(self.brain_path, "voice", day_two_result, date_str="2026-07-12")
+
+        # Nothing new to add — no empty stub file gets created for day 2.
+        self.assertFalse(day_two_path.exists())
+        day_one_text = (self.brain_path / "inbox" / "triage" / "2026-07-11-voice.md").read_text()
+        self.assertEqual(day_one_text.count("2026-07-11-140500-standup-notes"), 1)
+
     def test_rerun_adds_only_new_rows(self):
         triage.write_triage_plan(self.brain_path, "voice", self._match_result(), date_str="2026-07-11")
         second = {

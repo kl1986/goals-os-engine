@@ -118,6 +118,23 @@ def _existing_ids(text: str) -> set:
     return set(re.findall(r'\[\[(inbox/raw/[^\]]+)\]\]', text))
 
 
+def _already_triaged(triage_dir: Path, source: str) -> set:
+    """Every capture already listed in *any* still-open plan for this source.
+
+    Scans all inbox/triage/*-{source}.md, not just today's — a capture
+    that's still un-executed (and so still sitting in inbox/raw/) must
+    not get a second row in tomorrow's plan just because Triage runs
+    again on a new day. Executed plans have already moved to
+    archive/triage/, so anything left here is by definition still open.
+    """
+    if not triage_dir.is_dir():
+        return set()
+    ids = set()
+    for path in triage_dir.glob(f"*-{source}.md"):
+        ids |= _existing_ids(path.read_text())
+    return ids
+
+
 def _row_id(capture: dict) -> str:
     return capture.get("path", f"inbox/raw/{capture['source']}/{capture['id']}.md")
 
@@ -132,17 +149,19 @@ def _build_row(n: int, capture: dict, route: str, destination: str, confidence: 
 def write_triage_plan(brain_path: Path, source: str, match_result: dict, date_str: str = None) -> Path:
     """Write or update inbox/triage/{date}-{source}.md.
 
-    Idempotent: captures already present (by Raw Capture path) are left
-    untouched — their row, tick-state, and any Pass-B edits survive a
-    re-run. Only genuinely new captures get appended.
+    Idempotent: a capture already present in *any* still-open plan for
+    this source (by Raw Capture path) is left untouched — its row,
+    tick-state, and any Pass-B edits survive a re-run, and it never gets
+    a second row just because Triage runs again on a later day while it's
+    still un-executed. Only genuinely new captures get appended.
     """
     date_str = date_str or dt.datetime.now().strftime("%Y-%m-%d")
     triage_dir = brain_path / "inbox" / "triage"
     triage_dir.mkdir(parents=True, exist_ok=True)
     plan_path = triage_dir / f"{date_str}-{source}.md"
 
+    already_present = _already_triaged(triage_dir, source)
     existing_text = plan_path.read_text() if plan_path.exists() else ""
-    already_present = _existing_ids(existing_text)
 
     new_rows = []
     if plan_path.exists():
@@ -163,6 +182,8 @@ def write_triage_plan(brain_path: Path, source: str, match_result: dict, date_st
         new_rows.append(_build_row(row_count, capture, "Pass B", "unmatched", "—"))
 
     if not plan_path.exists():
+        if not new_rows:
+            return plan_path  # nothing new (already tracked elsewhere) — don't create an empty stub
         header = (
             "---\n"
             "type: triage-plan\n"
@@ -174,7 +195,7 @@ def write_triage_plan(brain_path: Path, source: str, match_result: dict, date_st
             f"| {' | '.join(TRIAGE_PLAN_HEADER)} |\n"
             f"|{'---|' * len(TRIAGE_PLAN_HEADER)}\n"
         )
-        plan_path.write_text(header + "\n".join(new_rows) + ("\n" if new_rows else ""))
+        plan_path.write_text(header + "\n".join(new_rows) + "\n")
     elif new_rows:
         with plan_path.open("a") as f:
             f.write("\n".join(new_rows) + "\n")
@@ -207,7 +228,10 @@ def main(argv=None):
     plan_path = write_triage_plan(brain_path, args.source, result)
 
     print(f"Pass A: {len(result['routed'])} routed, {len(result['unmatched'])} unmatched (Pass B pending).")
-    print(f"Triage Plan: {plan_path}")
+    if plan_path.exists():
+        print(f"Triage Plan: {plan_path}")
+    else:
+        print("Every capture is already tracked in an existing open Triage Plan — nothing new to add.")
 
 
 if __name__ == "__main__":
