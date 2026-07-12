@@ -22,6 +22,11 @@ import heartbeat  # noqa: E402
 import execute  # noqa: E402
 
 
+def _wikilink(path: Path, root_dir: str) -> str:
+    rel = path.as_posix().split(f"{root_dir}/", 1)[-1]
+    return f"[[{root_dir}/{rel}]]"
+
+
 def _pending_plan_summary(path: Path) -> dict:
     text = path.read_text()
     rows = execute.parse_plan_rows(text)
@@ -65,7 +70,7 @@ def _open_waiting_for(brain_path: Path) -> list:
             stripped = line.strip()
             if "#waiting-for" not in stripped:
                 continue
-            if stripped.startswith("- [x]") or stripped.startswith("~~") or "~~" in stripped:
+            if stripped.startswith("- [x]") or "~~" in stripped:
                 continue
             item_text = re.sub(r'^-\s*(\[\s?\]\s*)?', "", stripped).strip()
             items.append({"person": name, "path": path, "text": item_text})
@@ -119,9 +124,9 @@ def render_dashboard(data: dict) -> str:
     lines += ["", "## Pending Triage Plans", ""]
     if data["pending_plans"]:
         for plan in data["pending_plans"]:
-            rel = plan["path"].as_posix().split("inbox/triage/", 1)[-1]
+            link = _wikilink(plan["path"], "inbox/triage")
             lines.append(
-                f"- [[inbox/triage/{rel}]] — {plan['total']} row(s), "
+                f"- {link} — {plan['total']} row(s), "
                 f"{plan['ticked']} ticked, {plan['pending']} awaiting approval"
             )
     else:
@@ -130,8 +135,8 @@ def render_dashboard(data: dict) -> str:
     lines += ["", "## Waiting For", ""]
     if data["waiting_for"]:
         for item in data["waiting_for"]:
-            rel = item["path"].as_posix().split("people/", 1)[-1]
-            lines.append(f"- **{item['person']}** — {item['text']} ([[people/{rel}]])")
+            link = _wikilink(item["path"], "people")
+            lines.append(f"- **{item['person']}** — {item['text']} ({link})")
     else:
         lines.append("Nothing open.")
 

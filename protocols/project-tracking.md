@@ -28,11 +28,23 @@ tags:
 ## Backlog
 <!-- Future phases, not yet scheduled. -->
 
+## Notes & progress
+<!-- Dated entries, oldest first. Starts empty on a new or migrated Project note — this is where an Adapter appends going forward. -->
+
 ## Related
 
 ```
 
 `area:` is the Area **slug**, not a human-readable name — this is what lets an Area agent filter its own Projects programmatically during a Planning session. `lead:` carries who's actually driving the work (Kelvin, or a named teammate) — there is no separate folder split for this; everyone's Project notes live flat under `projects/<slug>/`.
+
+## Sections dropped from v1, and why
+
+v1's Project template also had `Agent Tasks` and `Files` sections; this schema deliberately drops both:
+
+- **Agent Tasks** — v1's table addressed named sub-agent personas (alex/jamie/dave/grace) that don't exist in Goals OS's Capability-agent model (Researcher/Analyst/Writer/Reviewer/Coder, commissioned via `commission.md`, not persistent per-project directs). Any genuinely open work item from a v1 Agent Tasks table folds into `Next action` as a plain item instead.
+- **Files** — a Project's folder (`projects/<slug>/`) already holds whatever's attached to it directly; nothing indexes those files by name elsewhere in `goals-os-brain` (Areas and People don't have a Files section either), so a separate list would just duplicate what `ls` already shows.
+
+`Notes & progress` **is kept** in the schema (unlike the two above) — a migrated Project's historical entries don't carry over (current-state-only, per ticket 04's resolution), but the section itself stays, empty, for whoever updates the note next. This mirrors `people-tracking.md`'s `Log` section: migration drops history, not the place to write new history.
 
 ## How a Project note gets created or updated
 

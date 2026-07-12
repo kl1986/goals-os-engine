@@ -14,7 +14,7 @@ The Dashboard itself is **read/link-only — it executes nothing.** "Affordances
 
 - Links into the actual Triage Plan files (`inbox/triage/*.md`) — approval happens by ticking a row there, not on the Dashboard.
 - A link into today's Action Log (`log/YYYY-MM-DD.md`) — feedback is written there, not on the Dashboard.
-- Links into the Person Hub each open Waiting For item came from (`people/<Full Name>.md`) — closing an item happens by editing the hub, never on the Dashboard. This is the read-only-roll-up guarantee `people/README.md` commits to: the Dashboard is never a second place to log a delegation.
+- Links into the Person Hub each open Waiting For item came from (`people/<Full Name>.md`) — closing an item happens by editing the hub, never on the Dashboard. This is the same read-only-roll-up guarantee `protocols/people-tracking.md` commits to: the Dashboard is never a second place to log a delegation.
 
 ## Contents
 
@@ -22,7 +22,7 @@ Four sections, computed independently:
 
 1. **Overdue routines** — `heartbeat.compute_overdue()`'s output verbatim.
 2. **Pending Triage Plans** — every `inbox/triage/*.md` file with `status: pending`, with a ticked/unticked row count.
-3. **Waiting For** — every open `#waiting-for` item across `people/*.md` (unticked and not struck-through), grouped by person, each linking back to its hub.
+3. **Waiting For** — every open `#waiting-for` item across `people/*.md` (unticked and not struck-through), as a flat list ordered by hub filename (so one person's items sit together without a nested heading), each linking back to its hub.
 4. **Today's Action Log** — entry count for `log/{today}.md`, plus how many entries still carry the `feedback: —` placeholder (not yet reviewed).
 
 ## Placement
