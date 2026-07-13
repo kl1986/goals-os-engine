@@ -28,7 +28,7 @@ The System agent that synthesises knowledge from Raw inputs into the Wiki and ru
 
 ## Session behaviour
 
-- **Trigger:** Invoked incrementally as a batched Routine (processing captures archived since the last Compile run, per ticket 02), or on-demand via the resynthesis command (ticket 05).
+- **Trigger:** Invoked incrementally as a batched Routine (processing captures archived since the last Compile run, per ticket 02), or manually on-demand with a scope argument (ticket 05).
 - **Reads:** `wiki/_index.md` (current concept list) and `config/routine-state.md` (last Compile run's bookkeeping) before a Compile run; the relevant subset of `wiki/*.md` before an Audit run.
 - **Decides:** for Compile, which concept — existing or new — each archived item belongs to (always model-driven, no rule pre-filter — ticket 02). For Audit, which of the four checks (dead/orphaned mechanically, stale/duplicate via model judgement) apply, and whether a stale/duplicate finding is real (ticket 03).
 - **Writes:** `wiki/<concept-slug>.md` articles and `wiki/_index.md` directly (Compile); the same files, or their deletion, once an Audit finding is approved — no separate execute-style handoff, since Wiki content carries none of Triage's untrusted-input quarantine concern (ticket 03). Every write logs an Action Log entry (below).
