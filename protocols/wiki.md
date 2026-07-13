@@ -29,6 +29,7 @@ The Librarian compiles archived raw captures and validated feedback into Wiki ar
 - **Exceptional-rebuild gate**: The `--full` scope argument acts as an exceptional, costed operation (ADR-0010). It requires a plain confirmation ("this will resynthesize all N concepts from scratch") and an explicit tick before proceeding. No token-cost estimate is provided, as no token-budgeting model exists in the Engine yet.
 - **Routine-state bookkeeping**: As a heartbeat-checkable (daily) Routine, every successful Compile run bumps its own row in `config/routine-state.md` to track when it last ran.
 - **Model routing**: The default model tier (`claude-sonnet-5`) performs synthesis as it is bounded summarization. This is explicitly configured in `config/model-routing.md` under `wiki-compile`.
+- **Backlink discipline**: Compile maintains one merged, dated `## Sources` section per article. Each entry follows the format `- YYYY-MM-DD — [[archive/inbox/<source>/<id>]]`, appended every run it resynthesizes that concept based on a new input. Consistent with the flat structure, it avoids duplicating a "Decision Log" separate from sources.
 
 ## Audit
 

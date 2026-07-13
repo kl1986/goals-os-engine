@@ -29,7 +29,7 @@ tags:
 <!-- Future phases, not yet scheduled. -->
 
 ## Notes & progress
-<!-- Dated entries, oldest first. Starts empty on a new or migrated Project note — this is where an Adapter appends going forward. -->
+<!-- Dated entries, oldest first. Starts empty on a new or migrated Project note — this is where an Adapter appends going forward. When an input advances this Project, it receives a one-line dated entry linking back to the source (backlink discipline). -->
 
 ## Related
 
