@@ -41,7 +41,7 @@ All Audit findings are **confirm-first** in Phase 4. There is no auto-fix shortc
 
 Once a finding is confirmed and approved, **Audit executes its own actions directly**. Unlike the Triage and Execute split (which exists because Triage handles untrusted capture content), Audit's input is the already-trusted Wiki, so it does not require a separate execute-style handoff. Furthermore, there is no `archive/wiki/` folder for deleted articles. Since the Wiki is not treated as precious and is freely rebuildable (ADR-0010), git history serves as the safety net, and any deletions or merges are performed as direct file operations.
 
-## V1 migration stance
+## v1 migration stance
 
 In migrating from the v1 Brain, the v2 Wiki **starts empty**. The v1 Wiki's existing articles are left fully intact and readable in the v1 archive but are not treated as a live source for v2's Wiki.
 
