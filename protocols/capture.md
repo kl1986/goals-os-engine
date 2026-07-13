@@ -8,7 +8,8 @@ Turns arbitrary captured text into an immutable Raw Capture under `inbox/raw/<so
 ---
 type: raw
 date: 2026-07-11
-source: voice
+source: text
+input-modality: voice
 id: 2026-07-11-140203-buy-milk
 raw: true
 ---
@@ -22,7 +23,8 @@ Remember to buy milk on the way home.
 |---|---|
 | `type` | Always `raw` — marks this file as an unprocessed Capture, distinct from curated/Wiki content. |
 | `date` | `YYYY-MM-DD`, the capture's stamp date. |
-| `source` | An **open string** — `voice`, `email`, `meetings`, `web`, or any other source a Brain configures. No fixed enum is imposed by the Engine (per `inbox/raw/README.md`). |
+| `source` | An **open string** carrying routing intent, not input mechanism (ADR-0011) — `text`, `email`, `meetings`, `web`, or any other source a Brain configures. No fixed enum is imposed by the Engine (per `inbox/raw/README.md`). Two captures with the same downstream routing/treatment share a `source` even if entered differently — see `input-modality` below. |
+| `input-modality` | **Optional.** How the capture was physically entered — `voice` or `typed` — when that provenance is worth keeping but doesn't change routing (ADR-0011). Omitted entirely for sources where modality is fixed or irrelevant (e.g. `email`, `web`). Never matched by routing rules (`config/routing-rules.md`); a rule that needs to discriminate by modality is a sign the capture should be its own `source` instead, as `meetings` is. |
 | `id` | The filename stem, doubling as a stable reference other files can link to (e.g. an Execute action's `input link`). |
 | `raw` | Always `true` — a second, redundant-by-design marker so a script can filter Raw Captures by frontmatter alone without parsing `type`. |
 

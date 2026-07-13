@@ -1,0 +1,5 @@
+# Capture `source` encodes routing intent, not input modality
+
+`inbox/raw/`'s `source` folder is also the batching key for Triage Plans and a required field in every routing rule (`protocols/triage.md`), so it isn't a neutral "how was this captured" label — it determines how a capture gets grouped and routed. Voice-dictated and typed quick captures share identical routing intent (same content, same destinations, just two convenient ways to enter it), so `voice` folds into `text`; a new `input-modality` frontmatter field records provenance without being a routing dimension. `meetings` stays a distinct `source` despite also arriving via voice, because a meeting recording needs genuinely different downstream treatment (structured extraction, not a quick routed note) — the fold is about shared intent, not shared input mechanism. Decided 13/07/2026 (Wayfinder ticket 03, Cutover alignment map).
+
+**Rejected:** keeping voice and text as separate sources (doubles routing-rule authorship for two channels with identical intent); folding meetings in too (its downstream treatment genuinely differs, so it would lose real information the fold elsewhere doesn't).

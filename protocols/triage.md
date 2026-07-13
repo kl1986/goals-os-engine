@@ -18,12 +18,12 @@ The one exception is bookkeeping: each run also bumps its own `Triage` row in `c
 A hand-written `if`/`then` DSL, not YAML — deliberately, since the Engine carries zero third-party dependencies and this shape needs no parser library:
 
 ```
-if: source == "voice" and contains("milk")
+if: source == "text" and contains("milk")
 then: route -> areas/home/_inbox.md
 confidence: High
 ```
 
-`source` is required; `contains("...")` is an optional case-insensitive substring match against the capture's title + body. `confidence` defaults to `Medium` if omitted. Rules are additive-only — a Brain grows this file as routing patterns emerge; nothing here is machine-generated except by an explicit, confirm-first rule-learning step (PRD §7, Phase 5).
+`source` is required; `contains("...")` is an optional case-insensitive substring match against the capture's title + body. `confidence` defaults to `Medium` if omitted. `input-modality` (voice vs typed, see `capture.md`) is never a matchable field here by design (ADR-0011) — a rule that needs to discriminate by modality is a sign the capture belongs in its own `source`, not that Triage needs a second matchable dimension. Rules are additive-only — a Brain grows this file as routing patterns emerge; nothing here is machine-generated except by an explicit, confirm-first rule-learning step (PRD §7, Phase 5).
 
 ## Triage Plan file
 
@@ -32,17 +32,17 @@ confidence: High
 ```markdown
 ---
 type: triage-plan
-source: voice
+source: text
 date: 2026-07-11
 status: pending
 ---
 
-# Triage Plan — voice — 2026-07-11
+# Triage Plan — text — 2026-07-11
 
 | # | capture | preview | route | destination | confidence | approve |
 |---|---|---|---|---|---|---|
-| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk]] | Remember to buy milk on the way home. | Pass A | areas/home/_inbox.md | High | [ ] |
-| 2 | [[inbox/raw/voice/2026-07-11-140500-standup-notes]] | discussed the roadmap | Pass B | areas/work/_inbox.md | Medium | [ ] |
+| 1 | [[inbox/raw/text/2026-07-11-140203-buy-milk]] | Remember to buy milk on the way home. | Pass A | areas/home/_inbox.md | High | [ ] |
+| 2 | [[inbox/raw/text/2026-07-11-140500-standup-notes]] | discussed the roadmap | Pass B | areas/work/_inbox.md | Medium | [ ] |
 ```
 
 `status` is `pending` until every row is executed, then flips to `executed` and the file moves to `archive/triage/` (see `execute.md`). Every row needs an explicit `[x]` tick before Execute will act on it — regardless of confidence; auto-execution on confidence is graduation, Phase 5.
