@@ -40,3 +40,9 @@ Audit checks the Wiki for stale, dead, duplicate, and orphaned articles. The ver
 All Audit findings are **confirm-first** in Phase 4. There is no auto-fix shortcut. Each finding's action type is explicitly tagged with its eventual ADR-0006 risk tier (e.g., `wiki-audit-fix-dead-link` is internal & reversible; `wiki-audit-merge-duplicate` is outward/hard-to-reverse) so Phase 5's graduation engine can pick it up automatically in the future without further design work.
 
 Once a finding is confirmed and approved, **Audit executes its own actions directly**. Unlike the Triage and Execute split (which exists because Triage handles untrusted capture content), Audit's input is the already-trusted Wiki, so it does not require a separate execute-style handoff. Furthermore, there is no `archive/wiki/` folder for deleted articles. Since the Wiki is not treated as precious and is freely rebuildable (ADR-0010), git history serves as the safety net, and any deletions or merges are performed as direct file operations.
+
+## V1 Migration Stance
+
+In migrating from the v1 Brain, the v2 Wiki **starts empty**. The v1 Wiki's existing articles are left fully intact and readable in the v1 archive but are not treated as a live source for v2's Wiki.
+
+Seeding them into v2 was explicitly rejected because v1 articles are already-synthesized content. Processing them would mean either a compile-of-a-compile (losing fidelity to the original sources) or copying them straight into `wiki/` and bypassing Compile entirely (which violates ADR-0010's resynthesis guarantee, as they would have no v2-native Raw Capture behind them). A topic already covered in v1 will only get a fresh v2 article once new Raw Captures naturally warrant Compile building one.
