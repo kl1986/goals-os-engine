@@ -21,24 +21,36 @@ def slugify(text: str) -> str:
     return slug or "capture"
 
 
-def build_frontmatter(date_str: str, source: str, capture_id: str) -> str:
+def build_frontmatter(date_str: str, source: str, capture_id: str, input_modality: str = None) -> str:
+    modality_line = f"input-modality: {input_modality}\n" if input_modality else ""
     return (
         "---\n"
         "type: raw\n"
         f"date: {date_str}\n"
         f"source: {source}\n"
+        f"{modality_line}"
         f"id: {capture_id}\n"
         "raw: true\n"
         "---\n"
     )
 
 
-def stamp(brain_path: Path, source: str, title: str, body: str, now: dt.datetime = None) -> Path:
+def stamp(
+    brain_path: Path,
+    source: str,
+    title: str,
+    body: str,
+    now: dt.datetime = None,
+    input_modality: str = None,
+) -> Path:
     """Write one Raw Capture under inbox/raw/<source>/ and return its path.
 
     Filename doubles as the frontmatter `id`: `{date}-{HHMMSS}-{slug}`,
     with a numeric suffix appended on any collision — safe even for two
-    captures with the same title in the same second.
+    captures with the same title in the same second. `input_modality`
+    (ADR-0011) is optional provenance, never a routing dimension — pass
+    it only when it's worth recording (e.g. "voice"); omit for the
+    unmarked/default case ("typed").
     """
     now = now or dt.datetime.now()
     date_str = now.strftime("%Y-%m-%d")
@@ -56,7 +68,10 @@ def stamp(brain_path: Path, source: str, title: str, body: str, now: dt.datetime
         counter += 1
 
     path = dest_dir / f"{capture_id}.md"
-    content = build_frontmatter(date_str, source, capture_id) + f"\n# {title}\n\n{body}\n"
+    content = (
+        build_frontmatter(date_str, source, capture_id, input_modality)
+        + f"\n# {title}\n\n{body}\n"
+    )
     path.write_text(content)
 
     # Bumped after writing, so a crash mid-write never falsely records a run.
@@ -69,6 +84,7 @@ def parse_args(argv):
     p.add_argument("--brain", required=True, help="Path to the Brain")
     p.add_argument("--source", required=True, help="Open string, e.g. voice/email/meetings/web — no fixed list imposed")
     p.add_argument("--title", required=True)
+    p.add_argument("--input-modality", default=None, help="Optional provenance, e.g. voice (ADR-0011) — never a routing field")
     group = p.add_mutually_exclusive_group(required=True)
     group.add_argument("--body", help="Capture body text")
     group.add_argument("--body-file", help="Path to a file containing the capture body")
@@ -83,7 +99,7 @@ def main(argv=None):
 
     body = args.body if args.body is not None else Path(args.body_file).expanduser().read_text()
 
-    path = stamp(brain_path, args.source, args.title, body)
+    path = stamp(brain_path, args.source, args.title, body, input_modality=args.input_modality)
     print(f"Stamped: {path}")
 
 
