@@ -23,7 +23,10 @@ This establishes a documented token-frugal default, preventing agents from impro
 The Librarian compiles archived raw captures and validated feedback into Wiki articles. The Compile verb reads exclusively from the `archive/inbox/<source>/` directories (already-triaged, Execute-processed captures), and **never** reads the live `inbox/raw/` queue.
 
 - **Concept assignment**: Concept assignment is model-driven. The Librarian reads `wiki/_index.md`'s current concept list and the archived capture's content, and the model decides which existing concept the item belongs to, or whether it spawns a new one. There is no deterministic pre-filter.
-- **Incremental trigger**: Compile is its own Routine, batched per run. Each run scans everything archived or newly-validated since the last Compile run, groups by concept, and resynthesizes any concept that received **≥1** new item. This is batched to save tokens, as resynthesis is always permitted and never lossy (ADR-0010).
+- **Invocation & Scope**: There is no separate "resynthesis command." Compile is invoked in two ways:
+  - **Incremental Routine (default)**: Heartbeat's daily due-check runs Compile with no scope argument. It scans everything archived or newly-validated since the last run, groups by concept, and resynthesizes any concept with **≥1** new item.
+  - **On-demand (manual)**: Can be invoked manually with an optional scope argument: a specific concept slug (forcing that concept's resynthesis even with no new material), or `--full` (resynthesize every concept from scratch, ignoring the "≥1 new item" gate).
+- **Exceptional-rebuild gate**: The `--full` scope argument acts as an exceptional, costed operation (ADR-0010). It requires a plain confirmation ("this will resynthesize all N concepts from scratch") and an explicit tick before proceeding. No token-cost estimate is provided, as no token-budgeting model exists in the Engine yet.
 - **Routine-state bookkeeping**: As a heartbeat-checkable (daily) Routine, every successful Compile run bumps its own row in `config/routine-state.md` to track when it last ran.
 - **Model routing**: The default model tier (`claude-sonnet-5`) performs synthesis as it is bounded summarization. This is explicitly configured in `config/model-routing.md` under `wiki-compile`.
 
