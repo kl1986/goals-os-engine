@@ -16,6 +16,9 @@ Registered in `config/action-types.md` (materialised at onboarding), all current
 | a real path, e.g. `areas/home/_inbox.md` | `file-capture` | Appends a dated bullet — a link back to the Raw Capture plus its preview — into that **existing** file. Never creates a new area or project; the destination's parent directory must already exist. |
 | literal `discard` | `discard-capture` | Writes no destination at all. |
 | starts with `agent:` (e.g. `agent: Researcher`) | `agent-dispatched` | Routes the action through a Reviewer commission before the output surfaces. The Reviewer's pass/fail is logged as an Action Log entry chained to the original commission. |
+| literal `today` | `file-capture-today` | Inserts a checkbox line as the last line of the daily note's `## Today's tasks` section (before the next heading) — never a blind end-of-file append like `file-capture`. No date prefix (the note's own filename/title is the date). Requires today's note (`<brain>/YYYY-MM-DD.md`) to already exist — this action never creates it. |
+
+For `file-capture-today` cases: if today's note doesn't exist yet, this is an error exactly like the existing "destination directory doesn't exist" case for `file-capture` — reported, the row left untouched, doesn't block other rows in the same run, and doesn't count as done. Also note that `file-capture-today` rows DO get archived to `archive/inbox/<source>/` and marked `[x] (done)`, same as `file-capture` (only `agent-dispatched` skips those steps).
 
 For `file-capture` and `discard-capture` cases: move the Raw Capture from `inbox/raw/<source>/` to `archive/inbox/<source>/` (collision-safe). `agent-dispatched` cases leave the Raw Capture in place for the Reviewer gate. For all cases, append an Action Log entry (`log_action.build_entry`/`append_entry`, dogfooding `action-log-schema.md`). Every run — whether or not any row was ticked — also bumps Execute's own row in `config/routine-state.md` (`heartbeat.bump`), so its Last-run state is accurate even though Execute is event-triggered and outside Heartbeat's overdue-checking (`routines.md`).
 
@@ -33,7 +36,7 @@ Once a run leaves zero rows in the `[ ]` state (every row is either not yet touc
 
 ## Error handling
 
-A row that can't be executed (Raw Capture missing, destination directory doesn't exist, destination still reads `unmatched`) is reported as an error and left untouched — it does not block the other rows in the same run, and does not count as "done" for the completion check.
+A row that can't be executed (Raw Capture missing, destination directory doesn't exist, destination still reads `unmatched`, or — for `file-capture-today` specifically — today's daily note doesn't exist yet) is reported as an error and left untouched — it does not block the other rows in the same run, and does not count as "done" for the completion check.
 
 ## Adapter binding
 

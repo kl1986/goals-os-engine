@@ -74,6 +74,7 @@ this Brain — machine-updated on completion, don't hand-edit the
 | Triage | never |
 | Execute | never |
 | Dashboard | never |
+| Daily note | never |
 | Planning session | never |
 | Weekly Review | never |
 | Coaching session | never |
@@ -81,6 +82,7 @@ this Brain — machine-updated on completion, don't hand-edit the
 | Upgrade review | never |
 | Architecture review | never |
 | Version control | never |
+| Close daily note | never |
 | Metrics pulse | never |
 """
 
@@ -120,6 +122,7 @@ Table only: nothing reads this for graduation logic yet (Phase 5).
 | Action type | Risk tier | Autonomy level | Notes |
 |---|---|---|---|
 | file-capture | internal & reversible | confirm-first | Appends a Raw Capture reference into an existing area/project file. |
+| file-capture-today | internal & reversible | confirm-first | Heading-aware insert of a checklist line into today's daily note's `## Today's tasks` section (requires the note to already exist). |
 | discard-capture | internal & reversible | confirm-first | Archives a Raw Capture with no destination filed. |
 | agent-dispatched | internal & reversible | confirm-first | Routes through a Reviewer commission before output surfaces. |
 """
@@ -172,14 +175,34 @@ def onboard(brain_path: Path, area_name: str, area_agent: str, area_slug: str,
         target = brain_path / rel_path
         if ensure_file(target, content):
             created.append(rel_path)
-        else:
-            if rel_path == "config/action-types.md":
-                existing = target.read_text()
-                if "agent-dispatched" not in existing:
-                    target.write_text(existing.rstrip() + "\n| agent-dispatched | internal & reversible | confirm-first | Routes through a Reviewer commission before output surfaces. |\n")
-                    created.append(rel_path + " (updated)")
-                    return
-            skipped.append(rel_path)
+            return
+
+        # Existing Brain, already onboarded before a row below existed —
+        # migrate it in place rather than leaving it permanently missing.
+        if rel_path == "config/action-types.md":
+            existing = target.read_text()
+            additions = []
+            if "agent-dispatched" not in existing:
+                additions.append("| agent-dispatched | internal & reversible | confirm-first | Routes through a Reviewer commission before output surfaces. |")
+            if "file-capture-today" not in existing:
+                additions.append("| file-capture-today | internal & reversible | confirm-first | Heading-aware insert of a checklist line into today's daily note's `## Today's tasks` section (requires the note to already exist). |")
+            if additions:
+                target.write_text(existing.rstrip() + "\n" + "\n".join(additions) + "\n")
+                created.append(rel_path + " (updated)")
+                return
+        elif rel_path == "config/routine-state.md":
+            existing = target.read_text()
+            additions = []
+            if "| Daily note |" not in existing:
+                additions.append("| Daily note | never |")
+            if "| Close daily note |" not in existing:
+                additions.append("| Close daily note | never |")
+            if additions:
+                target.write_text(existing.rstrip() + "\n" + "\n".join(additions) + "\n")
+                created.append(rel_path + " (updated)")
+                return
+
+        skipped.append(rel_path)
 
     track("config/model-routing.md", MODEL_ROUTING)
     track("config/autonomy-policy.md", AUTONOMY_POLICY.format(

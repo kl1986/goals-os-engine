@@ -36,6 +36,11 @@ class TestActionTypeFor(unittest.TestCase):
         self.assertEqual(execute.action_type_for("agent: Researcher"), "agent-dispatched")
         self.assertEqual(execute.action_type_for("Agent: Writer "), "agent-dispatched")
 
+    def test_today_destination_is_file_capture_today(self):
+        self.assertEqual(execute.action_type_for("today"), "file-capture-today")
+        self.assertEqual(execute.action_type_for("Today"), "file-capture-today")
+        self.assertEqual(execute.action_type_for("  TODAY  "), "file-capture-today")
+
 
 class TestParsePlanRows(unittest.TestCase):
     def test_parses_all_three_rows(self):
@@ -161,6 +166,119 @@ class TestExecutePlan(unittest.TestCase):
         # Plan should be updated to [x] (dispatched)
         plan_text = self.plan_path.read_text()
         self.assertIn("[x] (dispatched)", plan_text)
+
+
+TODAY_PLAN_TEXT = """---
+type: triage-plan
+source: voice
+date: 2026-07-13
+status: pending
+---
+
+# Triage Plan — voice — 2026-07-13
+
+| # | capture | preview | route | destination | confidence | approve |
+|---|---|---|---|---|---|---|
+| 1 | [[inbox/raw/voice/2026-07-13-090000-call-plumber.md]] | Call the plumber | Pass A | today | High | [x] |
+| 2 | [[inbox/raw/voice/2026-07-13-091000-later.md]] | deal with this later | Pass B | areas/home/_inbox.md | Medium | [ ] |
+"""
+
+
+class TestFileCaptureToday(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.brain_path = Path(self._tmp.name)
+        (self.brain_path / "inbox" / "raw" / "voice").mkdir(parents=True)
+        (self.brain_path / "inbox" / "triage").mkdir(parents=True)
+        for name in ("2026-07-13-090000-call-plumber.md", "2026-07-13-091000-later.md"):
+            (self.brain_path / "inbox" / "raw" / "voice" / name).write_text("---\nraw: true\n---\nbody\n")
+        self.plan_path = self.brain_path / "inbox" / "triage" / "2026-07-13-voice.md"
+        self.plan_path.write_text(TODAY_PLAN_TEXT)
+        self.now = dt.datetime(2026, 7, 13, 15, 0)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _write_daily_note(self, today_tasks_body="- [ ]"):
+        (self.brain_path / "2026-07-13.md").write_text(
+            "---\ntype: daily-note\ndate: 2026-07-13\ntags:\n  - daily-note\n---\n\n"
+            "# Monday, 13 July 2026\n\n"
+            f"## Today's tasks\n{today_tasks_body}\n\n"
+            "## Project next actions\n\n"
+            "## Waiting for\n\n"
+            "## Notes\n"
+        )
+
+    def test_happy_path_inserts_as_last_line_of_todays_tasks_before_next_heading(self):
+        self._write_daily_note("- [ ] Existing manual task")
+        result = execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
+
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(len(result["filed"]), 1)
+
+        note_text = (self.brain_path / "2026-07-13.md").read_text()
+        section = note_text.split("## Today's tasks\n", 1)[1].split("\n## ", 1)[0]
+        lines = [ln for ln in section.splitlines() if ln.strip()]
+        self.assertEqual(lines, [
+            "- [ ] Existing manual task",
+            "- [ ] Call the plumber — [[inbox/raw/voice/2026-07-13-090000-call-plumber.md]]",
+        ])
+        # It landed before the next heading, not appended blindly at EOF.
+        self.assertTrue(note_text.rstrip().endswith("## Notes"))
+
+    def test_happy_path_archives_capture_and_marks_row_done(self):
+        self._write_daily_note()
+        execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
+
+        self.assertFalse(
+            (self.brain_path / "inbox" / "raw" / "voice" / "2026-07-13-090000-call-plumber.md").exists()
+        )
+        self.assertTrue(
+            (self.brain_path / "archive" / "inbox" / "voice" / "2026-07-13-090000-call-plumber.md").exists()
+        )
+        plan_text = self.plan_path.read_text()
+        self.assertIn("[x] (done)", plan_text)
+
+        log_text = (self.brain_path / "log" / "2026-07-13.md").read_text()
+        self.assertIn("file-capture-today", log_text)
+        self.assertIn("Filed to today's daily note", log_text)
+
+    def test_missing_todays_note_reports_error_leaves_row_and_capture_untouched(self):
+        # No daily note written for today at all.
+        result = execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
+
+        self.assertEqual(len(result["errors"]), 1)
+        self.assertIn("does not exist", result["errors"][0])
+        self.assertEqual(result["filed"], [])
+
+        # Row left untouched (still [x], not [x] (done)) and capture not moved.
+        plan_text = self.plan_path.read_text()
+        self.assertIn("| Call the plumber | Pass A | today | High | [x] |", plan_text)
+        self.assertTrue(
+            (self.brain_path / "inbox" / "raw" / "voice" / "2026-07-13-090000-call-plumber.md").exists()
+        )
+        self.assertFalse(
+            (self.brain_path / "archive" / "inbox" / "voice" / "2026-07-13-090000-call-plumber.md").exists()
+        )
+
+    def test_missing_todays_note_does_not_block_other_rows(self):
+        # Tick the second row too, and give it a real destination — it
+        # should still get filed even though row 1 errors out.
+        text = self.plan_path.read_text().replace(
+            "| 2 | [[inbox/raw/voice/2026-07-13-091000-later.md]] | deal with this later | Pass B | areas/home/_inbox.md | Medium | [ ] |",
+            "| 2 | [[inbox/raw/voice/2026-07-13-091000-later.md]] | deal with this later | Pass B | areas/home/_inbox.md | Medium | [x] |",
+        )
+        self.plan_path.write_text(text)
+        (self.brain_path / "areas" / "home").mkdir(parents=True)
+
+        result = execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
+
+        self.assertEqual(len(result["errors"]), 1)
+        self.assertEqual(len(result["filed"]), 1)
+        self.assertIn(
+            "[[inbox/raw/voice/2026-07-13-091000-later.md]]",
+            (self.brain_path / "areas" / "home" / "_inbox.md").read_text(),
+        )
 
 
 if __name__ == "__main__":

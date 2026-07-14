@@ -32,9 +32,14 @@ class ExecuteError(Exception):
 
 
 def action_type_for(destination: str) -> str:
-    if destination.strip().lower().startswith("agent:"):
+    cleaned = destination.strip().lower()
+    if cleaned.startswith("agent:"):
         return "agent-dispatched"
-    return "discard-capture" if destination.strip().lower() == "discard" else "file-capture"
+    if cleaned == "discard":
+        return "discard-capture"
+    if cleaned == "today":
+        return "file-capture-today"
+    return "file-capture"
 
 
 def parse_plan_rows(text: str) -> list:
@@ -82,6 +87,31 @@ def _file_capture(brain_path: Path, destination_rel: str, entry_line: str):
         dest_path.write_text(entry_line)
 
 
+def _file_capture_today(brain_path: Path, date_str: str, entry_line: str):
+    """Heading-aware insert of `entry_line` as the last line of today's
+    `## Today's tasks` section (before the next heading, not EOF).
+
+    Requires <brain>/{date_str}.md to already exist — this action never
+    creates it (protocols/daily-note.md, protocols/execute.md)."""
+    note_path = brain_path / f"{date_str}.md"
+    if not note_path.exists():
+        raise ExecuteError(
+            f"Today's daily note does not exist yet: {note_path} "
+            "— file-capture-today never creates it."
+        )
+    text = note_path.read_text()
+    match = re.search(r"^## Today's tasks\s*\n(.*?)(?=\n## |\Z)", text, re.MULTILINE | re.DOTALL)
+    if not match:
+        raise ExecuteError(
+            f"Today's daily note has no '## Today's tasks' section: {note_path}"
+        )
+    body = match.group(1)
+    if body and not body.endswith("\n"):
+        body += "\n"
+    body += entry_line
+    note_path.write_text(text[:match.start(1)] + body + text[match.end(1):])
+
+
 def execute_plan(brain_path: Path, plan_path: Path, now: dt.datetime = None) -> dict:
     now = now or dt.datetime.now()
     date_str = now.strftime("%Y-%m-%d")
@@ -123,6 +153,12 @@ def execute_plan(brain_path: Path, plan_path: Path, now: dt.datetime = None) -> 
                 _file_capture(brain_path, destination, entry_line)
                 outcome = f"Filed to {destination}"
                 action_desc = f"Filed capture (row {row['n']}) to {destination}."
+                filed.append(row["capture"])
+            elif action_type == "file-capture-today":
+                entry_line = f"- [ ] {row['preview']} — [[{row['capture']}]]\n"
+                _file_capture_today(brain_path, date_str, entry_line)
+                outcome = "Filed to today's daily note"
+                action_desc = f"Filed capture (row {row['n']}) to today's daily note."
                 filed.append(row["capture"])
             elif action_type == "agent-dispatched":
                 outcome = f"Dispatched to {destination} (Reviewer gate pending)"
