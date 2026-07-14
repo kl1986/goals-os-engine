@@ -72,7 +72,8 @@ class TestComputeOverdue(unittest.TestCase):
         overdue_names = {item["routine"] for item in overdue}
         self.assertEqual(
             overdue_names,
-            {"Triage", "Dashboard", "Version control", "Planning session", "Daily note", "Close daily note"},
+            {"Triage", "Dashboard", "Version control", "Planning session", "Daily note",
+             "Close daily note", "Compile"},
         )
 
 

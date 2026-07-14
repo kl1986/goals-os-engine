@@ -71,6 +71,7 @@ this Brain — machine-updated on completion, don't hand-edit the
 | Routine | Last run |
 |---|---|
 | Capture sweep | never |
+| Compile | never |
 | Triage | never |
 | Execute | never |
 | Dashboard | never |
@@ -125,6 +126,11 @@ Table only: nothing reads this for graduation logic yet (Phase 5).
 | file-capture-today | internal & reversible | confirm-first | Heading-aware insert of a checklist line into today's daily note's `## Today's tasks` section (requires the note to already exist). |
 | discard-capture | internal & reversible | confirm-first | Archives a Raw Capture with no destination filed. |
 | agent-dispatched | internal & reversible | confirm-first | Routes through a Reviewer commission before output surfaces. |
+| wiki-compile | internal & reversible | confirm-first | Resynthesizes a concept's Wiki article from archived captures + feedback (`protocols/charters/librarian.md`). |
+| wiki-audit-fix-dead-link | internal & reversible | confirm-first | Repairs or removes a broken wikilink found by Audit. |
+| wiki-audit-relist-orphan | internal & reversible | confirm-first | Adds an unindexed article to `wiki/_index.md`, or removes a dead index entry. |
+| wiki-audit-delete-stale | internal & reversible | confirm-first | Deletes a Wiki article Audit flagged as superseded (plain git-delete, no archive folder). |
+| wiki-audit-merge-duplicate | outward-facing / hard-to-reverse | confirm-first | Merges two Wiki articles judged to be the same concept — discards a separate identity, not just data. |
 """
 
 AREA_NOTE = """---
@@ -141,6 +147,14 @@ during your first planning session.
 
 ## Current goals
 -
+
+## Log
+Dated backlink trail — a capture informed this Area's curated thinking
+here, distinct from any resulting edit to Standard/Current goals above
+(`protocols/wiki.md`'s backlink-discipline ticket 06). Parallel to
+Projects' `## Notes & progress` and People's `## \U0001f5d3️ Log`; not the
+same as `_memory.md`'s `## Session log` (the Area agent's own working
+continuity notes).
 
 ## Related
 -
@@ -186,6 +200,16 @@ def onboard(brain_path: Path, area_name: str, area_agent: str, area_slug: str,
                 additions.append("| agent-dispatched | internal & reversible | confirm-first | Routes through a Reviewer commission before output surfaces. |")
             if "file-capture-today" not in existing:
                 additions.append("| file-capture-today | internal & reversible | confirm-first | Heading-aware insert of a checklist line into today's daily note's `## Today's tasks` section (requires the note to already exist). |")
+            if "wiki-compile" not in existing:
+                additions.append("| wiki-compile | internal & reversible | confirm-first | Resynthesizes a concept's Wiki article from archived captures + feedback (`protocols/charters/librarian.md`). |")
+            if "wiki-audit-fix-dead-link" not in existing:
+                additions.append("| wiki-audit-fix-dead-link | internal & reversible | confirm-first | Repairs or removes a broken wikilink found by Audit. |")
+            if "wiki-audit-relist-orphan" not in existing:
+                additions.append("| wiki-audit-relist-orphan | internal & reversible | confirm-first | Adds an unindexed article to `wiki/_index.md`, or removes a dead index entry. |")
+            if "wiki-audit-delete-stale" not in existing:
+                additions.append("| wiki-audit-delete-stale | internal & reversible | confirm-first | Deletes a Wiki article Audit flagged as superseded (plain git-delete, no archive folder). |")
+            if "wiki-audit-merge-duplicate" not in existing:
+                additions.append("| wiki-audit-merge-duplicate | outward-facing / hard-to-reverse | confirm-first | Merges two Wiki articles judged to be the same concept — discards a separate identity, not just data. |")
             if additions:
                 target.write_text(existing.rstrip() + "\n" + "\n".join(additions) + "\n")
                 created.append(rel_path + " (updated)")
@@ -197,6 +221,8 @@ def onboard(brain_path: Path, area_name: str, area_agent: str, area_slug: str,
                 additions.append("| Daily note | never |")
             if "| Close daily note |" not in existing:
                 additions.append("| Close daily note | never |")
+            if "| Compile |" not in existing:
+                additions.append("| Compile | never |")
             if additions:
                 target.write_text(existing.rstrip() + "\n" + "\n".join(additions) + "\n")
                 created.append(rel_path + " (updated)")
