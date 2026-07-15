@@ -2,7 +2,8 @@
 """Generate Dashboard.md — a pure derivation, safe to overwrite every run.
 
 Implements protocols/dashboard.md: surfaces overdue Routines (via
-heartbeat.py), pending Triage Plans (via execute.py's row parsing), a
+heartbeat.py), pending Triage Plans (via execute.py's row parsing),
+pending rule-diff reviews (via rule_diff_review.py's diff parsing), a
 same-day Action Log summary, and open Waiting For items (scanned from
 people/*.md). Read/link-only — writes <brain>/Dashboard.md, plus bumping
 its own "Dashboard" row in config/routine-state.md afterward (bookkeeping
@@ -20,6 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import heartbeat  # noqa: E402
 import execute  # noqa: E402
+import rule_diff_review  # noqa: E402
 
 
 def _wikilink(path: Path, root_dir: str) -> str:
@@ -45,6 +47,29 @@ def _pending_plans(brain_path: Path) -> list:
         if status_match and status_match.group(1) == "pending":
             plans.append(_pending_plan_summary(path))
     return plans
+
+
+def _pending_rule_diff_summary(path: Path) -> dict:
+    text = path.read_text()
+    diffs = rule_diff_review.parse_batch(text)
+    decided = sum(
+        1 for d in diffs
+        if d["approve_state"] is not None or d["reject_state"] is not None
+    )
+    return {"path": path, "total": len(diffs), "decided": decided, "pending": len(diffs) - decided}
+
+
+def _pending_rule_diffs(brain_path: Path) -> list:
+    diffs_dir = brain_path / "inbox" / "rule-diffs"
+    if not diffs_dir.is_dir():
+        return []
+
+    batches = []
+    for path in sorted(diffs_dir.glob("*.md")):
+        status_match = re.search(r'^status:\s*(\S+)', path.read_text(), re.MULTILINE)
+        if status_match and status_match.group(1) == "pending":
+            batches.append(_pending_rule_diff_summary(path))
+    return batches
 
 
 def _open_waiting_for(brain_path: Path) -> list:
@@ -97,6 +122,7 @@ def compute_dashboard_data(brain_path: Path, now: dt.datetime = None) -> dict:
         "date_str": now.strftime("%Y-%m-%d"),
         "overdue": heartbeat.compute_overdue(manifest, routine_state, now=now),
         "pending_plans": _pending_plans(brain_path),
+        "pending_rule_diffs": _pending_rule_diffs(brain_path),
         "waiting_for": _open_waiting_for(brain_path),
         "action_log": _action_log_summary(brain_path, now.strftime("%Y-%m-%d")),
     }
@@ -132,6 +158,17 @@ def render_dashboard(data: dict) -> str:
     else:
         lines.append("No pending Triage Plans.")
 
+    lines += ["", "## Pending review", ""]
+    if data["pending_rule_diffs"]:
+        for batch in data["pending_rule_diffs"]:
+            link = _wikilink(batch["path"], "inbox/rule-diffs")
+            lines.append(
+                f"- {link} — {batch['total']} diff(s), "
+                f"{batch['decided']} decided, {batch['pending']} awaiting review"
+            )
+    else:
+        lines.append("No pending rule-diff reviews.")
+
     lines += ["", "## Waiting For", ""]
     if data["waiting_for"]:
         for item in data["waiting_for"]:
@@ -152,7 +189,7 @@ def render_dashboard(data: dict) -> str:
         "",
         "---",
         "",
-        "Read/link-only: approve Triage Plan rows in their own files, and write feedback directly into today's Action Log. "
+        "Read/link-only: approve Triage Plan rows and rule-diff reviews in their own files, and write feedback directly into today's Action Log. "
         "This file is regenerated every run — don't edit it by hand.",
         "",
     ]

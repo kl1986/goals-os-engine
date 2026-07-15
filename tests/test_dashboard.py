@@ -15,6 +15,7 @@ class TestRenderDashboard(unittest.TestCase):
             "date_str": "2026-07-11",
             "overdue": [{"routine": "Triage", "last_run": "never", "cadence_days": 1}],
             "pending_plans": [{"path": Path("inbox/triage/2026-07-11-voice.md"), "total": 2, "ticked": 1, "pending": 1}],
+            "pending_rule_diffs": [{"path": Path("inbox/rule-diffs/2026-07-11-routing-rules.md"), "total": 2, "decided": 1, "pending": 1}],
             "waiting_for": [{"person": "Jane Doe", "path": Path("people/Jane Doe.md"), "text": "Jane to send over the draft budget"}],
             "action_log": {"exists": True, "entry_count": 2, "unreviewed": 2, "date_str": "2026-07-11"},
         }
@@ -22,6 +23,9 @@ class TestRenderDashboard(unittest.TestCase):
         self.assertIn("Triage (last run: never)", text)
         self.assertIn("[[inbox/triage/2026-07-11-voice.md]]", text)
         self.assertIn("1 ticked, 1 awaiting approval", text)
+        self.assertIn("## Pending review", text)
+        self.assertIn("[[inbox/rule-diffs/2026-07-11-routing-rules.md]]", text)
+        self.assertIn("2 diff(s), 1 decided, 1 awaiting review", text)
         self.assertIn("**Jane Doe** — Jane to send over the draft budget ([[people/Jane Doe.md]])", text)
         self.assertIn("2 entries logged today", text)
         self.assertIn("2 awaiting your feedback", text)
@@ -29,14 +33,56 @@ class TestRenderDashboard(unittest.TestCase):
     def test_renders_empty_states(self):
         data = {
             "generated": "2026-07-11 21:50", "date_str": "2026-07-11",
-            "overdue": [], "pending_plans": [], "waiting_for": [],
+            "overdue": [], "pending_plans": [], "pending_rule_diffs": [], "waiting_for": [],
             "action_log": {"exists": False, "entry_count": 0, "unreviewed": 0, "date_str": "2026-07-11"},
         }
         text = dashboard.render_dashboard(data)
         self.assertIn("Nothing overdue.", text)
         self.assertIn("No pending Triage Plans.", text)
+        self.assertIn("No pending rule-diff reviews.", text)
         self.assertIn("Nothing open.", text)
         self.assertIn("No Action Log entries yet today.", text)
+
+
+class TestPendingRuleDiffs(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.brain_path = Path(self._tmp.name)
+        (self.brain_path / "inbox" / "rule-diffs").mkdir(parents=True)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _write_batch(self, filename, body):
+        (self.brain_path / "inbox" / "rule-diffs" / filename).write_text(body)
+
+    def test_finds_pending_batch_with_decided_and_undecided_counts(self):
+        self._write_batch(
+            "2026-07-15-routing-rules.md",
+            "---\ntype: rule-diff-batch\nruleset: routing-rules\ndate: 2026-07-15\nstatus: pending\n---\n\n"
+            "# Rule diffs — routing-rules — 2026-07-15\n\n"
+            "### Diff 1 — sonia-email-to-work\n\n```\nif: source == \"email\"\nthen: route -> areas/work/_inbox.md\n```\n\n"
+            "**Why:** rationale\n\n**Evidence:** [[log/2026-07-08#14:32 — file-email]], [[log/2026-07-12#09:15 — file-email]]\n\n"
+            "- [x] (applied) Approve\n- [ ] Reject\n\n"
+            "### Diff 2 — junk-newsletter-discard\n\n```\nif: source == \"email\"\nthen: route -> discard\n```\n\n"
+            "**Why:** rationale\n\n**Evidence:** [[log/2026-07-09#08:00 — file-email]], [[log/2026-07-10#08:05 — file-email]]\n\n"
+            "- [ ] Approve\n- [ ] Reject\n",
+        )
+        batches = dashboard._pending_rule_diffs(self.brain_path)
+        self.assertEqual(len(batches), 1)
+        self.assertEqual(batches[0]["total"], 2)
+        self.assertEqual(batches[0]["decided"], 1)
+        self.assertEqual(batches[0]["pending"], 1)
+
+    def test_ignores_resolved_batches_and_missing_dir(self):
+        self._write_batch(
+            "2026-07-14-routing-rules.md",
+            "---\ntype: rule-diff-batch\nruleset: routing-rules\ndate: 2026-07-14\nstatus: resolved\n---\n\nnothing pending\n",
+        )
+        self.assertEqual(dashboard._pending_rule_diffs(self.brain_path), [])
+
+        empty_brain = Path(tempfile.mkdtemp())
+        self.assertEqual(dashboard._pending_rule_diffs(empty_brain), [])
 
 
 class TestOpenWaitingFor(unittest.TestCase):
@@ -112,6 +158,14 @@ class TestWriteDashboard(unittest.TestCase):
             "|---|---|---|---|---|---|---|\n"
             "| 1 | [[inbox/raw/voice/x.md]] | preview | Pass A | areas/home/_inbox.md | High | [ ] |\n"
         )
+        (self.brain_path / "inbox" / "rule-diffs").mkdir(parents=True)
+        (self.brain_path / "inbox" / "rule-diffs" / "2026-07-11-routing-rules.md").write_text(
+            "---\ntype: rule-diff-batch\nruleset: routing-rules\ndate: 2026-07-11\nstatus: pending\n---\n\n"
+            "# Rule diffs — routing-rules — 2026-07-11\n\n"
+            "### Diff 1 — sonia-email-to-work\n\n```\nif: source == \"email\"\nthen: route -> areas/work/_inbox.md\n```\n\n"
+            "**Why:** rationale\n\n**Evidence:** [[log/2026-07-08#14:32 — file-email]], [[log/2026-07-09#09:00 — file-email]]\n\n"
+            "- [ ] Approve\n- [ ] Reject\n"
+        )
         (self.brain_path / "log").mkdir()
         (self.brain_path / "log" / "2026-07-11.md").write_text(
             "# Action Log — 2026-07-11\n\n"
@@ -130,6 +184,9 @@ class TestWriteDashboard(unittest.TestCase):
         self.assertIn("Dashboard (last run: never)", text)
         self.assertIn("Version control (last run: never)", text)
         self.assertIn("2026-07-11-voice.md", text)
+        self.assertIn("## Pending review", text)
+        self.assertIn("2026-07-11-routing-rules.md", text)
+        self.assertIn("1 diff(s), 0 decided, 1 awaiting review", text)
         self.assertIn("2 entries logged today", text)
         self.assertIn("2 awaiting your feedback", text)
 
@@ -147,8 +204,10 @@ class TestWriteDashboard(unittest.TestCase):
     def test_second_run_has_no_stale_content_after_state_changes(self):
         dashboard.write_dashboard(self.brain_path, now=self.now)
 
-        # Triage Plan gets executed/archived; a new log entry lands.
+        # Triage Plan gets executed/archived; a rule-diff batch gets resolved
+        # and archived; a new log entry lands.
         (self.brain_path / "inbox" / "triage" / "2026-07-11-voice.md").unlink()
+        (self.brain_path / "inbox" / "rule-diffs" / "2026-07-11-routing-rules.md").unlink()
         with (self.brain_path / "log" / "2026-07-11.md").open("a") as f:
             f.write("\n### 11:00 — file-capture\n\n- **actor:** EA\n- **feedback:** ✓\n")
 
@@ -156,6 +215,8 @@ class TestWriteDashboard(unittest.TestCase):
         text = path.read_text()
         self.assertNotIn("2026-07-11-voice.md", text)
         self.assertIn("No pending Triage Plans.", text)
+        self.assertNotIn("2026-07-11-routing-rules.md", text)
+        self.assertIn("No pending rule-diff reviews.", text)
         self.assertIn("3 entries logged today", text)
         self.assertIn("2 awaiting your feedback", text)
 
