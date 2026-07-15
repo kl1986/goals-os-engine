@@ -73,7 +73,7 @@ class TestComputeOverdue(unittest.TestCase):
         self.assertEqual(
             overdue_names,
             {"Triage", "Dashboard", "Version control", "Planning session", "Daily note",
-             "Close daily note", "Compile", "Graduation check"},
+             "Close daily note", "Compile", "Graduation check", "Rule learning"},
         )
 
 
