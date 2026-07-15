@@ -11,7 +11,7 @@ Each entry is a level-3 heading (`### HH:MM — <action type>`, 24h clock, local
 
 - **entry id:** a1b2c3d4
 - **actor:** EA
-- **trigger:** Triage (Routine)
+- **trigger:** Execute (Routine)
 - **input link:** inbox/raw/email/2026-07-11-school-newsletter.md
 - **action type:** file-email
 - **action:** Filed under Kids > School comms; no reply needed.
@@ -29,7 +29,7 @@ A worked example spanning several entries: [`examples/action-log/2026-07-11.md`]
 |---|---|
 | `entry id` | A unique identifier for this log entry (e.g., an 8-character hex string). |
 | `actor` | The agent that **executed** the action — a System agent (`EA`, `Librarian`, `Coach`), an Area agent (the Brain-chosen name for that area's agent), or a Capability agent noted with its commissioner, e.g. `Researcher (via Will)`. Always the executor, never the approver. |
-| `trigger` | What caused this action to run: a Routine name (`Triage`, `Capture sweep`, …), a direct user instruction, or another agent's delegation (`commissioned by Will`). Distinguishes routine-driven autonomy from a one-off ask. |
+| `trigger` | What caused this action to run: a Routine name (`Triage`, `Capture sweep`, …), a direct user instruction, or another agent's delegation (`commissioned by Will`). Distinguishes routine-driven autonomy from a one-off ask. When the action was produced via a rule-set match (e.g. Execute acting on a Triage Plan's Pass A row), the value gets a `— rule <8-hex-id>` suffix (e.g. `Execute (Routine) — rule 7f3a9c21`) naming the specific rule that fired, computed by `scripts/triage.py`'s `compute_rule_id()`; entries with no rule match keep the bare Routine name. |
 | `input link` | A relative path (or `[[wikilink]]` when the Brain is opened in Obsidian) to the Raw Capture, project note, or other source file this action acted on or derived from. `—` when the action has no single input, e.g. a scheduled Routine firing with nothing new to act on. |
 | `action type` | The named category this action belongs to (`file-email`, `send-holding-reply`, …) — the unit graduation operates on (ADR-0006). Every action type carries a risk tier (internal & reversible vs outward-facing/hard-to-reverse) and a current autonomy level (confirm-first vs autonomous), both tracked in `config/`, never inferred from a single entry. |
 | `action` | A one-line, human-readable description of what was actually done — specific enough that a user skimming the day's log understands the entry without opening the input link. |

@@ -19,9 +19,20 @@ sys.path.insert(0, str(Path(__file__).parent))
 import heartbeat  # noqa: E402
 import log_action  # noqa: E402
 
+# The `rule` column (8th, between `confidence` and `approve`) is a
+# breaking schema change from the 7-column Triage Plan shape — a
+# pre-change row without it simply won't match this regex and will be
+# silently skipped by parse_plan_rows(). This is an intentional choice,
+# not an oversight: the real Brain's inbox/triage/ was verified empty at
+# merge time (no in-flight plans to preserve), so no graceful-fallback
+# parsing was built. If a Brain with in-flight pre-change plans ever
+# adopts this version, those plans' rows won't parse until hand-migrated
+# to add a `rule` column (use `—` for every existing row — they predate
+# rule-identifier tracking).
 ROW_RE = re.compile(
     r'^\|\s*(?P<n>\d+)\s*\|\s*\[\[(?P<capture>[^\]]+)\]\]\s*\|\s*(?P<preview>.*?)\s*\|'
     r'\s*(?P<route>Pass [AB])\s*\|\s*(?P<destination>.*?)\s*\|\s*(?P<confidence>.*?)\s*\|'
+    r'\s*(?P<rule>.*?)\s*\|'
     r'\s*(?P<approve>\[[ x]\](?:\s*\((?:done|dispatched)\))?)\s*\|\s*$'
 )
 FRONTMATTER_STATUS_RE = re.compile(r'^status:\s*\S+\s*$', re.MULTILINE)
@@ -175,9 +186,18 @@ def execute_plan(brain_path: Path, plan_path: Path, now: dt.datetime = None) -> 
         if action_type != "agent-dispatched":
             _move_collision_safe(raw_path, brain_path / "archive" / "inbox" / source)
 
+        # `rule` is always present in the groupdict (ROW_RE has no `?` on
+        # that capture group) — the empty-string/"—" check below is the
+        # real guard, this is just direct access, not a fallback.
+        rule_id = row["rule"]
+        if row["route"] == "Pass A" and rule_id and rule_id != "—":
+            trigger = f"Execute (Routine) — rule {rule_id}"
+        else:
+            trigger = "Execute (Routine)"
+
         entry = log_action.build_entry(
             actor="EA",
-            trigger="Execute (Routine)",
+            trigger=trigger,
             action_type=action_type,
             action=action_desc,
             confidence=row["confidence"] or "Medium",
