@@ -20,6 +20,7 @@ The Engine's single source of truth for every Routine's cadence and risk tier (A
 | Upgrade review | — | fortnightly — heartbeat-checkable | — | Librarian | declared, not implemented (Phase 7) |
 | Architecture review | — | quarterly — heartbeat-checkable | — | Librarian + user | declared, not implemented (Phase 7) |
 | Version control | [`version-control.md`](./version-control.md) | daily — heartbeat-checkable | internal & reversible | scripts | implemented (ticket 12) |
+| Rule learning | [`rule-learning.md`](./rule-learning.md) | weekly — heartbeat-checkable | internal & reversible | EA | implemented (execution batch) |
 | Metrics pulse | — | weekly — heartbeat-checkable | — | scripts | declared, not implemented (Phase 6) |
 
 ## Heartbeat-checkable vs event-triggered
