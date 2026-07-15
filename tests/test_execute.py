@@ -16,11 +16,11 @@ status: pending
 
 # Triage Plan — voice — 2026-07-11
 
-| # | capture | preview | route | destination | confidence | approve |
-|---|---|---|---|---|---|---|
-| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | areas/home/_inbox.md | High | [x] |
-| 2 | [[inbox/raw/voice/2026-07-11-140500-junk.md]] | not worth keeping | Pass B | discard | Medium | [x] |
-| 3 | [[inbox/raw/voice/2026-07-11-140600-later.md]] | deal with this later | Pass B | areas/home/_inbox.md | Medium | [ ] |
+| # | capture | preview | route | destination | confidence | rule | approve |
+|---|---|---|---|---|---|---|---|
+| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | areas/home/_inbox.md | High | a1b2c3d4 | [x] |
+| 2 | [[inbox/raw/voice/2026-07-11-140500-junk.md]] | not worth keeping | Pass B | discard | Medium | — | [x] |
+| 3 | [[inbox/raw/voice/2026-07-11-140600-later.md]] | deal with this later | Pass B | areas/home/_inbox.md | Medium | — | [ ] |
 """
 
 
@@ -50,12 +50,18 @@ class TestParsePlanRows(unittest.TestCase):
         self.assertEqual(rows[2]["approve"], "[ ]")
 
     def test_parses_dispatched_and_done_rows(self):
-        text = "| 1 | [[inbox/raw/x.md]] | p | Pass A | d | High | [x] (dispatched) |\n"
-        text += "| 2 | [[inbox/raw/y.md]] | p | Pass A | d | High | [x] (done) |\n"
+        text = "| 1 | [[inbox/raw/x.md]] | p | Pass A | d | High | a1b2c3d4 | [x] (dispatched) |\n"
+        text += "| 2 | [[inbox/raw/y.md]] | p | Pass A | d | High | — | [x] (done) |\n"
         rows = execute.parse_plan_rows(text)
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0]["approve"], "[x] (dispatched)")
         self.assertEqual(rows[1]["approve"], "[x] (done)")
+
+    def test_parses_rule_column(self):
+        rows = execute.parse_plan_rows(PLAN_TEXT)
+        self.assertEqual(rows[0]["rule"], "a1b2c3d4")
+        self.assertEqual(rows[1]["rule"], "—")
+        self.assertEqual(rows[2]["rule"], "—")
 
 
 class TestExecutePlan(unittest.TestCase):
@@ -98,6 +104,36 @@ class TestExecutePlan(unittest.TestCase):
         self.assertIn("file-capture", log_text)
         self.assertIn("discard-capture", log_text)
 
+    def test_pass_a_row_with_rule_gets_rule_aware_trigger(self):
+        # Row 1 is Pass A with rule id a1b2c3d4 — trigger records which
+        # rule fired, not just that a Routine ran.
+        execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
+        log_text = (self.brain_path / "log" / "2026-07-11.md").read_text()
+        self.assertIn("**trigger:** Execute (Routine) — rule a1b2c3d4", log_text)
+
+    def test_pass_b_row_keeps_bare_trigger(self):
+        # Row 2 is Pass B (discard) — no rule fired, trigger stays bare.
+        execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
+        log_text = (self.brain_path / "log" / "2026-07-11.md").read_text()
+        entries = log_text.split("### ")
+        discard_entry = next(e for e in entries if "discard-capture" in e)
+        self.assertIn("**trigger:** Execute (Routine)\n", discard_entry)
+        self.assertNotIn("rule a1b2c3d4", discard_entry)
+
+    def test_pass_a_row_without_a_rule_id_keeps_bare_trigger(self):
+        # Defensive case: a Pass A row whose rule cell is "—" (e.g. a
+        # hand-edited plan) must not produce a malformed trigger.
+        text = PLAN_TEXT.replace(
+            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | areas/home/_inbox.md | High | a1b2c3d4 | [x] |",
+            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | areas/home/_inbox.md | High | — | [x] |",
+        )
+        self.plan_path.write_text(text)
+        execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
+        log_text = (self.brain_path / "log" / "2026-07-11.md").read_text()
+        entries = log_text.split("### ")
+        file_entry = next(e for e in entries if "file-capture" in e and "discard" not in e)
+        self.assertIn("**trigger:** Execute (Routine)\n", file_entry)
+
     def test_plan_not_archived_while_a_row_remains_unticked(self):
         result = execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
         self.assertFalse(result["plan_executed"])
@@ -111,8 +147,8 @@ class TestExecutePlan(unittest.TestCase):
         execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
         text = self.plan_path.read_text()
         text = text.replace(
-            "| 3 | [[inbox/raw/voice/2026-07-11-140600-later.md]] | deal with this later | Pass B | areas/home/_inbox.md | Medium | [ ] |",
-            "| 3 | [[inbox/raw/voice/2026-07-11-140600-later.md]] | deal with this later | Pass B | areas/home/_inbox.md | Medium | [x] |",
+            "| 3 | [[inbox/raw/voice/2026-07-11-140600-later.md]] | deal with this later | Pass B | areas/home/_inbox.md | Medium | — | [ ] |",
+            "| 3 | [[inbox/raw/voice/2026-07-11-140600-later.md]] | deal with this later | Pass B | areas/home/_inbox.md | Medium | — | [x] |",
         )
         self.plan_path.write_text(text)
 
@@ -130,8 +166,8 @@ class TestExecutePlan(unittest.TestCase):
 
     def test_unmatched_destination_on_ticked_row_reports_error(self):
         text = PLAN_TEXT.replace(
-            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | areas/home/_inbox.md | High | [x] |",
-            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass B | unmatched | — | [x] |",
+            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | areas/home/_inbox.md | High | a1b2c3d4 | [x] |",
+            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass B | unmatched | — | — | [x] |",
         )
         self.plan_path.write_text(text)
         result = execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
@@ -149,8 +185,8 @@ class TestExecutePlan(unittest.TestCase):
 
     def test_agent_dispatched_leaves_raw_capture_and_returns_log_id(self):
         text = PLAN_TEXT.replace(
-            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | areas/home/_inbox.md | High | [x] |",
-            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | agent: Reviewer | High | [x] |",
+            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | areas/home/_inbox.md | High | a1b2c3d4 | [x] |",
+            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | agent: Reviewer | High | a1b2c3d4 | [x] |",
         )
         self.plan_path.write_text(text)
         result = execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
@@ -177,10 +213,10 @@ status: pending
 
 # Triage Plan — voice — 2026-07-13
 
-| # | capture | preview | route | destination | confidence | approve |
-|---|---|---|---|---|---|---|
-| 1 | [[inbox/raw/voice/2026-07-13-090000-call-plumber.md]] | Call the plumber | Pass A | today | High | [x] |
-| 2 | [[inbox/raw/voice/2026-07-13-091000-later.md]] | deal with this later | Pass B | areas/home/_inbox.md | Medium | [ ] |
+| # | capture | preview | route | destination | confidence | rule | approve |
+|---|---|---|---|---|---|---|---|
+| 1 | [[inbox/raw/voice/2026-07-13-090000-call-plumber.md]] | Call the plumber | Pass A | today | High | e5f6a7b8 | [x] |
+| 2 | [[inbox/raw/voice/2026-07-13-091000-later.md]] | deal with this later | Pass B | areas/home/_inbox.md | Medium | — | [ ] |
 """
 
 
@@ -242,6 +278,7 @@ class TestFileCaptureToday(unittest.TestCase):
         log_text = (self.brain_path / "log" / "2026-07-13.md").read_text()
         self.assertIn("file-capture-today", log_text)
         self.assertIn("Filed to today's daily note", log_text)
+        self.assertIn("**trigger:** Execute (Routine) — rule e5f6a7b8", log_text)
 
     def test_missing_todays_note_reports_error_leaves_row_and_capture_untouched(self):
         # No daily note written for today at all.
@@ -253,7 +290,7 @@ class TestFileCaptureToday(unittest.TestCase):
 
         # Row left untouched (still [x], not [x] (done)) and capture not moved.
         plan_text = self.plan_path.read_text()
-        self.assertIn("| Call the plumber | Pass A | today | High | [x] |", plan_text)
+        self.assertIn("| Call the plumber | Pass A | today | High | e5f6a7b8 | [x] |", plan_text)
         self.assertTrue(
             (self.brain_path / "inbox" / "raw" / "voice" / "2026-07-13-090000-call-plumber.md").exists()
         )
@@ -265,8 +302,8 @@ class TestFileCaptureToday(unittest.TestCase):
         # Tick the second row too, and give it a real destination — it
         # should still get filed even though row 1 errors out.
         text = self.plan_path.read_text().replace(
-            "| 2 | [[inbox/raw/voice/2026-07-13-091000-later.md]] | deal with this later | Pass B | areas/home/_inbox.md | Medium | [ ] |",
-            "| 2 | [[inbox/raw/voice/2026-07-13-091000-later.md]] | deal with this later | Pass B | areas/home/_inbox.md | Medium | [x] |",
+            "| 2 | [[inbox/raw/voice/2026-07-13-091000-later.md]] | deal with this later | Pass B | areas/home/_inbox.md | Medium | — | [ ] |",
+            "| 2 | [[inbox/raw/voice/2026-07-13-091000-later.md]] | deal with this later | Pass B | areas/home/_inbox.md | Medium | — | [x] |",
         )
         self.plan_path.write_text(text)
         (self.brain_path / "areas" / "home").mkdir(parents=True)

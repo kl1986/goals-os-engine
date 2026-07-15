@@ -13,6 +13,7 @@ classification) is the Adapter's job, not this script's.
 
 import argparse
 import datetime as dt
+import hashlib
 import re
 import sys
 from pathlib import Path
@@ -26,7 +27,34 @@ IF_RE = re.compile(
 THEN_RE = re.compile(r'^then:\s*route\s*->\s*(.+?)\s*$', re.IGNORECASE)
 CONFIDENCE_RE = re.compile(r'^confidence:\s*(High|Medium|Low)\s*$', re.IGNORECASE)
 
-TRIAGE_PLAN_HEADER = ["#", "capture", "preview", "route", "destination", "confidence", "approve"]
+TRIAGE_PLAN_HEADER = ["#", "capture", "preview", "route", "destination", "confidence", "rule", "approve"]
+
+
+def compute_rule_id(rule: dict) -> str:
+    """First 8 hex chars of a SHA-1 hash over a rule's normalized
+    if:/then:/confidence: text — a stable identifier for "which rule
+    fired", recorded on the Action Log's `trigger` field (see
+    `protocols/action-log-schema.md`).
+
+    Built from the rule's already-parsed fields (not the raw source
+    lines), so it's naturally invariant to whitespace-only edits in
+    `config/routing-rules.md` — `parse_routing_rules()` already collapses
+    those before this ever sees the rule. No DSL syntax change, no
+    migration of existing rules required.
+
+    Note: the reconstructed text mirrors IF_RE/THEN_RE/CONFIDENCE_RE's
+    grammar above. If that grammar's shape ever changes, update both in
+    the same change — a drift between them would silently change every
+    existing rule's id.
+    """
+    if_clause = f'source == "{rule.get("source", "")}"'
+    if rule.get("contains"):
+        if_clause += f' and contains("{rule["contains"]}")'
+    then_clause = f'route -> {rule.get("destination", "")}'
+    confidence_clause = rule.get("confidence", "Medium")
+    text = f"if: {if_clause} then: {then_clause} confidence: {confidence_clause}"
+    normalized = " ".join(text.split())
+    return hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:8]
 
 
 def parse_routing_rules(text: str) -> list:
@@ -80,7 +108,12 @@ def match_captures(captures: list, rules: list) -> dict:
     for capture in captures:
         rule = next((r for r in rules if _rule_matches(capture, r)), None)
         if rule:
-            routed.append({**capture, "destination": rule["destination"], "confidence": rule["confidence"]})
+            routed.append({
+                **capture,
+                "destination": rule["destination"],
+                "confidence": rule["confidence"],
+                "rule_id": compute_rule_id(rule),
+            })
         else:
             unmatched.append(capture)
     return {"routed": routed, "unmatched": unmatched}
@@ -144,10 +177,10 @@ def _row_id(capture: dict) -> str:
     return capture.get("path", f"inbox/raw/{capture['source']}/{capture['id']}.md")
 
 
-def _build_row(n: int, capture: dict, route: str, destination: str, confidence: str) -> str:
+def _build_row(n: int, capture: dict, route: str, destination: str, confidence: str, rule: str = "—") -> str:
     return (
         f"| {n} | [[{_row_id(capture)}]] | {_preview(capture.get('body', ''))} "
-        f"| {route} | {destination} | {confidence} | [ ] |"
+        f"| {route} | {destination} | {confidence} | {rule} | [ ] |"
     )
 
 
@@ -178,13 +211,16 @@ def write_triage_plan(brain_path: Path, source: str, match_result: dict, date_st
         if _row_id(capture) in already_present:
             continue
         row_count += 1
-        new_rows.append(_build_row(row_count, capture, "Pass A", capture["destination"], capture["confidence"]))
+        new_rows.append(_build_row(
+            row_count, capture, "Pass A", capture["destination"], capture["confidence"],
+            capture.get("rule_id", "—"),
+        ))
 
     for capture in match_result.get("unmatched", []):
         if _row_id(capture) in already_present:
             continue
         row_count += 1
-        new_rows.append(_build_row(row_count, capture, "Pass B", "unmatched", "—"))
+        new_rows.append(_build_row(row_count, capture, "Pass B", "unmatched", "—", "—"))
 
     if not plan_path.exists():
         if not new_rows:

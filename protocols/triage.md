@@ -39,13 +39,15 @@ status: pending
 
 # Triage Plan — text — 2026-07-11
 
-| # | capture | preview | route | destination | confidence | approve |
-|---|---|---|---|---|---|---|
-| 1 | [[inbox/raw/text/2026-07-11-140203-buy-milk]] | Remember to buy milk on the way home. | Pass A | areas/home/_inbox.md | High | [ ] |
-| 2 | [[inbox/raw/text/2026-07-11-140500-standup-notes]] | discussed the roadmap | Pass B | areas/work/_inbox.md | Medium | [ ] |
+| # | capture | preview | route | destination | confidence | rule | approve |
+|---|---|---|---|---|---|---|---|
+| 1 | [[inbox/raw/text/2026-07-11-140203-buy-milk]] | Remember to buy milk on the way home. | Pass A | areas/home/_inbox.md | High | a1b2c3d4 | [ ] |
+| 2 | [[inbox/raw/text/2026-07-11-140500-standup-notes]] | discussed the roadmap | Pass B | areas/work/_inbox.md | Medium | — | [ ] |
 ```
 
 `status` is `pending` until every row is executed, then flips to `executed` and the file moves to `archive/triage/` (see `execute.md`). Every row needs an explicit `[x]` tick before Execute will act on it — regardless of confidence; auto-execution on confidence is graduation, Phase 5.
+
+The `rule` column records which `config/routing-rules.md` rule fired for a Pass A row — its first 8 hex characters of a SHA-1 hash over that rule's normalized `if:`/`then:`/`confidence:` text (`scripts/triage.py`'s `compute_rule_id()`). Pass B rows (no rule fired) always carry `—`. Execute reads this column to record which specific rule produced an action, on the Action Log's `trigger` field (`action-log-schema.md`).
 
 A destination of literal `discard` (rather than a real path) tells Execute to archive the Raw Capture with nothing filed — the right call when Pass B decides an item isn't worth keeping. Pass A never writes `discard`; only in-session Pass B classification does.
 
