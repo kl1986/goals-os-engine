@@ -41,6 +41,32 @@ class TestActionTypeFor(unittest.TestCase):
         self.assertEqual(execute.action_type_for("Today"), "file-capture-today")
         self.assertEqual(execute.action_type_for("  TODAY  "), "file-capture-today")
 
+    def test_file_heading_destination_is_still_file_capture(self):
+        # `file#heading` is a `file-capture` sub-form, not a new action type.
+        self.assertEqual(
+            execute.action_type_for("people/Kat.md#🗣️ To Discuss"), "file-capture"
+        )
+
+
+class TestSplitDestination(unittest.TestCase):
+    def test_plain_file_has_no_heading(self):
+        self.assertEqual(
+            execute.split_destination("areas/home/_inbox.md"),
+            ("areas/home/_inbox.md", None),
+        )
+
+    def test_file_hash_heading_splits_into_both_parts(self):
+        self.assertEqual(
+            execute.split_destination("people/Kat.md#🗣️ To Discuss"),
+            ("people/Kat.md", "🗣️ To Discuss"),
+        )
+
+    def test_whitespace_around_parts_is_trimmed(self):
+        self.assertEqual(
+            execute.split_destination("  people/Kat.md # ⏳ Waiting For  "),
+            ("people/Kat.md", "⏳ Waiting For"),
+        )
+
 
 class TestParsePlanRows(unittest.TestCase):
     def test_parses_all_three_rows(self):
@@ -315,6 +341,103 @@ class TestFileCaptureToday(unittest.TestCase):
         self.assertIn(
             "[[inbox/raw/voice/2026-07-13-091000-later.md]]",
             (self.brain_path / "areas" / "home" / "_inbox.md").read_text(),
+        )
+
+
+PERSON_PLAN_TEXT = """---
+type: triage-plan
+source: text
+date: 2026-07-16
+status: pending
+---
+
+# Triage Plan — text — 2026-07-16
+
+| # | capture | preview | route | destination | confidence | rule | approve |
+|---|---|---|---|---|---|---|---|
+| 1 | [[inbox/raw/text/2026-07-16-090000-ask-kat.md]] | Ask Kat about the mortgage | Pass B | people/Kat.md#🗣️ To Discuss | Medium | — | [x] |
+| 2 | [[inbox/raw/text/2026-07-16-091000-waiting-kat.md]] | Waiting on Kat for the invoice | Pass B | people/Kat.md#⏳ Waiting For | Medium | — | [ ] |
+"""
+
+
+class TestFileCaptureHeading(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.brain_path = Path(self._tmp.name)
+        (self.brain_path / "people").mkdir(parents=True)
+        (self.brain_path / "inbox" / "raw" / "text").mkdir(parents=True)
+        (self.brain_path / "inbox" / "triage").mkdir(parents=True)
+        for name in ("2026-07-16-090000-ask-kat.md", "2026-07-16-091000-waiting-kat.md"):
+            (self.brain_path / "inbox" / "raw" / "text" / name).write_text("---\nraw: true\n---\nbody\n")
+        self.plan_path = self.brain_path / "inbox" / "triage" / "2026-07-16-text.md"
+        self.plan_path.write_text(PERSON_PLAN_TEXT)
+        self.now = dt.datetime(2026, 7, 16, 15, 0)
+        self.hub_path = self.brain_path / "people" / "Kat.md"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _write_hub(self, to_discuss_body="<!-- Open agenda items -->"):
+        self.hub_path.write_text(
+            "---\ntype: person\nname: Kat\n---\n\n"
+            "# Kat\n> Wife\n\n"
+            f"## 🗣️ To Discuss\n{to_discuss_body}\n\n"
+            "## ⏳ Waiting For\n<!-- Things delegated -->\n\n"
+            "## 🧠 Context\n<!-- Durable facts -->\n\n"
+            "## 🗓️ Log\n- 2026-01-01 — created\n"
+        )
+
+    def test_happy_path_inserts_before_next_heading_not_eof(self):
+        self._write_hub("- Existing agenda item")
+        result = execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
+
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(len(result["filed"]), 1)
+
+        hub_text = self.hub_path.read_text()
+        section = hub_text.split("## 🗣️ To Discuss\n", 1)[1].split("\n## ", 1)[0]
+        lines = [ln for ln in section.splitlines() if ln.strip()]
+        self.assertEqual(lines, [
+            "- Existing agenda item",
+            "- 2026-07-16 — [[inbox/raw/text/2026-07-16-090000-ask-kat.md]] — Ask Kat about the mortgage",
+        ])
+        # It landed before the next heading, not appended at EOF.
+        self.assertIn("## ⏳ Waiting For", hub_text.split("2026-07-16 —", 1)[1])
+
+    def test_archives_capture_and_marks_row_done(self):
+        self._write_hub()
+        execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
+
+        self.assertFalse(
+            (self.brain_path / "inbox" / "raw" / "text" / "2026-07-16-090000-ask-kat.md").exists()
+        )
+        self.assertTrue(
+            (self.brain_path / "archive" / "inbox" / "text" / "2026-07-16-090000-ask-kat.md").exists()
+        )
+        plan_text = self.plan_path.read_text()
+        self.assertIn("[x] (done)", plan_text)
+
+    def test_missing_heading_reports_error_leaves_row_untouched(self):
+        # Hub exists but has no "To Discuss" heading at all.
+        self.hub_path.write_text("---\ntype: person\nname: Kat\n---\n\n# Kat\n\n## 🧠 Context\nsome facts\n")
+        result = execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
+
+        self.assertEqual(len(result["errors"]), 1)
+        self.assertIn("To Discuss", result["errors"][0])
+        self.assertEqual(result["filed"], [])
+        self.assertTrue(
+            (self.brain_path / "inbox" / "raw" / "text" / "2026-07-16-090000-ask-kat.md").exists()
+        )
+
+    def test_missing_file_reports_error_never_creates_hub(self):
+        # No Kat.md at all — a file#heading destination never creates it.
+        result = execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
+
+        self.assertEqual(len(result["errors"]), 1)
+        self.assertIn("does not exist", result["errors"][0])
+        self.assertFalse(self.hub_path.exists())
+        self.assertTrue(
+            (self.brain_path / "inbox" / "raw" / "text" / "2026-07-16-090000-ask-kat.md").exists()
         )
 
 

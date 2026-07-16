@@ -1,6 +1,6 @@
-# Protocol: Triage (v0)
+# Protocol: Triage (v0.1)
 
-Classifies Raw Captures against structured routing rules and writes a Triage Plan — the confirm-first review gate between Capture and Execute. Introduces `inbox/triage/` as the Brain's first new layout convention since Phase 1.
+Classifies Raw Captures against structured routing rules and writes a Triage Plan — the confirm-first review gate between Capture and Execute. Introduces `inbox/triage/` as the Brain's first new layout convention since Phase 1. v0.1 (16/07/2026, `capture-source-plugins` map, ticket 09/15) extends Pass B's classification scope to also consider `people/` as a valid destination — see "Pass B and Person Hubs" below.
 
 ## Principle 10 — classify-only
 
@@ -12,6 +12,16 @@ The one exception is bookkeeping: each run also bumps its own `Triage` row in `c
 
 - **Pass A — deterministic rule match.** `scripts/triage.py`'s `match_captures()` checks every un-triaged capture against `config/routing-rules.md`'s `if`/`then` rules. Zero LLM calls, fully reproducible. A match routes the capture with the rule's destination and confidence.
 - **Pass B — model classification (unmatched only).** Anything Pass A can't resolve is the Adapter's job, done in-session: the model proposes a destination and confidence for the row. The script's own output for a Pass-B item is always `unmatched` — **never a guess** — so a bad automatic classification can't slip in disguised as Pass A.
+
+## Pass B and Person Hubs
+
+Pass B considers `people/` a valid destination folder, same standing as `areas/` and `projects/` — it reads `people/_aliases.md` and the `people/` folder listing as context (the same cheap-first-index pattern `wiki/_index.md` already establishes for the Wiki) before deciding whether a capture is person-specific. This is ordinary Pass B judgment, not a new capability or a dedicated resolver script — no `people.py`-style fuzzy-matching/graduated-trust logic is ported from v1; Triage's structural confirm-first-always model (every row needs an explicit tick regardless of confidence) already gives Kelvin the same safety net a wrong guess needs, for free.
+
+When Pass B judges a capture person-specific, it proposes a **section-targeted** destination — `people/<Full Name>.md#<heading>` (see `people-tracking.md`'s schema for the four sections) — rather than a bare file path, since a Person Hub has real markdown sections and a blind end-of-file append would land content in the wrong place. `execute.md`'s `file-capture` action type implements the `file#heading` destination form.
+
+Which section is also ordinary Pass B judgment, not a dedicated classifier: outbound framing ("raise X with Kat", "ask Kat about Y") routes to `## 🗣️ To Discuss`; inbound framing ("waiting on Kat for Y", "Kat owes me X") routes to `## ⏳ Waiting For`. Unlike `routing-rules.md`'s deterministic `if`/`then` DSL (built for a non-linguistic signal like sender address — see ticket 03's `route.py` precedent), outbound-vs-inbound framing is a natural-language judgment call squarely inside what Pass B already does — no dedicated classifier script is warranted here.
+
+Name resolution is also Pass B's own in-session judgment, reading the alias table and hub listing as context — not a ported script. A wrong guess (typo, ambiguous name) just gets corrected by Kelvin editing the `destination` cell before ticking, the same as any other Pass B misclassification.
 
 ## Routing rules (`config/routing-rules.md`)
 
