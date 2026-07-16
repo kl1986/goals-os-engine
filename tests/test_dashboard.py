@@ -18,6 +18,11 @@ class TestRenderDashboard(unittest.TestCase):
             "pending_rule_diffs": [{"path": Path("inbox/rule-diffs/2026-07-11-routing-rules.md"), "total": 2, "decided": 1, "pending": 1}],
             "waiting_for": [{"person": "Jane Doe", "path": Path("people/Jane Doe.md"), "text": "Jane to send over the draft budget"}],
             "action_log": {"exists": True, "entry_count": 2, "unreviewed": 2, "date_str": "2026-07-11"},
+            "dropzone": [
+                {"name": "Expenses", "count": 3},
+                {"name": "Homework", "count": 1},
+                {"name": "Recipes", "count": 2},
+            ],
         }
         text = dashboard.render_dashboard(data)
         self.assertIn("Triage (last run: never)", text)
@@ -29,12 +34,21 @@ class TestRenderDashboard(unittest.TestCase):
         self.assertIn("**Jane Doe** — Jane to send over the draft budget ([[people/Jane Doe.md]])", text)
         self.assertIn("2 entries logged today", text)
         self.assertIn("2 awaiting your feedback", text)
+        self.assertIn("## 📁 Dropzone awaiting processing", text)
+        self.assertIn("- Expenses: 3 waiting", text)
+        self.assertIn("- Homework: 1 waiting", text)
+        self.assertIn("- Recipes: 2 waiting", text)
 
     def test_renders_empty_states(self):
         data = {
             "generated": "2026-07-11 21:50", "date_str": "2026-07-11",
             "overdue": [], "pending_plans": [], "pending_rule_diffs": [], "waiting_for": [],
             "action_log": {"exists": False, "entry_count": 0, "unreviewed": 0, "date_str": "2026-07-11"},
+            "dropzone": [
+                {"name": "Expenses", "count": 0},
+                {"name": "Homework", "count": 0},
+                {"name": "Recipes", "count": 0},
+            ],
         }
         text = dashboard.render_dashboard(data)
         self.assertIn("Nothing overdue.", text)
@@ -42,6 +56,9 @@ class TestRenderDashboard(unittest.TestCase):
         self.assertIn("No pending rule-diff reviews.", text)
         self.assertIn("Nothing open.", text)
         self.assertIn("No Action Log entries yet today.", text)
+        self.assertIn("- Expenses: 0 waiting", text)
+        self.assertIn("- Homework: 0 waiting", text)
+        self.assertIn("- Recipes: 0 waiting", text)
 
 
 class TestPendingRuleDiffs(unittest.TestCase):
@@ -138,6 +155,76 @@ class TestOpenWaitingFor(unittest.TestCase):
         self.assertEqual(dashboard._open_waiting_for(empty_brain), [])
 
 
+class TestDropzoneCounts(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        # Files/dropzone/ lives as a sibling of the Brain root, not inside it
+        # (Documents/Vault vs Documents/Files/dropzone) — see
+        # tickets/capture-source-plugins/execution/shared-context.md.
+        self.documents_root = Path(self._tmp.name)
+        self.brain_path = self.documents_root / "Vault"
+        self.brain_path.mkdir()
+        self.dropzone = self.documents_root / "Files" / "dropzone"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _touch(self, *parts):
+        p = self.dropzone.joinpath(*parts)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("x")
+
+    def test_counts_files_per_subfolder_in_spec_order(self):
+        self._touch("Expenses", "a.pdf")
+        self._touch("Expenses", "b.pdf")
+        self._touch("Expenses", "c.pdf")
+        self._touch("Homework", "spelling.jpg")
+        self._touch("Recipes", "curry.jpg")
+        self._touch("Recipes", "soup.jpg")
+
+        counts = dashboard._dropzone_counts(self.brain_path)
+        self.assertEqual(
+            counts,
+            [
+                {"name": "Expenses", "count": 3},
+                {"name": "Homework", "count": 1},
+                {"name": "Recipes", "count": 2},
+            ],
+        )
+
+    def test_missing_dropzone_returns_zero_counts(self):
+        # No Files/dropzone/ at all — still returns the three named
+        # subfolders, all zero, rather than an empty list.
+        counts = dashboard._dropzone_counts(self.brain_path)
+        self.assertEqual(
+            counts,
+            [
+                {"name": "Expenses", "count": 0},
+                {"name": "Homework", "count": 0},
+                {"name": "Recipes", "count": 0},
+            ],
+        )
+
+    def test_non_recursive_ignores_nested_files(self):
+        # Homework/ has real-world sub-subfolders (Kara/Khloe/Both) — the
+        # spec is explicit this section is top-level-only, so files nested
+        # a level deeper don't count.
+        self._touch("Homework", "Kara", "spelling.jpg")
+        self._touch("Homework", "top-level.jpg")
+
+        counts = dashboard._dropzone_counts(self.brain_path)
+        homework = next(c for c in counts if c["name"] == "Homework")
+        self.assertEqual(homework["count"], 1)
+
+    def test_ignores_hidden_files(self):
+        self._touch("Recipes", ".DS_Store")
+        self._touch("Recipes", "curry.jpg")
+
+        counts = dashboard._dropzone_counts(self.brain_path)
+        recipes = next(c for c in counts if c["name"] == "Recipes")
+        self.assertEqual(recipes["count"], 1)
+
+
 class TestWriteDashboard(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -189,6 +276,13 @@ class TestWriteDashboard(unittest.TestCase):
         self.assertIn("1 diff(s), 0 decided, 1 awaiting review", text)
         self.assertIn("2 entries logged today", text)
         self.assertIn("2 awaiting your feedback", text)
+        # No Files/dropzone/ sibling exists next to this temp Brain root —
+        # the section still renders, with all-zero counts, rather than
+        # erroring or being omitted.
+        self.assertIn("## 📁 Dropzone awaiting processing", text)
+        self.assertIn("- Expenses: 0 waiting", text)
+        self.assertIn("- Homework: 0 waiting", text)
+        self.assertIn("- Recipes: 0 waiting", text)
 
     def test_bumps_dashboards_own_last_run_but_reflects_pre_run_overdue_state(self):
         path = dashboard.write_dashboard(self.brain_path, now=self.now)

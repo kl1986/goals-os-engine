@@ -4,12 +4,14 @@
 Implements protocols/dashboard.md: surfaces overdue Routines (via
 heartbeat.py), pending Triage Plans (via execute.py's row parsing),
 pending rule-diff reviews (via rule_diff_review.py's diff parsing), a
-same-day Action Log summary, and open Waiting For items (scanned from
-people/*.md). Read/link-only — writes <brain>/Dashboard.md, plus bumping
-its own "Dashboard" row in config/routine-state.md afterward (bookkeeping
-only — see protocols/dashboard.md); approval and feedback happen in the
-linked files, not here — Waiting For items are only ever logged on a
-Person Hub, never here.
+same-day Action Log summary, open Waiting For items (scanned from
+people/*.md), and pending Dropzone item counts (scanned from
+Files/dropzone/*, a sibling of the Brain root, not inside it). Read/
+link-only — writes <brain>/Dashboard.md, plus bumping its own "Dashboard"
+row in config/routine-state.md afterward (bookkeeping only — see
+protocols/dashboard.md); approval and feedback happen in the linked
+files, not here — Waiting For items are only ever logged on a Person Hub,
+never here.
 """
 
 import argparse
@@ -102,6 +104,29 @@ def _open_waiting_for(brain_path: Path) -> list:
     return items
 
 
+DROPZONE_SUBFOLDERS = ("Expenses", "Homework", "Recipes")
+
+
+def _dropzone_counts(brain_path: Path) -> list:
+    # Files/dropzone/ lives outside the Brain entirely — a sibling of the
+    # Brain root under the Documents root (Documents/Vault vs
+    # Documents/Files/dropzone), not a path inside brain_path.
+    dropzone_dir = brain_path.parent / "Files" / "dropzone"
+
+    counts = []
+    for name in DROPZONE_SUBFOLDERS:
+        subfolder = dropzone_dir / name
+        if subfolder.is_dir():
+            count = sum(
+                1 for p in subfolder.iterdir()
+                if p.is_file() and not p.name.startswith(".")
+            )
+        else:
+            count = 0
+        counts.append({"name": name, "count": count})
+    return counts
+
+
 def _action_log_summary(brain_path: Path, date_str: str) -> dict:
     log_path = brain_path / "log" / f"{date_str}.md"
     if not log_path.exists():
@@ -125,6 +150,7 @@ def compute_dashboard_data(brain_path: Path, now: dt.datetime = None) -> dict:
         "pending_rule_diffs": _pending_rule_diffs(brain_path),
         "waiting_for": _open_waiting_for(brain_path),
         "action_log": _action_log_summary(brain_path, now.strftime("%Y-%m-%d")),
+        "dropzone": _dropzone_counts(brain_path),
     }
 
 
@@ -184,6 +210,10 @@ def render_dashboard(data: dict) -> str:
         lines.append(f"- {log['unreviewed']} awaiting your feedback (marked `—`)")
     else:
         lines.append("No Action Log entries yet today.")
+
+    lines += ["", "## 📁 Dropzone awaiting processing", ""]
+    for item in data["dropzone"]:
+        lines.append(f"- {item['name']}: {item['count']} waiting")
 
     lines += [
         "",
