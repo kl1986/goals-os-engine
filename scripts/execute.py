@@ -136,7 +136,7 @@ def _file_capture(brain_path: Path, destination_rel: str, entry_line: str):
         new_text = _insert_before_next_heading(text, heading, entry_line)
         if new_text is None:
             raise ExecuteError(
-                f"{dest_path} has no '## {heading}' section."
+                f"Destination file has no '## {heading}' section: {dest_path}"
             )
         dest_path.write_text(new_text)
         return
