@@ -21,7 +21,7 @@ The Claude Code binding for `protocols/execute.md`. All the logic — which rows
 python3 <path-to-goals-os-engine>/scripts/execute.py --brain "<path-to-brain>" --plan "<path-to-plan-or-relative-to-brain>"
 ```
 
-3. Report back: how many rows were filed, how many discarded, how many dispatched, and relay any errors verbatim (a row referencing a missing Raw Capture, a destination directory that doesn't exist, or a still-`unmatched` destination — none of these crash the run, but they need the user's attention). 
+3. Report back: how many rows were filed, how many discarded, how many dispatched, and relay any errors verbatim (a row referencing a missing Raw Capture, a destination directory that doesn't exist, a still-`unmatched` destination, or — for a `file#heading` destination like a Person Hub row — the target file or the named heading not existing — none of these crash the run, but they need the user's attention). 
 4. If there are any `agent-dispatched` rows, you MUST capture the `log_id` printed in the script output (e.g. `Dispatched row 1 (inbox/raw/x.md) with log_id: a1b2c3d4`). Then invoke the `commission` skill to dispatch them to the Reviewer gate. Frame a clear task, wait for the Reviewer's pass/fail, and append the result as a chained Action Log entry **by passing the captured `log_id` to the commission skill as the parent reference**. Then update the row in the Triage Plan from `[x] (dispatched)` to `[x] (done)` if it passed.
 5. If the plan's every row is now done, tell the user it's been archived to `archive/triage/`.
 

@@ -53,6 +53,22 @@ def action_type_for(destination: str) -> str:
     return "file-capture"
 
 
+def split_destination(destination: str) -> tuple:
+    """Split a `file-capture` destination into `(file_path, heading)`.
+
+    `heading` is `None` for a plain file destination — existing behavior,
+    a blind end-of-file append. A `file#heading` destination (e.g.
+    `people/Kat.md#🗣️ To Discuss`) targets a specific `## heading`
+    section: content is inserted before the next heading, never appended
+    blindly at EOF (protocols/execute.md, ticket 09's generalization of
+    `file-capture-today`'s existing insert-before-heading mechanic to any
+    file/heading, not just today's daily note)."""
+    if "#" in destination:
+        file_path, heading = destination.split("#", 1)
+        return file_path.strip(), heading.strip()
+    return destination.strip(), None
+
+
 def parse_plan_rows(text: str) -> list:
     """Return every table row as a dict, in file order. Pure — no I/O."""
     rows = []
@@ -84,8 +100,47 @@ def _move_collision_safe(src: Path, dest_dir: Path) -> Path:
     return dest
 
 
+def _insert_before_next_heading(text: str, heading: str, entry_line: str) -> str:
+    """Insert `entry_line` as the last line of the `## {heading}` section
+    (before the next `## ` heading, or EOF if it's the last section) —
+    never a blind end-of-file append.
+
+    Shared by `file-capture-today` (fixed heading, today's daily note)
+    and a `file#heading`-form `file-capture` destination (any file, any
+    heading) — the same mechanic generalized rather than duplicated
+    (ticket 09 / protocols/execute.md)."""
+    pattern = re.compile(
+        rf"^## {re.escape(heading)}\s*\n(.*?)(?=\n## |\Z)", re.MULTILINE | re.DOTALL
+    )
+    match = pattern.search(text)
+    if not match:
+        return None
+    body = match.group(1)
+    if body and not body.endswith("\n"):
+        body += "\n"
+    body += entry_line
+    return text[:match.start(1)] + body + text[match.end(1):]
+
+
 def _file_capture(brain_path: Path, destination_rel: str, entry_line: str):
-    dest_path = brain_path / destination_rel
+    file_rel, heading = split_destination(destination_rel)
+    dest_path = brain_path / file_rel
+
+    if heading:
+        if not dest_path.exists():
+            raise ExecuteError(
+                f"Destination file does not exist: {dest_path} "
+                "— a file#heading destination never creates the file."
+            )
+        text = dest_path.read_text()
+        new_text = _insert_before_next_heading(text, heading, entry_line)
+        if new_text is None:
+            raise ExecuteError(
+                f"Destination file has no '## {heading}' section: {dest_path}"
+            )
+        dest_path.write_text(new_text)
+        return
+
     if not dest_path.parent.is_dir():
         raise ExecuteError(
             f"Destination directory does not exist: {dest_path.parent} "
@@ -111,16 +166,12 @@ def _file_capture_today(brain_path: Path, date_str: str, entry_line: str):
             "— file-capture-today never creates it."
         )
     text = note_path.read_text()
-    match = re.search(r"^## Today's tasks\s*\n(.*?)(?=\n## |\Z)", text, re.MULTILINE | re.DOTALL)
-    if not match:
+    new_text = _insert_before_next_heading(text, "Today's tasks", entry_line)
+    if new_text is None:
         raise ExecuteError(
             f"Today's daily note has no '## Today's tasks' section: {note_path}"
         )
-    body = match.group(1)
-    if body and not body.endswith("\n"):
-        body += "\n"
-    body += entry_line
-    note_path.write_text(text[:match.start(1)] + body + text[match.end(1):])
+    note_path.write_text(new_text)
 
 
 def execute_plan(brain_path: Path, plan_path: Path, now: dt.datetime = None) -> dict:
