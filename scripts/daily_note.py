@@ -80,7 +80,7 @@ def _project_next_actions(brain_path: Path) -> list:
         if not status_match:
             continue
             
-        section_match = re.search(r"^## Next action\s*\n(.*?)(?=\n## |\Z)", text, re.MULTILINE | re.DOTALL)
+        section_match = re.search(r"^## Next actions?\s*\n(.*?)(?=\n## |\Z)", text, re.MULTILINE | re.DOTALL)
         if not section_match:
             continue
             
@@ -142,6 +142,16 @@ def generate_daily_note(brain_path: Path, now: dt.datetime = None) -> Path:
     date_str = now.strftime("%Y-%m-%d")
     note_path = brain_path / f"{date_str}.md"
     
+    # Auto-archive any older daily notes before proceeding
+    for path in brain_path.glob("????-??-??.md"):
+        if path.name == f"{date_str}.md":
+            continue
+        try:
+            note_date = dt.datetime.strptime(path.stem, "%Y-%m-%d")
+            close_daily_note(brain_path, note_date)
+        except ValueError:
+            pass
+            
     project_items = _project_next_actions(brain_path)
     project_lines = [item["rendered"] for item in project_items]
     
@@ -218,7 +228,7 @@ def close_daily_note(brain_path: Path, now: dt.datetime = None) -> dict:
     section_match = re.search(r"^## Project next actions\s*\n(.*?)(?=\n## |\Z)", text, re.MULTILINE | re.DOTALL)
     if section_match:
         for line in section_match.group(1).splitlines():
-            if not re.match(r"^- \[x\] (.+)$", line):
+            if not re.match(r"^- \[[xX]\] (.+)$", line):
                 continue
                 
             src_match = re.search(r"<!-- daily-note-src: (?P<path>[^|]+) \| (?P<verbatim>.+?) -->", line)
@@ -233,7 +243,7 @@ def close_daily_note(brain_path: Path, now: dt.datetime = None) -> dict:
             
             if project_path.exists():
                 proj_text = project_path.read_text()
-                proj_section_match = re.search(r"^## Next action\s*\n(.*?)(?=\n## |\Z)", proj_text, re.MULTILINE | re.DOTALL)
+                proj_section_match = re.search(r"^## Next actions?\s*\n(.*?)(?=\n## |\Z)", proj_text, re.MULTILINE | re.DOTALL)
                 if proj_section_match:
                     proj_lines = proj_section_match.group(1).splitlines()
                     expected_line = f"- [ ] {captured_verbatim}"
