@@ -12,20 +12,58 @@ MONDAY = dt.datetime(2026, 7, 13, 8, 0)  # "today" in most fixtures
 SUNDAY = dt.datetime(2026, 7, 12, 21, 0)  # "yesterday" — the archived note's date
 
 
-def _write_project(brain_path, slug, name, status, next_action_lines, notes_body=""):
+def _write_project(brain_path, slug, name, status):
+    """Create a Project note (`projects/<slug>/<name>.md`) — since ADR-0017
+    the note carries no Next-action/task content itself; it only exists so
+    `_project_next_actions()` can gate a `tasks/projects/<slug>/` ticket on
+    this note's `status:`. Includes `type: project` per
+    `project-tracking.md`'s schema — this is the key `_project_statuses()`
+    uses to identify the real Project note among any other loose `.md`
+    files that might share its folder."""
     projects_dir = brain_path / "projects" / slug
     projects_dir.mkdir(parents=True, exist_ok=True)
-    body = "\n".join(next_action_lines)
     (projects_dir / f"{name}.md").write_text(
-        f"---\nstatus: {status}\n---\n\n"
+        f"---\ntype: project\nstatus: {status}\n---\n\n"
         f"# {name}\n\n"
         "## Why this matters\nSome reason.\n\n"
-        f"## Next action\n{body}\n\n"
         "## Backlog\n- Something else\n\n"
-        f"## Notes & progress\n{notes_body}\n\n"
+        "## Notes & progress\n\n"
         "## Related\n"
     )
     return f"projects/{slug}/{name}.md"
+
+
+def _write_loose_project_file(brain_path, slug, filename, content="Some unrelated notes.\n"):
+    """Create a non-Project-note `.md` file directly under `projects/<slug>/`
+    — mimicking the real `projects/goals-os/` folder, which holds ~17 loose
+    files (CONTEXT.md, CLAUDE.md, PRD - Goals OS.md, shared-context files,
+    etc.) alongside the one real Project note. These files have no
+    `type: project` frontmatter (often no frontmatter at all) and must never
+    be mistaken for the Project note itself, however they sort
+    alphabetically against it."""
+    projects_dir = brain_path / "projects" / slug
+    projects_dir.mkdir(parents=True, exist_ok=True)
+    (projects_dir / filename).write_text(content)
+    return f"projects/{slug}/{filename}"
+
+
+def _write_ticket(brain_path, kind, slug, ticket_stem, title, status, **extra_frontmatter):
+    """Create a ticket file under `tasks/projects/<slug>/` or
+    `tasks/areas/<slug>/` (`kind` is "projects" or "areas"), per ADR-0015's
+    schema. Returns its path relative to `brain_path`."""
+    tasks_dir = brain_path / "tasks" / kind / slug
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    frontmatter_lines = [f"status: {status}", "type: task"]
+    for key, value in extra_frontmatter.items():
+        frontmatter_lines.append(f"{key}: {value}")
+    frontmatter = "\n".join(frontmatter_lines)
+    title_line = f"# {title}\n\n" if title is not None else ""
+    (tasks_dir / f"{ticket_stem}.md").write_text(
+        f"---\n{frontmatter}\n---\n\n"
+        f"{title_line}"
+        "## Execution Plan & Details\n"
+    )
+    return f"tasks/{kind}/{slug}/{ticket_stem}.md"
 
 
 def _write_person(brain_path, filename, name, waiting_lines):
@@ -171,47 +209,86 @@ class TestProjectNextActions(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_filters_to_status_active_only(self):
-        _write_project(self.brain_path, "clear-the-garage", "Clear the garage", "Active",
-                        ["- [ ] Order shelves for the shed"])
-        _write_project(self.brain_path, "simmer-project", "Simmer project", "Simmering",
-                        ["- [ ] Should not appear"])
-        _write_project(self.brain_path, "done-project", "Done project", "Complete",
-                        ["- [ ] Should not appear either"])
+        _write_project(self.brain_path, "clear-the-garage", "Clear the garage", "Active")
+        _write_ticket(self.brain_path, "projects", "clear-the-garage", "clear-the-garage-1",
+                      "Order shelves for the shed", "prioritised")
+        _write_project(self.brain_path, "simmer-project", "Simmer project", "Simmering")
+        _write_ticket(self.brain_path, "projects", "simmer-project", "simmer-project-1",
+                      "Should not appear", "prioritised")
+        _write_project(self.brain_path, "done-project", "Done project", "Complete")
+        _write_ticket(self.brain_path, "projects", "done-project", "done-project-1",
+                      "Should not appear either", "prioritised")
         path = daily_note.generate_daily_note(self.brain_path, now=MONDAY)
         text = path.read_text()
         self.assertIn("Order shelves for the shed", text)
         self.assertNotIn("Should not appear", text)
         self.assertNotIn("Should not appear either", text)
 
-    def test_takes_first_unchecked_line_in_file_order_only(self):
-        _write_project(self.brain_path, "clear-the-garage", "Clear the garage", "Active",
-                        ["- [ ] Order shelves for the shed", "- [ ] Buy paint"])
+    def test_one_row_per_matching_ticket_no_cap(self):
+        _write_project(self.brain_path, "clear-the-garage", "Clear the garage", "Active")
+        _write_ticket(self.brain_path, "projects", "clear-the-garage", "clear-the-garage-1",
+                      "Order shelves for the shed", "prioritised")
+        _write_ticket(self.brain_path, "projects", "clear-the-garage", "clear-the-garage-2",
+                      "Buy paint", "in-progress")
+        _write_ticket(self.brain_path, "projects", "clear-the-garage", "clear-the-garage-3",
+                      "Not yet started, backlog", "backlog")
         path = daily_note.generate_daily_note(self.brain_path, now=MONDAY)
         text = path.read_text()
-        self.assertIn("Order shelves for the shed", text)
-        self.assertNotIn("Buy paint", text)
+        # Both prioritised and in-progress surface, one row each — no cap.
+        self.assertIn("- [ ] Order shelves for the shed — [[clear-the-garage-1]]", text)
+        self.assertIn("- [ ] Buy paint — [[clear-the-garage-2]]", text)
+        # A backlog-status ticket is silently skipped.
+        self.assertNotIn("Not yet started, backlog", text)
 
-    def test_skips_empty_or_fully_ticked_next_action_silently(self):
-        _write_project(self.brain_path, "clear-the-garage", "Clear the garage", "Active", [])
-        _write_project(self.brain_path, "fix-the-fence", "Fix the fence", "Active",
-                        ["- [x] Already done"])
+    def test_area_ticket_surfaces_unconditionally_no_project_gate(self):
+        _write_ticket(self.brain_path, "areas", "health", "health-1",
+                      "Book a dentist appointment", "prioritised")
+        path = daily_note.generate_daily_note(self.brain_path, now=MONDAY)
+        text = path.read_text()
+        self.assertIn("- [ ] Book a dentist appointment — [[health-1]]", text)
+
+    def test_project_ticket_skipped_silently_when_parent_project_not_active(self):
+        _write_project(self.brain_path, "clear-the-garage", "Clear the garage", "Simmering")
+        _write_ticket(self.brain_path, "projects", "clear-the-garage", "clear-the-garage-1",
+                      "Order shelves for the shed", "prioritised")
         # Should not raise, and Project next actions section stays empty.
         path = daily_note.generate_daily_note(self.brain_path, now=MONDAY)
         text = path.read_text()
         section = text.split("## Project next actions\n", 1)[1].split("\n## ", 1)[0]
         self.assertEqual(section.strip(), "")
 
-    def test_render_format_includes_project_wikilink_and_src_comment(self):
-        _write_project(self.brain_path, "clear-the-garage", "Clear the garage", "Active",
-                        ["- [ ] Order shelves for the shed"])
+    def test_render_format_uses_ticket_title_and_direct_wikilink_no_src_comment(self):
+        _write_project(self.brain_path, "clear-the-garage", "Clear the garage", "Active")
+        _write_ticket(self.brain_path, "projects", "clear-the-garage", "clear-the-garage-1",
+                      "Order shelves for the shed", "prioritised")
         path = daily_note.generate_daily_note(self.brain_path, now=MONDAY)
         text = path.read_text()
         self.assertIn(
-            "- [ ] Order shelves for the shed — [[Clear the garage]] "
-            "<!-- daily-note-src: projects/clear-the-garage/Clear the garage.md "
-            "| Order shelves for the shed -->",
+            "- [ ] Order shelves for the shed — [[clear-the-garage-1]]",
             text,
         )
+        self.assertNotIn("daily-note-src", text)
+        self.assertNotIn("Clear the garage.md", text)
+
+    def test_project_status_resolved_correctly_when_folder_has_loose_non_project_files(self):
+        # Regression: projects/goals-os/ in the real Vault has ~17 loose
+        # .md files (CONTEXT.md, CLAUDE.md, PRD - Goals OS.md, shared-context
+        # files, etc.) alongside the one real Project note. "Agents to
+        # build.md" sorts alphabetically before "Goals OS.md" and has no
+        # frontmatter at all — a status resolver that just takes the first
+        # file found in the folder (rather than identifying the real
+        # Project note by its `type: project` key) silently resolves this
+        # project's status to None, and every ticket under it vanishes from
+        # every future daily note.
+        _write_loose_project_file(self.brain_path, "goals-os", "Agents to build.md")
+        _write_loose_project_file(self.brain_path, "goals-os", "CLAUDE.md")
+        _write_loose_project_file(self.brain_path, "goals-os", "CONTEXT.md")
+        _write_project(self.brain_path, "goals-os", "Goals OS", "Active")
+        _write_ticket(self.brain_path, "projects", "goals-os", "goals-os-28",
+                      "Some real ticket", "prioritised")
+        path = daily_note.generate_daily_note(self.brain_path, now=MONDAY)
+        text = path.read_text()
+        self.assertIn("- [ ] Some real ticket — [[goals-os-28]]", text)
 
 
 class TestWaitingFor(unittest.TestCase):
@@ -248,8 +325,9 @@ class TestAdditiveSameDayRefresh(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.brain_path = Path(self._tmp.name)
-        _write_project(self.brain_path, "clear-the-garage", "Clear the garage", "Active",
-                        ["- [ ] Order shelves for the shed"])
+        _write_project(self.brain_path, "clear-the-garage", "Clear the garage", "Active")
+        _write_ticket(self.brain_path, "projects", "clear-the-garage", "clear-the-garage-1",
+                      "Order shelves for the shed", "prioritised")
         _write_person(self.brain_path, "Jane Doe.md", "Jane Doe",
                       ["- [ ] #waiting-for Jane to send the budget"])
 
@@ -265,9 +343,10 @@ class TestAdditiveSameDayRefresh(unittest.TestCase):
         text = text.replace("## Notes\n", "## Notes\nSome private notes I wrote.\n")
         path.write_text(text)
 
-        # A new Active project shows up mid-day.
-        _write_project(self.brain_path, "fix-the-fence", "Fix the fence", "Active",
-                        ["- [ ] Buy new hinges"])
+        # A new prioritised ticket shows up mid-day under a new Active project.
+        _write_project(self.brain_path, "fix-the-fence", "Fix the fence", "Active")
+        _write_ticket(self.brain_path, "projects", "fix-the-fence", "fix-the-fence-1",
+                      "Buy new hinges", "prioritised")
 
         daily_note.generate_daily_note(self.brain_path, now=MONDAY)
         second_text = path.read_text()
@@ -275,14 +354,11 @@ class TestAdditiveSameDayRefresh(unittest.TestCase):
         # Manual edits untouched.
         self.assertIn("- [x] Manually ticked task", second_text)
         self.assertIn("Some private notes I wrote.", second_text)
-        # No duplicate of the original project row (it appears twice per line
-        # by design — once in the visible text, once in the trailing
-        # daily-note-src comment — so count whole rendered lines, not the
-        # substring).
+        # No duplicate of the original ticket row.
         self.assertEqual(
-            second_text.count("- [ ] Order shelves for the shed — [[Clear the garage]]"), 1
+            second_text.count("- [ ] Order shelves for the shed — [[clear-the-garage-1]]"), 1
         )
-        # New project row added.
+        # New ticket row added.
         self.assertIn("Buy new hinges", second_text)
         # No duplicate Waiting For row.
         self.assertEqual(second_text.count("Jane to send the budget"), 1)
@@ -317,30 +393,22 @@ class TestCloseDailyNote(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.brain_path = Path(self._tmp.name)
 
-        self.garage_path = _write_project(
-            self.brain_path, "clear-the-garage", "Clear the garage", "Active",
-            ["- [ ] Order shelves for the shed"],
-            notes_body="12/07/2026 — Some earlier entry.",
+        self.garage_ticket_path = _write_ticket(
+            self.brain_path, "projects", "clear-the-garage", "clear-the-garage-1",
+            "Order shelves for the shed", "prioritised",
         )
-        # Fence project's Next action has already been edited/removed at the
-        # source since this morning's generation — the daily-note line will
-        # be a "miss" when Close daily note tries to reconcile it.
-        self.fence_path = _write_project(
-            self.brain_path, "fix-the-fence", "Fix the fence", "Active",
-            ["- [ ] A completely different task now"],
-        )
+        # No "fix-the-fence-1" ticket exists at all — simulates a ticket
+        # that's been renamed/moved/deleted since this morning's generation.
+        # The daily-note line pointing at it will be a "miss" when Close
+        # daily note tries to reconcile it.
 
         (self.brain_path / "2026-07-13.md").write_text(
             "---\ntype: daily-note\ndate: 2026-07-13\ntags:\n  - daily-note\n---\n\n"
             "# Monday, 13 July 2026\n\n"
             "## Today's tasks\n- [ ] Some manual task\n\n"
             "## Project next actions\n"
-            "- [x] Order shelves for the shed — [[Clear the garage]] "
-            "<!-- daily-note-src: projects/clear-the-garage/Clear the garage.md "
-            "| Order shelves for the shed -->\n"
-            "- [x] Buy new hinges — [[Fix the fence]] "
-            "<!-- daily-note-src: projects/fix-the-fence/Fix the fence.md "
-            "| Buy new hinges -->\n\n"
+            "- [x] Order shelves for the shed — [[clear-the-garage-1]]\n"
+            "- [x] Buy new hinges — [[fix-the-fence-1]]\n\n"
             "## Waiting for\n- Jane to send the budget — [[Jane Doe]]\n\n"
             "## Notes\nSome notes.\n"
         )
@@ -348,20 +416,18 @@ class TestCloseDailyNote(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def test_happy_path_removes_from_next_action_and_appends_done_entry(self):
+    def test_happy_path_writes_status_done_and_resolved_to_ticket_frontmatter(self):
         daily_note.close_daily_note(self.brain_path, now=MONDAY)
-        garage_text = (self.brain_path / self.garage_path).read_text()
-        self.assertNotIn("- [ ] Order shelves for the shed", garage_text)
-        self.assertIn("13/07/2026 — Order shelves for the shed (done, via daily note)", garage_text)
-        self.assertIn("12/07/2026 — Some earlier entry.", garage_text)  # prior entries preserved
+        ticket_text = (self.brain_path / self.garage_ticket_path).read_text()
+        self.assertIn("status: done", ticket_text)
+        self.assertIn("resolved: 2026-07-13", ticket_text)
+        self.assertNotIn("status: prioritised", ticket_text)
 
-    def test_miss_path_does_not_crash_and_does_not_touch_source_or_ticked_state(self):
+    def test_miss_path_does_not_crash_and_does_not_touch_ticked_state(self):
         summary = daily_note.close_daily_note(self.brain_path, now=MONDAY)
-        fence_text = (self.brain_path / self.fence_path).read_text()
-        self.assertIn("- [ ] A completely different task now", fence_text)
         self.assertEqual(summary["reconciled"], 1)
         self.assertEqual(len(summary["misses"]), 1)
-        self.assertEqual(summary["misses"][0]["project_path"], self.fence_path)
+        self.assertEqual(summary["misses"][0]["ticket_file"], "fix-the-fence-1")
 
         log_text = (self.brain_path / "log" / "2026-07-13.md").read_text()
         self.assertIn("Row not found at source, no write-back performed", log_text)

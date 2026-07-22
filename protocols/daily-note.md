@@ -1,4 +1,4 @@
-# Protocol: Daily note (v1)
+# Protocol: Daily note (v2)
 
 A single, once-daily "command centre" note at the Brain root. Distinct from the pure-derivation Dashboard, the daily note is additive-only within a day and accumulates edits (ticked checkboxes) the user makes during the day. It is governed by two Routines: "Daily note" (generation, morning) and "Close daily note" (reconciliation + archive, evening).
 
@@ -42,36 +42,31 @@ The generation Routine (cadence morning, heartbeat-checkable daily, risk tier in
 
 On completion, it bumps its own "Daily note" row in `config/routine-state.md` (`heartbeat.bump`), matching every other Routine.
 
-## Project next-actions sourcing
+## Project next-actions sourcing (ADR-0018)
 
-Computed as part of the same generation scan (read-only, nothing changes on the project note at generation time).
+Computed as part of the same generation scan (read-only, nothing changes at the source at generation time).
 
-- **Filter:** Every project under `projects/*/*.md` with frontmatter `status: Active` (a deliberate stopgap, no other filter).
-- Takes the first unchecked (`- [ ]`) line under that project's `## Next action` section, in file order. A project with an empty or fully-ticked `## Next action` is silently skipped (not an error).
-- **Rendered:** `- [ ] {task text} — [[Project Name]]` where `Project Name` is the project note's filename without `.md`.
+- **Source:** ticket files under `tasks/projects/*/*.md` and `tasks/areas/*/*.md` (`docs/agents/issue-tracker.md`'s schema, ADR-0015) — no longer a Project note's own `## Next action` section, which no longer exists (`project-tracking.md` v1, ADR-0017).
+- **Filter:** any ticket with frontmatter `status: prioritised` or `status: in-progress`. **No per-Project/Area cap** — every matching ticket renders its own row, not just the first.
+- **Project gating:** a ticket under `tasks/projects/<slug>/` only surfaces if the parent Project note (`projects/<slug>/<Project Name>.md`) has `status: Active` — the ticket's own folder name (`<slug>`) is how the parent Project note is resolved. A ticket whose parent Project isn't Active is silently skipped (not an error), same posture as v1's project-status filter.
+- **Area gating:** a ticket under `tasks/areas/<slug>/` surfaces unconditionally — Areas have no lifecycle status field to gate on.
+- **Rendered:** `- [ ] {ticket title} — [[<ticket file>]]`, where `{ticket title}` is the ticket note's H1 (its first `# ` line) and `<ticket file>` is the ticket's filename stem — the wikilink resolves directly to the ticket, not to the parent Project/Area note.
 
 ## Write-back mechanism
 
-`## Project next actions` is the **one section** that carries a machine-readable reference back to its source, because its ticked items imply an action to take elsewhere (removing the item at the source). Manual entries, triaged captures, and Waiting For items never carry this reference.
+`## Project next actions` is the **one section** whose ticked items imply an action to take elsewhere (marking the ticket done at its source). Manual entries, triaged captures, and Waiting For items never carry any such reference.
 
-The reference is an HTML comment trailing the line, invisible in Obsidian preview:
-`<!-- daily-note-src: <project note path relative to brain root> | <verbatim original Next-action line text, exactly as it appears after "- [ ] "> -->`
+Unlike v1, there is **no `<!-- daily-note-src -->` HTML comment** — the `[[ticket file]]` wikilink itself is the stable reference back to the source (a ticket has a permanent identity — its filename — that a Next-action line's free text never had), so nothing else needs to travel alongside the visible line.
 
-Full example:
-```markdown
-- [ ] Order shelves for the shed — [[Clear the garage]] <!-- daily-note-src: projects/clear-the-garage/Clear the garage.md | Order shelves for the shed -->
-```
-
-- Matching is by this verbatim text, not a line number or index. This is robust to the source list reordering, and survives the user hand-editing the *visible* task wording in the daily note (reconciliation only ever reads the comment, never the visible text).
-- **What "written back" means:** Run by the "Close daily note" Routine (evening) over every ticked `## Project next actions` line. The matched source line is removed entirely from the project's `## Next action` section, and a dated done-entry is appended to that project's `## Notes & progress` section. E.g. `13/07/2026 — Order shelves for the shed (done, via daily note)` (date in DD/MM/YYYY, British convention).
-- **Conflict handling:** If the exact verbatim text can't be found in the project's current `## Next action` (e.g. edited, removed, or already done another way), it does **not** silently drop it. The daily-note checkbox stays ticked as-is, but an Action Log entry is written recording the miss (outcome `"Row not found at source, no write-back performed"`). This is the same "report, don't swallow" posture `execute.md` uses for unfileable Triage rows.
+- **What "written back" means:** Run by the "Close daily note" Routine (evening) over every ticked `## Project next actions` line. It parses the `[[ticket file]]` wikilink out of the line, locates that ticket file under `tasks/**/`, and writes `status: done` plus `resolved: <today, ISO YYYY-MM-DD>` directly into the ticket's own frontmatter. No second store, nothing to reconcile against a Notes & progress section.
+- **Conflict handling:** if the linked ticket file can't be found under `tasks/**/` (e.g. renamed, moved, or deleted since this morning's generation), it does **not** silently drop it. The daily-note checkbox stays ticked as-is, but an Action Log entry is written recording the miss (outcome `"Row not found at source, no write-back performed"`). This is the same "report, don't swallow" posture `execute.md` uses for unfileable Triage rows, and v1's own miss-path before it.
 
 ## Close daily note Routine
 
 A thin, mechanical bookend Routine (cadence evening, heartbeat-checkable daily, risk tier internal & reversible, owner EA). Uses `scripts/daily_note.py`'s `close_daily_note` plus an Adapter skill.
 
 What it does, in order, nothing more:
-1. Runs the write-back reconciliation above over every ticked `## Project next actions` line (parses `daily-note-src`, matches at source, removes + appends done-entry, or logs the miss per-line — no separate summary log entry on top of the per-line ones).
+1. Runs the write-back reconciliation above over every ticked `## Project next actions` line (parses the `[[ticket file]]` wikilink, locates the ticket under `tasks/**/`, writes `status: done` + `resolved:` to its frontmatter, or logs the miss per-line — no separate summary log entry on top of the per-line ones).
 2. Moves `<brain>/YYYY-MM-DD.md` to `<brain>/archive/daily-notes/YYYY-MM-DD.md`.
 
 It bumps its own "Close daily note" row in `config/routine-state.md`. Note explicitly: carry-forward (scanning yesterday's archive for unchecked Today's-tasks lines) is **NOT** this routine's job — that is the *next morning's* generation step reading backward. Close-daily-note is a thin, mechanical bookend with no new judgement calls.
@@ -92,10 +87,11 @@ A new `today` destination literal (parallel to the existing `discard` literal) p
 
 See [`adapters/claude-code/skills/daily-note-generate/`](../adapters/claude-code/skills/daily-note-generate/) and [`adapters/claude-code/skills/daily-note-close/`](../adapters/claude-code/skills/daily-note-close/).
 
-## Non-goals (v1)
+## Non-goals (v2)
 
 - No live checkboxes with real effects beyond what's described (ticking a Project next-actions box only does something once Close daily note runs, not instantly).
 - No Waiting-For write-back (closing an item always happens on the Person Hub, never here).
 - No delegation-from-daily-note (assigning a task to a person/agent from within the daily note is not yet specified).
 - No cross-day continuation of the same file (a new day is always a new file, carry-forward is copy-only).
 - No metrics/AFK ratio (later Routine, Phase 6, same as Dashboard's non-goal).
+- No rename of the `## Project next actions` heading, despite it now also carrying Area tickets — flagged as a candidate follow-up only (ADR-0018), not actioned here.

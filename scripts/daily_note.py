@@ -68,42 +68,127 @@ def _replace_section(text: str, heading: str, new_lines: list) -> str:
     return text[:match.start(1)] + new_body + text[match.end(1):]
 
 
-def _project_next_actions(brain_path: Path) -> list:
+def _frontmatter_field(text: str, key: str):
+    """Read one top-level frontmatter key's raw value, or None if absent/blank."""
+    match = re.search(rf'^{re.escape(key)}:\s*(.*?)\s*$', text, re.MULTILINE)
+    if not match:
+        return None
+    value = match.group(1).strip()
+    return value or None
+
+
+def _update_frontmatter(text: str, updates: dict) -> str:
+    """Set (or add) top-level frontmatter keys in place, scoped to the
+    leading ``---\\n...\\n---\\n`` block only, so a `status:`-shaped word
+    later in the body is never touched. Existing keys are overwritten;
+    keys not already present are appended at the end of the frontmatter
+    block (defensive — ADR-0015 tickets should already carry every key,
+    even if blank)."""
+    fm_match = re.match(r"^(---\n)(.*?)(\n---\n)", text, re.DOTALL)
+    if not fm_match:
+        return text
+
+    lines = fm_match.group(2).split("\n")
+    remaining = dict(updates)
+    for i, line in enumerate(lines):
+        key_match = re.match(r"^([\w-]+):.*$", line)
+        if key_match and key_match.group(1) in remaining:
+            key = key_match.group(1)
+            lines[i] = f"{key}: {remaining.pop(key)}"
+    for key, value in remaining.items():
+        lines.append(f"{key}: {value}")
+
+    new_fm_body = "\n".join(lines)
+    return text[:fm_match.start(2)] + new_fm_body + text[fm_match.end(2):]
+
+
+def _ticket_title(text: str, fallback: str) -> str:
+    """The ticket note's H1 (first '# ' line), or `fallback` (the filename
+    stem) if the ticket has no title line at all."""
+    match = re.search(r'^# (.+)$', text, re.MULTILINE)
+    if match:
+        return match.group(1).strip()
+    return fallback
+
+
+def _project_statuses(brain_path: Path) -> dict:
+    """<slug> -> Project note's `status:` value, reading every `.md` file
+    under `projects/<slug>/` and keeping the one whose frontmatter has
+    `type: project` (per `project-tracking.md`'s schema). A project folder
+    can hold other loose, non-Project markdown files alongside the real
+    Project note (e.g. `projects/goals-os/` has `CONTEXT.md`, PRDs,
+    shared-context notes, etc.) — picking "the alphabetically-first file"
+    is not safe, since one of those could easily sort first and have no
+    `status:` (or the wrong one) at all. Files without `type: project` are
+    skipped entirely, regardless of alphabetical order."""
     projects_dir = brain_path / "projects"
     if not projects_dir.is_dir():
+        return {}
+
+    statuses = {}
+    for slug_dir in sorted(p for p in projects_dir.iterdir() if p.is_dir()):
+        for note_path in sorted(slug_dir.glob("*.md")):
+            text = note_path.read_text()
+            if _frontmatter_field(text, "type") != "project":
+                continue
+            status = _frontmatter_field(text, "status")
+            if status is not None:
+                statuses[slug_dir.name] = status
+            break
+    return statuses
+
+
+def _ticket_item(brain_path: Path, ticket_path: Path):
+    """Return a rendering dict for `ticket_path` if it's a prioritised/
+    in-progress ticket, else None (silently skipped — not an error)."""
+    text = ticket_path.read_text()
+    status = _frontmatter_field(text, "status")
+    if status not in ("prioritised", "in-progress"):
+        return None
+
+    title = _ticket_title(text, ticket_path.stem)
+    rel_path = ticket_path.relative_to(brain_path).as_posix()
+    return {
+        "ticket_path": rel_path,
+        "ticket_file": ticket_path.stem,
+        "title": title,
+        "rendered": f"- [ ] {title} — [[{ticket_path.stem}]]",
+    }
+
+
+def _project_next_actions(brain_path: Path) -> list:
+    """Scan `tasks/projects/*/` and `tasks/areas/*/` for `status: prioritised`
+    or `status: in-progress` tickets (ADR-0018) — no per-Project/Area cap,
+    one row per matching ticket. A `tasks/projects/<slug>/` ticket only
+    surfaces if the parent Project note (`projects/<slug>/...`) has
+    `status: Active`; a `tasks/areas/<slug>/` ticket surfaces unconditionally
+    (Areas have no lifecycle status field)."""
+    tasks_dir = brain_path / "tasks"
+    if not tasks_dir.is_dir():
         return []
-        
+
     items = []
-    for path in sorted(projects_dir.glob("*/*.md")):
-        text = path.read_text()
-        status_match = re.search(r'^status:\s*Active\s*$', text, re.MULTILINE)
-        if not status_match:
-            continue
-            
-        section_match = re.search(r"^## Next actions?\s*\n(.*?)(?=\n## |\Z)", text, re.MULTILINE | re.DOTALL)
-        if not section_match:
-            continue
-            
-        for line in section_match.group(1).splitlines():
-            task_match = re.match(r"^- \[ \] (.+)$", line)
-            if task_match:
-                verbatim = task_match.group(1).rstrip()
-                if not verbatim:
-                    continue
-                rel_path = path.relative_to(brain_path).as_posix()
-                rendered = (
-                    f"- [ ] {verbatim} — [[{path.stem}]] "
-                    f"<!-- daily-note-src: {rel_path} | {verbatim} -->"
-                )
-                items.append({
-                    "project_path": rel_path,
-                    "project_name": path.stem,
-                    "verbatim": verbatim,
-                    "rendered": rendered,
-                })
-                break
-                
-    items.sort(key=lambda x: x["project_path"])
+
+    project_statuses = _project_statuses(brain_path)
+    projects_tasks_dir = tasks_dir / "projects"
+    if projects_tasks_dir.is_dir():
+        for slug_dir in sorted(p for p in projects_tasks_dir.iterdir() if p.is_dir()):
+            if project_statuses.get(slug_dir.name) != "Active":
+                continue
+            for ticket_path in sorted(slug_dir.glob("*.md")):
+                item = _ticket_item(brain_path, ticket_path)
+                if item:
+                    items.append(item)
+
+    areas_tasks_dir = tasks_dir / "areas"
+    if areas_tasks_dir.is_dir():
+        for slug_dir in sorted(p for p in areas_tasks_dir.iterdir() if p.is_dir()):
+            for ticket_path in sorted(slug_dir.glob("*.md")):
+                item = _ticket_item(brain_path, ticket_path)
+                if item:
+                    items.append(item)
+
+    items.sort(key=lambda x: x["ticket_path"])
     return items
 
 
@@ -189,15 +274,18 @@ def generate_daily_note(brain_path: Path, now: dt.datetime = None) -> Path:
         original_text = text
         
         def project_existing_ok(candidate_line: str, existing_lines: list) -> bool:
-            candidate_match = re.search(r"<!-- daily-note-src: (?P<path>[^|]+) \| (?P<verbatim>.+?) -->", candidate_line)
+            # The `[[ticket file]]` wikilink is the stable identity now (no
+            # daily-note-src comment) — dedupe on that, not the visible
+            # title text, so a same-day rerun survives the ticket's own H1
+            # changing mid-day just as it survived hand-edits before.
+            candidate_match = re.search(r"\[\[([^\]]+)\]\]", candidate_line)
             if not candidate_match:
                 return False
-            cand_path, cand_verb = candidate_match.group("path").strip(), candidate_match.group("verbatim").strip()
+            cand_target = candidate_match.group(1).strip()
             for line in existing_lines:
-                m = re.search(r"<!-- daily-note-src: (?P<path>[^|]+) \| (?P<verbatim>.+?) -->", line)
-                if m:
-                    if m.group("path").strip() == cand_path and m.group("verbatim").strip() == cand_verb:
-                        return True
+                m = re.search(r"\[\[([^\]]+)\]\]", line)
+                if m and m.group(1).strip() == cand_target:
+                    return True
             return False
             
         text = _append_new_lines_to_section(text, "Project next actions", project_existing_ok, project_lines)
@@ -210,101 +298,86 @@ def generate_daily_note(brain_path: Path, now: dt.datetime = None) -> Path:
     return note_path
 
 
+def _find_ticket_file(tasks_dir: Path, ticket_file: str):
+    """Locate `<ticket_file>.md` anywhere under `tasks/**/` — the wikilink
+    target is a filename stem, not a path, since ADR-0018 links directly to
+    the ticket rather than a parent Project/Area note. Returns the first
+    match, or None if not found."""
+    if not tasks_dir.is_dir():
+        return None
+    matches = list(tasks_dir.rglob(f"{ticket_file}.md"))
+    return matches[0] if matches else None
+
+
 def close_daily_note(brain_path: Path, now: dt.datetime = None) -> dict:
-    """Reconcile ticked Project-next-actions lines against their source projects,
-    then move <brain>/{date}.md to <brain>/archive/daily-notes/{date}.md.
-    Bumps heartbeat 'Close daily note'. Returns a summary dict."""
+    """Reconcile ticked Project-next-actions lines against their source
+    tickets (ADR-0018), then move <brain>/{date}.md to
+    <brain>/archive/daily-notes/{date}.md. Bumps heartbeat 'Close daily
+    note'. Returns a summary dict."""
     now = now or dt.datetime.now()
     date_str = now.strftime("%Y-%m-%d")
     note_path = brain_path / f"{date_str}.md"
-    
+
     summary = {"reconciled": 0, "misses": [], "archived_to": None}
-    
+
     if not note_path.exists():
         heartbeat.bump(brain_path, "Close daily note", now)
         return summary
-        
+
     text = note_path.read_text()
     section_match = re.search(r"^## Project next actions\s*\n(.*?)(?=\n## |\Z)", text, re.MULTILINE | re.DOTALL)
     if section_match:
+        tasks_dir = brain_path / "tasks"
         for line in section_match.group(1).splitlines():
             if not re.match(r"^- \[[xX]\] (.+)$", line):
                 continue
-                
-            src_match = re.search(r"<!-- daily-note-src: (?P<path>[^|]+) \| (?P<verbatim>.+?) -->", line)
-            if not src_match:
+
+            link_match = re.search(r"\[\[([^\]]+)\]\]", line)
+            if not link_match:
                 continue
-                
-            captured_path_str = src_match.group("path").strip()
-            captured_verbatim = src_match.group("verbatim").strip()
-            
-            project_path = brain_path / captured_path_str
-            hit = False
-            
-            if project_path.exists():
-                proj_text = project_path.read_text()
-                proj_section_match = re.search(r"^## Next actions?\s*\n(.*?)(?=\n## |\Z)", proj_text, re.MULTILINE | re.DOTALL)
-                if proj_section_match:
-                    proj_lines = proj_section_match.group(1).splitlines()
-                    expected_line = f"- [ ] {captured_verbatim}"
-                    
-                    found_idx = -1
-                    for i, pline in enumerate(proj_lines):
-                        if pline.rstrip() == expected_line:
-                            found_idx = i
-                            break
-                            
-                    if found_idx != -1:
-                        hit = True
-                        del proj_lines[found_idx]
-                        new_next_action_body = ""
-                        for pline in proj_lines:
-                            new_next_action_body += f"{pline}\n"
-                        proj_text = proj_text[:proj_section_match.start(1)] + new_next_action_body + proj_text[proj_section_match.end(1):]
-                        
-                        notes_match = re.search(r"^## Notes & progress\s*\n(.*?)(?=\n## |\Z)", proj_text, re.MULTILINE | re.DOTALL)
-                        if notes_match:
-                            notes_body = notes_match.group(1)
-                            done_entry = f"{now.strftime('%d/%m/%Y')} — {captured_verbatim} (done, via daily note)"
-                            new_notes_body = notes_body
-                            if new_notes_body and not new_notes_body.endswith("\n"):
-                                new_notes_body += "\n"
-                            new_notes_body += f"{done_entry}\n"
-                            proj_text = proj_text[:notes_match.start(1)] + new_notes_body + proj_text[notes_match.end(1):]
-                        
-                        project_path.write_text(proj_text)
-                        
-                        entry = log_action.build_entry(
-                            actor="EA",
-                            trigger="Close daily note (Routine)",
-                            action_type="daily-note-writeback",
-                            action=f"Wrote back daily-note line to {captured_path_str}.",
-                            confidence="Medium",
-                            outcome="Written back — removed from Next action, logged in Notes & progress",
-                            input_link=captured_path_str,
-                        )
-                        log_action.append_entry(brain_path, date_str, entry)
-                        summary["reconciled"] += 1
-                        
-            if not hit:
+            ticket_file = link_match.group(1).strip()
+
+            ticket_path = _find_ticket_file(tasks_dir, ticket_file)
+
+            if ticket_path is not None:
+                ticket_text = ticket_path.read_text()
+                new_text = _update_frontmatter(ticket_text, {
+                    "status": "done",
+                    "resolved": date_str,
+                })
+                ticket_path.write_text(new_text)
+
+                rel_path = ticket_path.relative_to(brain_path).as_posix()
                 entry = log_action.build_entry(
                     actor="EA",
                     trigger="Close daily note (Routine)",
                     action_type="daily-note-writeback",
-                    action=f"Reconciled daily-note line for {captured_path_str}.",
+                    action=f"Wrote back daily-note line to {rel_path}.",
                     confidence="Medium",
-                    outcome="Row not found at source, no write-back performed",
-                    input_link=captured_path_str,
+                    outcome="Written back — status set to done in ticket frontmatter",
+                    input_link=rel_path,
                 )
                 log_action.append_entry(brain_path, date_str, entry)
-                summary["misses"].append({"project_path": captured_path_str, "verbatim": captured_verbatim})
-                
+                summary["reconciled"] += 1
+            else:
+                entry = log_action.build_entry(
+                    actor="EA",
+                    trigger="Close daily note (Routine)",
+                    action_type="daily-note-writeback",
+                    action=f"Reconciled daily-note line for [[{ticket_file}]].",
+                    confidence="Medium",
+                    outcome="Row not found at source, no write-back performed",
+                    input_link=ticket_file,
+                )
+                log_action.append_entry(brain_path, date_str, entry)
+                summary["misses"].append({"ticket_file": ticket_file})
+
     archive_dir = brain_path / "archive" / "daily-notes"
     archive_dir.mkdir(parents=True, exist_ok=True)
     archived_path = archive_dir / f"{date_str}.md"
     note_path.rename(archived_path)
     summary["archived_to"] = archived_path
-    
+
     heartbeat.bump(brain_path, "Close daily note", now)
     return summary
 

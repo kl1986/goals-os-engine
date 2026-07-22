@@ -15,6 +15,7 @@ The Engine's single source of truth for every Routine's cadence and risk tier (A
 | Daily note | [`daily-note.md`](./daily-note.md) | morning — heartbeat-checkable (daily) | internal & reversible | EA | implemented |
 | Close daily note | [`daily-note.md`](./daily-note.md) | evening — heartbeat-checkable (daily) | internal & reversible | EA | implemented |
 | Planning session | [`planning-session.md`](./planning-session.md) | weekly / on demand — heartbeat-checkable (weekly) | internal & reversible (area note + memory + Action Log only, conversational) | Area agents | implemented (ticket 16) |
+| Ticket normalization | [`ticket-normalization.md`](./ticket-normalization.md) | daily — heartbeat-checkable | internal & reversible | scripts | implemented (ticket 27) |
 | Weekly Review | — | weekly — heartbeat-checkable | — | EA + Librarian + Coach | declared, not implemented (Phase 6) |
 | Coaching session | — | monthly — heartbeat-checkable | — | Coach | declared, not implemented (Phase 6) |
 | Goal review | — | quarterly / on demand — heartbeat-checkable (quarterly) | — | Coach + Area agents | declared, not implemented (Phase 6) |
