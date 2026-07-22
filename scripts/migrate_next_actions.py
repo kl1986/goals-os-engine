@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """One-time migration: Project notes' `## Next action` lines -> tickets.
 
-Implements ticket 27's Execution Plan item 2 (ADR-0017). Walks every
-Project note under `projects/*/*.md`; for each `- [ ]` line under that
-note's `## Next action` section, in file order, creates a new
-`status: prioritised` ticket under `tasks/projects/<slug>/` (numbered
-`<slug>-N`, continuing from any existing highest number already in that
-folder — never colliding with an existing ticket), then deletes the
-`## Next action` section (heading + body) from the Project note
-entirely — per `project-tracking.md` v1, that section no longer exists
-in the schema at all.
+Implements ticket 27's Execution Plan item 2 (ADR-0017, ADR-0020). Walks
+every Project note under `projects/*/*.md`; for each `- [ ]` line under
+that note's `## Next action` section, in file order, creates a new
+`status: prioritised` ticket under `tasks/projects/<slug>/`, filename
+slugified from the line's own text (ADR-0020 — no slug/number prefix; a
+title collision within the same folder gets a `-2`, `-3`... suffix),
+then deletes the `## Next action` section (heading + body) from the
+Project note entirely — per `project-tracking.md` v1, that section no
+longer exists in the schema at all.
 
 Run once, manually, against a live Brain (`--brain`). Not itself
 idempotent in the sense of "safe to run twice for the same content" —
@@ -31,24 +31,40 @@ from pathlib import Path
 NEXT_ACTION_SECTION_RE = re.compile(r"\n## Next action\s*\n(.*?)(?=\n## |\Z)", re.DOTALL)
 NEXT_ACTION_FULL_RE = re.compile(r"\n## Next action\s*\n.*?(?=\n## |\Z)", re.DOTALL)
 CHECKBOX_LINE_RE = re.compile(r"^- \[ \] (.+)$")
-EXISTING_TICKET_NUMBER_RE = re.compile(r"^(\d+)")
 
 BLANK_FIELDS = ("priority", "component", "parent", "assignee", "github", "goal")
+MAX_SLUG_LENGTH = 60
 
 
-def _next_ticket_number(slug_dir: Path, slug: str) -> int:
-    """Highest existing `<slug>-N` number already in `slug_dir`, plus one
-    (starts at 1 if the folder doesn't exist or has no numbered tickets
-    yet) — new tickets never collide with existing ones."""
-    highest = 0
-    if slug_dir.is_dir():
-        prefix = f"{slug}-"
-        for path in slug_dir.glob(f"{prefix}*.md"):
-            rest = path.stem[len(prefix):]
-            m = EXISTING_TICKET_NUMBER_RE.match(rest)
-            if m:
-                highest = max(highest, int(m.group(1)))
-    return highest + 1
+def slugify(text: str, max_length: int = MAX_SLUG_LENGTH) -> str:
+    """Lowercase, hyphenated, punctuation-stripped. Truncated to
+    `max_length` at the last word boundary before the limit (ADR-0020) —
+    a Next-action line can be a full free-text sentence, and the
+    *filename* shouldn't run to 150+ characters even though the ticket's
+    own H1 (built from the verbatim line) is never truncated."""
+    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    if len(slug) > max_length:
+        truncated = slug[:max_length]
+        if "-" in truncated:
+            truncated = truncated.rsplit("-", 1)[0]
+        slug = truncated
+    return slug or "untitled"
+
+
+def _unique_path(dest_dir: Path, filename: str) -> Path:
+    """`dest_dir/filename`, or a `-2`, `-3`, ... suffixed variant if that
+    already exists — a title collision within the same folder is the
+    exceptional case, not the norm, but silently overwriting one would be
+    worse."""
+    candidate = dest_dir / filename
+    if not candidate.exists():
+        return candidate
+    stem = Path(filename).stem
+    suffix = Path(filename).suffix
+    counter = 2
+    while (dest_dir / f"{stem}-{counter}{suffix}").exists():
+        counter += 1
+    return dest_dir / f"{stem}-{counter}{suffix}"
 
 
 def _build_ticket_text(title: str, created: str) -> str:
@@ -86,13 +102,10 @@ def migrate_project_note(note_path: Path, tasks_projects_dir: Path, slug: str, c
     if checkbox_lines:
         slug_dir = tasks_projects_dir / slug
         slug_dir.mkdir(parents=True, exist_ok=True)
-        next_num = _next_ticket_number(slug_dir, slug)
 
         for title in checkbox_lines:
-            ticket_id = f"{slug}-{next_num}"
-            ticket_path = slug_dir / f"{ticket_id}.md"
+            ticket_path = _unique_path(slug_dir, f"{slugify(title)}.md")
             ticket_path.write_text(_build_ticket_text(title, created))
-            next_num += 1
             count += 1
 
     new_text = NEXT_ACTION_FULL_RE.sub("", text, count=1)

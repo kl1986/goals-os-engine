@@ -74,13 +74,9 @@ class TestTicketNormalization(unittest.TestCase):
         self.assertIn("actor:** EA", log_text)
         self.assertIn("Ticket normalization (Routine)", log_text)
 
-    # -- slug + number inference / renaming -----------------------------------
+    # -- title-based renaming (ADR-0020: no slug/number prefix) --------------
 
-    def test_infers_slug_and_number_and_renames_file(self):
-        self._write(
-            "tasks/projects/clear-the-garage/clear-the-garage-1.md",
-            ALL_KEYS_BLANK,  # already conforming — occupies number 1
-        )
+    def test_infers_proper_location_and_renames_to_slugified_title(self):
         self._write(
             "tasks/projects/clear-the-garage/weird-name.md",
             "---\nstatus: backlog\nkanban_order: V0\n---\n\n# Order shelves for the shed\n",
@@ -88,29 +84,61 @@ class TestTicketNormalization(unittest.TestCase):
         ticket_normalization.normalize(self.brain_path, now=TODAY)
 
         garage_dir = self.brain_path / "tasks" / "projects" / "clear-the-garage"
-        self.assertTrue((garage_dir / "clear-the-garage-1.md").exists())  # untouched
-        self.assertTrue((garage_dir / "clear-the-garage-2-order-shelves-for-the-shed.md").exists())
+        self.assertTrue((garage_dir / "order-shelves-for-the-shed.md").exists())
         self.assertFalse((garage_dir / "weird-name.md").exists())
 
-    def test_area_slug_inferred_same_as_project_slug(self):
+    def test_area_ticket_renamed_same_as_project_ticket(self):
         self._write(
             "tasks/areas/health/random.md",
             "---\nstatus: backlog\nkanban_order: V0\n---\n\n# Book a dentist appointment\n",
         )
         ticket_normalization.normalize(self.brain_path, now=TODAY)
         health_dir = self.brain_path / "tasks" / "areas" / "health"
-        self.assertTrue((health_dir / "health-1-book-a-dentist-appointment.md").exists())
+        self.assertTrue((health_dir / "book-a-dentist-appointment.md").exists())
 
-    def test_no_h1_gets_generic_title_and_untitled_short_desc(self):
+    def test_no_h1_gets_generic_title_and_untitled_filename(self):
         self._write(
             "tasks/projects/return-on-constraints/bye.md",
             "---\nstatus: backlog\nkanban_order: V0\n---\n",
         )
         ticket_normalization.normalize(self.brain_path, now=TODAY)
         target_dir = self.brain_path / "tasks" / "projects" / "return-on-constraints"
-        matches = list(target_dir.glob("return-on-constraints-1-untitled.md"))
+        matches = list(target_dir.glob("untitled-ticket.md"))
         self.assertEqual(len(matches), 1)
         self.assertIn("# Untitled ticket", matches[0].read_text())
+
+    def test_title_collision_in_same_folder_gets_numeric_suffix(self):
+        self._write(
+            "tasks/projects/return-on-constraints/bye.md",
+            "---\nstatus: backlog\nkanban_order: V0\n---\n",
+        )
+        self._write(
+            "tasks/projects/return-on-constraints/also-untitled.md",
+            "---\nstatus: in-progress\nkanban_order: V0\n---\n",
+        )
+        ticket_normalization.normalize(self.brain_path, now=TODAY)
+        target_dir = self.brain_path / "tasks" / "projects" / "return-on-constraints"
+        self.assertTrue((target_dir / "untitled-ticket.md").exists())
+        self.assertTrue((target_dir / "untitled-ticket-2.md").exists())
+
+    def test_long_title_truncated_at_word_boundary_around_60_chars(self):
+        long_title = (
+            "Kelvin: decide on the parity-before-release gate, still open "
+            "though the personal migration decision partially pre-empts it"
+        )
+        self._write(
+            "tasks/projects/goals-os/weird-name.md",
+            f"---\nstatus: backlog\nkanban_order: V0\n---\n\n# {long_title}\n",
+        )
+        ticket_normalization.normalize(self.brain_path, now=TODAY)
+        goals_os_dir = self.brain_path / "tasks" / "projects" / "goals-os"
+        matches = list(goals_os_dir.glob("*.md"))
+        self.assertEqual(len(matches), 1)
+        new_name = matches[0].stem
+        self.assertLessEqual(len(new_name), 60)
+        self.assertFalse(new_name.endswith("-"))
+        # The H1 itself is never truncated, only the filename derived from it.
+        self.assertIn(long_title, matches[0].read_text())
 
     # -- no inferable slug -> tasks/_unfiled/ ---------------------------------
 

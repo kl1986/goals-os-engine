@@ -1,27 +1,26 @@
 #!/usr/bin/env python3
 """Ticket normalization Routine: backfill missing ADR-0015 frontmatter keys
-and rename/re-ID non-conforming ticket files.
+and rename non-conforming ticket files.
 
-Implements protocols/ticket-normalization.md (ADR-0019, ticket 27's
-Execution Plan item 5). Scans `tasks/**/*.md` for any file missing at
-least one ADR-0015 frontmatter key (`kanban_order` excluded — Base
-Board-managed, not part of this check). A file with every key already
-present is left completely untouched (this is what makes a second run
-idempotent). For every non-conforming file:
+Implements protocols/ticket-normalization.md (ADR-0019 + ADR-0020,
+ticket 27's Execution Plan item 5). Scans `tasks/**/*.md` for any file
+missing at least one ADR-0015 frontmatter key (`kanban_order` excluded —
+Base Board-managed, not part of this check). A file with every key
+already present is left completely untouched (this is what makes a
+second run idempotent). For every non-conforming file:
 
 - Backfills each missing key as blank, except `type`, which defaults to
   `task` if missing.
-- Infers a `<slug>` from the file's immediate parent folder under
-  `tasks/projects/<slug>/` or `tasks/areas/<slug>/`, finds the next free
-  `<slug>-N` number among siblings in that folder, and renames the file
-  to `<slug>-N-<short-desc>.md` (short-desc slugified from the file's H1
-  title; if there's no H1 at all, short-desc is `untitled` and an
-  `# Untitled ticket` H1 is inserted so the file isn't left titleless).
+- If the file sits at `tasks/projects/<slug>/<file>.md` or
+  `tasks/areas/<slug>/<file>.md`, it's renamed to a filename slugified
+  from its own H1 title (ADR-0020 — no slug/number prefix; if there's no
+  H1 at all, the title is `Untitled ticket`, inserted so the file isn't
+  left titleless). A collision with an existing sibling filename in that
+  same folder gets a `-2`, `-3`... suffix.
 - A file with no inferable slug (e.g. sitting directly under `tasks/`,
   not inside a `tasks/projects/<slug>/` or `tasks/areas/<slug>/`
   subfolder) is relocated to `tasks/_unfiled/` instead — frontmatter is
-  still backfilled, but it keeps its own filename; there's no `<slug>-N`
-  to number it against.
+  still backfilled, but it keeps its own filename.
 
 Logs one Action Log entry per file modified.
 """
@@ -50,8 +49,21 @@ FRONTMATTER_KEY_RE = re.compile(r"^([\w-]+):")
 H1_RE = re.compile(r"^# (.+)$", re.MULTILINE)
 
 
-def slugify(text: str) -> str:
+MAX_SLUG_LENGTH = 60
+
+
+def slugify(text: str, max_length: int = MAX_SLUG_LENGTH) -> str:
+    """Lowercase, hyphenated, punctuation-stripped. Truncated to
+    `max_length` at the last word boundary before the limit (ADR-0020) —
+    a ticket's title can be a full free-text sentence, and the *filename*
+    shouldn't run to 150+ characters even though the H1 itself is never
+    truncated."""
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    if len(slug) > max_length:
+        truncated = slug[:max_length]
+        if "-" in truncated:
+            truncated = truncated.rsplit("-", 1)[0]
+        slug = truncated
     return slug or "untitled"
 
 
@@ -125,34 +137,23 @@ def infer_slug(rel_path: Path):
     return None
 
 
-def next_free_number(slug_dir: Path, slug: str, exclude: Path = None) -> int:
-    """Highest existing `<slug>-N` number among `slug_dir`'s siblings, plus
-    one (1 if none) — never collides with an existing ticket."""
-    highest = 0
-    if slug_dir.is_dir():
-        prefix = f"{slug}-"
-        for path in slug_dir.glob(f"{prefix}*.md"):
-            if exclude is not None and path == exclude:
-                continue
-            rest = path.stem[len(prefix):]
-            m = re.match(r"^(\d+)", rest)
-            if m:
-                highest = max(highest, int(m.group(1)))
-    return highest + 1
-
-
-def _unique_path(dest_dir: Path, filename: str) -> Path:
+def _unique_path(dest_dir: Path, filename: str, exclude: Path = None) -> Path:
     """`dest_dir/filename`, or a `-2`, `-3`, ... suffixed variant if that
-    already exists (defensive — two differently-malformed files landing
-    under `tasks/` with the same bare name is an edge case, not the
-    common path, but silently overwriting one would be worse)."""
+    already exists — a title collision within the same folder is the
+    exceptional case, not the norm, but silently overwriting one would be
+    worse (ADR-0020). `exclude` is the file currently being renamed itself
+    (so a file that already happens to sit at its own correctly-slugified
+    name isn't seen as colliding with itself)."""
+    def _taken(candidate: Path) -> bool:
+        return candidate.exists() and candidate != exclude
+
     candidate = dest_dir / filename
-    if not candidate.exists():
+    if not _taken(candidate):
         return candidate
     stem = Path(filename).stem
     suffix = Path(filename).suffix
     counter = 2
-    while (dest_dir / f"{stem}-{counter}{suffix}").exists():
+    while _taken(dest_dir / f"{stem}-{counter}{suffix}"):
         counter += 1
     return dest_dir / f"{stem}-{counter}{suffix}"
 
@@ -178,13 +179,9 @@ def normalize_file(path: Path, brain_path: Path, now: dt.datetime,
         title = h1_title(new_text)
         if title is None:
             new_text = ensure_title(new_text, "Untitled ticket")
-            short_desc = "untitled"
-        else:
-            short_desc = slugify(title)
+            title = "Untitled ticket"
 
-        slug_dir = path.parent
-        next_num = next_free_number(slug_dir, slug, exclude=path)
-        new_path = slug_dir / f"{slug}-{next_num}-{short_desc}.md"
+        new_path = _unique_path(path.parent, f"{slugify(title)}.md", exclude=path)
         action = "renamed"
     else:
         unfiled_dir = brain_path / "tasks" / "_unfiled"
