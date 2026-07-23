@@ -1,13 +1,13 @@
-# Protocol: Charter schema (v0)
+# Protocol: Charter schema (v1)
 
-Defines the generic markdown format every agent Charter uses — System, Area, and Capability alike (CONTEXT.md's three agent kinds, PRD §5) — so Phase 3's charters (EA, Area CEO, Researcher, Analyst, Writer, Reviewer, Coder) share one schema instead of drifting into five ad hoc shapes. Mirrors how `action-log-schema.md` (ADR-0005) fixed one entry shape before anything wrote to it.
+Defines the generic markdown format every agent Charter uses — System, Area, and Capability alike (CONTEXT.md's three agent kinds, PRD §5) — so Phase 3's charters (EA, Area CEO, Researcher, Analyst, Writer, Reviewer, Coder) and later plugin charters (e.g. Foreman) share one schema instead of drifting into ad hoc shapes. Mirrors how `action-log-schema.md` (ADR-0005) fixed one entry shape before anything wrote to it.
 
 A Charter is the markdown spec that defines an agent's role, tool scope, and delegation relationships (CONTEXT.md). Every agent the system addresses or commissions has exactly one.
 
 ## Two charter shapes
 
-- **Generic charter** (`scope: generic`) — Engine-owned, one per role, ships as-is in `protocols/charters/`. Defines the role once for every Brain: what an EA is, what an Area CEO is, what a Researcher is.
-- **Instance** (`scope: instance`) — Brain-owned, one per named, concrete agent, materialised from a generic charter. Currently only **Area agents** have instances — e.g. `Will`, materialised from the Area CEO generic charter for the Work area (`areas/work/Work.md`'s `agent: Will` frontmatter, onboarding ticket 05; the remaining areas get their instances from the migration tickets, 19–23). System agents (EA, Librarian, Coach) are Engine singletons addressed directly from their generic charter; Capability agents are ephemeral and commissioned directly from theirs. Neither has a separate per-Brain instance file today — if that changes, this Protocol is the place to extend.
+- **Generic charter** (`scope: generic`) — Defines a role once (`owner: engine | plugin`): what an EA is, what an Area CEO is, what a Researcher is, or what a plugin agent like the Foreman is. Engine charters ship as-is in `protocols/charters/`; plugin charters ship with their respective plugin and are present only when that plugin is installed.
+- **Instance** (`scope: instance`) — Brain-owned, one per named, concrete agent, materialised from a generic charter. Currently only **Area agents** have instances — e.g. `Will`, materialised from the Area CEO generic charter for the Work area (`areas/work/Work.md`'s `agent: Will` frontmatter, onboarding ticket 05; the remaining areas get their instances from the migration tickets, 19–23). Engine System agents (EA, Librarian, Coach) remain Engine singletons addressed directly from their generic charter; plugin System agents (e.g. Foreman) are optional, namespaced by their plugin, and present only when that plugin is installed. Capability agents are ephemeral and commissioned directly from theirs. Neither has a separate per-Brain instance file today — if that changes, this Protocol is the place to extend.
 
 ## Frontmatter fields
 
@@ -15,6 +15,7 @@ A Charter is the markdown spec that defines an agent's role, tool scope, and del
 ---
 type: charter
 charter-kind: area
+owner: engine
 scope: instance
 extends: protocols/charters/area-ceo.md
 agent: Will
@@ -27,7 +28,8 @@ memory: areas/work/_memory.md
 
 | Field | Meaning |
 |---|---|
-| `charter-kind` | `system` \| `area` \| `capability` — which of CONTEXT.md's three agent kinds this charter defines. Fixed per charter; never changes between generic and instance. |
+| `charter-kind` | `system` \| `area` \| `capability` — which of CONTEXT.md's three agent kinds this charter defines. Fixed per charter; never changes between generic and instance. The three agent kinds remain unchanged; ownership (`owner`) is a separate axis (ADR-0021). |
+| `owner` | `engine` \| `plugin` — the ownership axis (ADR-0021). `engine` for core charters shipped with the Engine; `plugin` for optional charters shipped by Library plugins (namespaced by plugin, present only when installed). Absent field means `engine`. |
 | `scope` | `generic` or `instance` (see above). |
 | `extends` | For `scope: instance` only — relative path to the generic charter this instance was materialised from. Absent (`—`) for `scope: generic`. |
 | `agent` | The agent's name. For `scope: generic`, the role name (`EA`, `Area CEO`, `Researcher`). For `scope: instance`, the Brain-chosen persona name (`Will`). |
@@ -52,6 +54,7 @@ A minimal stub proving the shape holds — not a real charter. Tickets 15 (EA), 
 ---
 type: charter
 charter-kind: area
+owner: engine
 scope: generic
 agent: Area CEO
 directs: Capability agents
@@ -77,7 +80,11 @@ continuity notes back to `_memory.md` when the session ends.
 
 An instance materialised from it (`scope: instance`) carries the same three body headings, specialised to that area, plus the frontmatter shown in "Frontmatter fields" above.
 
-## Non-goals (v0)
+## v0 → v1: `owner` field added (ADR-0021)
+
+Added `owner:` frontmatter field (`engine | plugin`) to separate the ownership axis from `charter-kind`. Engine charters (EA, Librarian, Coach) remain singletons; plugin charters (e.g. Foreman) are optional, namespaced by their plugin, and present only when that plugin is installed. The three agent kinds (`system | area | capability`) remain unchanged.
+
+## Non-goals (v1)
 
 - No script implementation — this is the schema spec; materialising an instance from a generic charter, via a Claude Code Adapter binding, is tickets 15/16/17's job.
 - No enforcement mechanism for `tool-scope` — declaring the boundary is this Protocol's job; checking it at commission time is ticket 17's commissioning contract.
