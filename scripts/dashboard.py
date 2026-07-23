@@ -104,6 +104,24 @@ def _open_waiting_for(brain_path: Path) -> list:
     return items
 
 
+def _awaiting_review_tickets(brain_path: Path) -> list:
+    tasks_dir = brain_path / "tasks"
+    if not tasks_dir.is_dir():
+        return []
+
+    tickets = []
+    for path in sorted(tasks_dir.glob("**/*.md")):
+        if path.name.startswith("_") or path.name.startswith("."):
+            continue
+        text = path.read_text()
+        status_match = re.search(r'^status:\s*(\S+)', text, re.MULTILINE)
+        if status_match and status_match.group(1) == "awaiting-review":
+            title_match = re.search(r'^# (.+)$', text, re.MULTILINE)
+            title = title_match.group(1).strip() if title_match else path.stem
+            tickets.append({"title": title, "path": path})
+    return tickets
+
+
 DROPZONE_SUBFOLDERS = ("Expenses", "Homework", "Recipes")
 
 
@@ -148,6 +166,7 @@ def compute_dashboard_data(brain_path: Path, now: dt.datetime = None) -> dict:
         "overdue": heartbeat.compute_overdue(manifest, routine_state, now=now),
         "pending_plans": _pending_plans(brain_path),
         "pending_rule_diffs": _pending_rule_diffs(brain_path),
+        "awaiting_review_tickets": _awaiting_review_tickets(brain_path),
         "waiting_for": _open_waiting_for(brain_path),
         "action_log": _action_log_summary(brain_path, now.strftime("%Y-%m-%d")),
         "dropzone": _dropzone_counts(brain_path),
@@ -194,6 +213,14 @@ def render_dashboard(data: dict) -> str:
             )
     else:
         lines.append("No pending rule-diff reviews.")
+
+    lines += ["", "## Tickets awaiting review", ""]
+    if data.get("awaiting_review_tickets"):
+        for ticket in data["awaiting_review_tickets"]:
+            link = _wikilink(ticket["path"], "tasks")
+            lines.append(f"- **{ticket['title']}** ({link})")
+    else:
+        lines.append("No tickets awaiting review.")
 
     lines += ["", "## Waiting For", ""]
     if data["waiting_for"]:
