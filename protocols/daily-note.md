@@ -47,10 +47,10 @@ On completion, it bumps its own "Daily note" row in `config/routine-state.md` (`
 Computed as part of the same generation scan (read-only, nothing changes at the source at generation time).
 
 - **Source:** ticket files under `tasks/projects/*/*.md` and `tasks/areas/*/*.md` (`docs/agents/issue-tracker.md`'s schema, ADR-0015) — no longer a Project note's own `## Next action` section, which no longer exists (`project-tracking.md` v1, ADR-0017).
-- **Filter:** any ticket with frontmatter `status: prioritised` or `status: in-progress`. **No per-Project/Area cap** — every matching ticket renders its own row, not just the first.
+- **Filter:** any ticket with active/actionable frontmatter `status` (`status: prioritised`, `status: in-progress`, or `status: awaiting-review` — evaluated via denylist excluding `backlog`, `done`, and `deprioritized` so future active statuses fail safe, ADR-0025). **No per-Project/Area cap** — every matching ticket renders its own row, not just the first.
 - **Project gating:** a ticket under `tasks/projects/<slug>/` only surfaces if the parent Project note (`projects/<slug>/<Project Name>.md`) has `status: Active` — the ticket's own folder name (`<slug>`) is how the parent Project note is resolved. A ticket whose parent Project isn't Active is silently skipped (not an error), same posture as v1's project-status filter.
 - **Area gating:** a ticket under `tasks/areas/<slug>/` surfaces unconditionally — Areas have no lifecycle status field to gate on.
-- **Rendered:** `- [ ] {ticket title} — [[<ticket file>]]`, where `{ticket title}` is the ticket note's H1 (its first `# ` line) and `<ticket file>` is the ticket's filename stem — the wikilink resolves directly to the ticket, not to the parent Project/Area note.
+- **Rendered:** `- [ ] {ticket title} — [[<ticket file>]]` for `prioritised` and `in-progress` tickets; `- [ ] [Awaiting review] {ticket title} — [[<ticket file>]]` for `awaiting-review` tickets (distinctly rendering items that need a decision rather than effort), where `{ticket title}` is the ticket note's H1 (its first `# ` line) and `<ticket file>` is the ticket's filename stem — the wikilink resolves directly to the ticket, not to the parent Project/Area note.
 
 ## Write-back mechanism
 

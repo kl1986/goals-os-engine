@@ -139,28 +139,36 @@ def _project_statuses(brain_path: Path) -> dict:
 
 
 def _ticket_item(brain_path: Path, ticket_path: Path):
-    """Return a rendering dict for `ticket_path` if it's a prioritised/
-    in-progress ticket, else None (silently skipped — not an error)."""
+    """Return a rendering dict for `ticket_path` if it's an active/actionable
+    ticket (prioritised, in-progress, awaiting-review, etc.), else None (silently
+    skipped — not an error). Uses a denylist (backlog, done, deprioritized) so
+    future active status values fail safe (ADR-0025). Render awaiting-review items
+    with a distinct '[Awaiting review]' prefix."""
     text = ticket_path.read_text()
     status = _frontmatter_field(text, "status")
-    if status not in ("prioritised", "in-progress"):
+    if status is None or status in ("backlog", "done", "deprioritized"):
         return None
 
     title = _ticket_title(text, ticket_path.stem)
     rel_path = ticket_path.relative_to(brain_path).as_posix()
+    if status == "awaiting-review":
+        rendered = f"- [ ] [Awaiting review] {title} — [[{ticket_path.stem}]]"
+    else:
+        rendered = f"- [ ] {title} — [[{ticket_path.stem}]]"
+
     return {
         "ticket_path": rel_path,
         "ticket_file": ticket_path.stem,
         "title": title,
-        "rendered": f"- [ ] {title} — [[{ticket_path.stem}]]",
+        "rendered": rendered,
     }
 
 
 def _project_next_actions(brain_path: Path) -> list:
-    """Scan `tasks/projects/*/` and `tasks/areas/*/` for `status: prioritised`
-    or `status: in-progress` tickets (ADR-0018) — no per-Project/Area cap,
-    one row per matching ticket. A `tasks/projects/<slug>/` ticket only
-    surfaces if the parent Project note (`projects/<slug>/...`) has
+    """Scan `tasks/projects/*/` and `tasks/areas/*/` for active tickets
+    (prioritised, in-progress, awaiting-review, etc. — ADR-0018, ADR-0025) —
+    no per-Project/Area cap, one row per matching ticket. A `tasks/projects/<slug>/`
+    ticket only surfaces if the parent Project note (`projects/<slug>/...`) has
     `status: Active`; a `tasks/areas/<slug>/` ticket surfaces unconditionally
     (Areas have no lifecycle status field)."""
     tasks_dir = brain_path / "tasks"
