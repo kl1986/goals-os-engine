@@ -16,6 +16,9 @@ goal: <one-line outcome>
 due-date: YYYY-MM-DD | blank
 area: <a goals-os-brain Area slug — must match a folder under areas/>
 lead: Kelvin | <agent or teammate name>
+repos:
+  - <relative path from code_root, e.g. goals-os-engine>
+  - <or list omitted if non-code project>
 tags:
   - project
 ---
@@ -34,6 +37,11 @@ tags:
 ```
 
 `area:` is the Area **slug**, not a human-readable name — this is what lets an Area agent filter its own Projects programmatically during a Planning session. `lead:` carries who's actually driving the work (Kelvin, or a named teammate) — there is no separate folder split for this; everyone's Project notes live flat under `projects/<slug>/`.
+
+`repos:` (optional, ADR-0022) is a list of relative paths from the Brain's `code_root` setting representing the codebase(s) this Project's Tickets build into (e.g. `goals-os-engine`, `goals-os-library`, `goals-os-brain`).
+- **Absence is meaningful**: If `repos:` is omitted or empty, the Project has no codebase. A code execution pipeline (such as `/build`) encountering a Project without `repos:` will fail closed as a Readiness quarantine, ensuring non-code projects are not executed against.
+- **Multiple repos & resolution**: A Project may declare more than one repository (e.g., Goals OS declares Engine, Library, and Brain repos). Resolution to a specific repo is per-Ticket, decided at run time by the Foreman at Phase 0 and confirmed before spending — never guessed.
+- **No ticket-level repo field**: Ticket frontmatter schema explicitly does NOT include a `repo:` or `repos:` field (per ADR-0022). A Ticket's owning folder (`tasks/projects/<slug>/`) links it to its Project, which is sufficient for Project-level declaration.
 
 ## Sections dropped from v1, and why
 
