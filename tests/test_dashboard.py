@@ -16,6 +16,7 @@ class TestRenderDashboard(unittest.TestCase):
             "overdue": [{"routine": "Triage", "last_run": "never", "cadence_days": 1}],
             "pending_plans": [{"path": Path("inbox/triage/2026-07-11-voice.md"), "total": 2, "ticked": 1, "pending": 1}],
             "pending_rule_diffs": [{"path": Path("inbox/rule-diffs/2026-07-11-routing-rules.md"), "total": 2, "decided": 1, "pending": 1}],
+            "awaiting_review_tickets": [{"title": "Surface awaiting-review on the Dashboard", "path": Path("tasks/projects/goals-os/surface-awaiting-review-on-the-dashboard.md")}],
             "waiting_for": [{"person": "Jane Doe", "path": Path("people/Jane Doe.md"), "text": "Jane to send over the draft budget"}],
             "action_log": {"exists": True, "entry_count": 2, "unreviewed": 2, "date_str": "2026-07-11"},
             "dropzone": [
@@ -31,6 +32,8 @@ class TestRenderDashboard(unittest.TestCase):
         self.assertIn("## Pending review", text)
         self.assertIn("[[inbox/rule-diffs/2026-07-11-routing-rules.md]]", text)
         self.assertIn("2 diff(s), 1 decided, 1 awaiting review", text)
+        self.assertIn("## Tickets awaiting review", text)
+        self.assertIn("- **Surface awaiting-review on the Dashboard** ([[tasks/projects/goals-os/surface-awaiting-review-on-the-dashboard.md]])", text)
         self.assertIn("**Jane Doe** — Jane to send over the draft budget ([[people/Jane Doe.md]])", text)
         self.assertIn("2 entries logged today", text)
         self.assertIn("2 awaiting your feedback", text)
@@ -42,7 +45,7 @@ class TestRenderDashboard(unittest.TestCase):
     def test_renders_empty_states(self):
         data = {
             "generated": "2026-07-11 21:50", "date_str": "2026-07-11",
-            "overdue": [], "pending_plans": [], "pending_rule_diffs": [], "waiting_for": [],
+            "overdue": [], "pending_plans": [], "pending_rule_diffs": [], "awaiting_review_tickets": [], "waiting_for": [],
             "action_log": {"exists": False, "entry_count": 0, "unreviewed": 0, "date_str": "2026-07-11"},
             "dropzone": [
                 {"name": "Expenses", "count": 0},
@@ -54,6 +57,7 @@ class TestRenderDashboard(unittest.TestCase):
         self.assertIn("Nothing overdue.", text)
         self.assertIn("No pending Triage Plans.", text)
         self.assertIn("No pending rule-diff reviews.", text)
+        self.assertIn("No tickets awaiting review.", text)
         self.assertIn("Nothing open.", text)
         self.assertIn("No Action Log entries yet today.", text)
         self.assertIn("- Expenses: 0 waiting", text)
@@ -225,6 +229,48 @@ class TestDropzoneCounts(unittest.TestCase):
         self.assertEqual(recipes["count"], 1)
 
 
+class TestAwaitingReviewTickets(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.brain_path = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _write_ticket(self, rel_path, body):
+        p = self.brain_path / rel_path
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(body)
+
+    def test_finds_awaiting_review_tickets(self):
+        self._write_ticket(
+            "tasks/projects/goals-os/my-feature.md",
+            "---\nstatus: awaiting-review\ntype: task\n---\n\n# Build My Feature\n\nSome body\n"
+        )
+        self._write_ticket(
+            "tasks/areas/work/review-budget.md",
+            "---\nstatus: awaiting-review\ntype: task\n---\n\n# Review Annual Budget\n\nSome body\n"
+        )
+        self._write_ticket(
+            "tasks/projects/goals-os/other-task.md",
+            "---\nstatus: in-progress\ntype: task\n---\n\n# In Progress Task\n"
+        )
+        tickets = dashboard._awaiting_review_tickets(self.brain_path)
+        self.assertEqual(len(tickets), 2)
+        self.assertEqual(tickets[0]["title"], "Review Annual Budget")
+        self.assertEqual(tickets[0]["path"], self.brain_path / "tasks/areas/work/review-budget.md")
+        self.assertEqual(tickets[1]["title"], "Build My Feature")
+
+    def test_returns_empty_if_no_tasks_dir_or_no_matching_status(self):
+        self.assertEqual(dashboard._awaiting_review_tickets(self.brain_path), [])
+        (self.brain_path / "tasks" / "projects" / "goals-os").mkdir(parents=True)
+        self._write_ticket(
+            "tasks/projects/goals-os/done-task.md",
+            "---\nstatus: done\n---\n# Done Task\n"
+        )
+        self.assertEqual(dashboard._awaiting_review_tickets(self.brain_path), [])
+
+
 class TestWriteDashboard(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -253,6 +299,10 @@ class TestWriteDashboard(unittest.TestCase):
             "**Why:** rationale\n\n**Evidence:** [[log/2026-07-08#14:32 — file-email]], [[log/2026-07-09#09:00 — file-email]]\n\n"
             "- [ ] Approve\n- [ ] Reject\n"
         )
+        (self.brain_path / "tasks" / "projects" / "goals-os").mkdir(parents=True)
+        (self.brain_path / "tasks" / "projects" / "goals-os" / "build-feature.md").write_text(
+            "---\nstatus: awaiting-review\ntype: task\n---\n\n# Build Feature\n"
+        )
         (self.brain_path / "log").mkdir()
         (self.brain_path / "log" / "2026-07-11.md").write_text(
             "# Action Log — 2026-07-11\n\n"
@@ -274,6 +324,8 @@ class TestWriteDashboard(unittest.TestCase):
         self.assertIn("## Pending review", text)
         self.assertIn("2026-07-11-routing-rules.md", text)
         self.assertIn("1 diff(s), 0 decided, 1 awaiting review", text)
+        self.assertIn("## Tickets awaiting review", text)
+        self.assertIn("- **Build Feature** ([[tasks/projects/goals-os/build-feature.md]])", text)
         self.assertIn("2 entries logged today", text)
         self.assertIn("2 awaiting your feedback", text)
         # No Files/dropzone/ sibling exists next to this temp Brain root —
@@ -299,9 +351,10 @@ class TestWriteDashboard(unittest.TestCase):
         dashboard.write_dashboard(self.brain_path, now=self.now)
 
         # Triage Plan gets executed/archived; a rule-diff batch gets resolved
-        # and archived; a new log entry lands.
+        # and archived; an awaiting-review ticket is resolved; a new log entry lands.
         (self.brain_path / "inbox" / "triage" / "2026-07-11-voice.md").unlink()
         (self.brain_path / "inbox" / "rule-diffs" / "2026-07-11-routing-rules.md").unlink()
+        (self.brain_path / "tasks" / "projects" / "goals-os" / "build-feature.md").unlink()
         with (self.brain_path / "log" / "2026-07-11.md").open("a") as f:
             f.write("\n### 11:00 — file-capture\n\n- **actor:** EA\n- **feedback:** ✓\n")
 
@@ -311,6 +364,8 @@ class TestWriteDashboard(unittest.TestCase):
         self.assertIn("No pending Triage Plans.", text)
         self.assertNotIn("2026-07-11-routing-rules.md", text)
         self.assertIn("No pending rule-diff reviews.", text)
+        self.assertNotIn("build-feature.md", text)
+        self.assertIn("No tickets awaiting review.", text)
         self.assertIn("3 entries logged today", text)
         self.assertIn("2 awaiting your feedback", text)
 
