@@ -240,6 +240,23 @@ class TestProjectNextActions(unittest.TestCase):
         # A backlog-status ticket is silently skipped.
         self.assertNotIn("Not yet started, backlog", text)
 
+    def test_surfaces_awaiting_review_tickets_with_distinct_prefix(self):
+        _write_project(self.brain_path, "clear-the-garage", "Clear the garage", "Active")
+        _write_ticket(self.brain_path, "projects", "clear-the-garage", "clear-the-garage-1",
+                      "Review pull request for shed shelving", "awaiting-review")
+        path = daily_note.generate_daily_note(self.brain_path, now=MONDAY)
+        text = path.read_text()
+        self.assertIn("- [ ] [Awaiting review] Review pull request for shed shelving — [[clear-the-garage-1]]", text)
+
+    def test_awaiting_review_survives_the_old_allowlist(self):
+        _write_project(self.brain_path, "clear-the-garage", "Clear the garage", "Active")
+        _write_ticket(self.brain_path, "projects", "clear-the-garage", "clear-the-garage-1",
+                      "Future status item added after allowlist was written", "awaiting-review")
+        path = daily_note.generate_daily_note(self.brain_path, now=MONDAY)
+        text = path.read_text()
+        self.assertIn("- [ ] [Awaiting review] Future status item added after allowlist was written — [[clear-the-garage-1]]", text)
+
+
     def test_area_ticket_surfaces_unconditionally_no_project_gate(self):
         _write_ticket(self.brain_path, "areas", "health", "health-1",
                       "Book a dentist appointment", "prioritised")

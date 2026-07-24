@@ -11,7 +11,7 @@ triggers:
 
 # daily-note-generate
 
-The Claude Code binding for the "Daily note" Routine in `protocols/daily-note.md`. All the logic — the four-section schema, additive-only same-day refresh, carry-forward of unchecked tasks, the Project-next-actions scan (ADR-0018: `tasks/projects/*/` + `tasks/areas/*/` tickets with `status: prioritised` or `status: in-progress`, one row per matching ticket, Project tickets gated on the parent Project note's `status: Active`, Area tickets unconditional), and the Waiting For scan (reusing `dashboard.py`'s `_open_waiting_for`) — lives in `scripts/daily_note.py`'s `generate_daily_note`. This skill only calls it and relays the result.
+The Claude Code binding for the "Daily note" Routine in `protocols/daily-note.md`. All the logic — the four-section schema, additive-only same-day refresh, carry-forward of unchecked tasks, the Project-next-actions scan (ADR-0018, ADR-0025: `tasks/projects/*/` + `tasks/areas/*/` tickets with active statuses `prioritised`, `in-progress`, `awaiting-review`, etc., one row per matching ticket, Project tickets gated on the parent Project note's `status: Active`, Area tickets unconditional), and the Waiting For scan (reusing `dashboard.py`'s `_open_waiting_for`) — lives in `scripts/daily_note.py`'s `generate_daily_note`. This skill only calls it and relays the result.
 
 ## What to do
 
