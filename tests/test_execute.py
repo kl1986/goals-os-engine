@@ -441,5 +441,149 @@ class TestFileCaptureHeading(unittest.TestCase):
         )
 
 
+class TestResolveLibraryPath(unittest.TestCase):
+    def setUp(self):
+        self._prev = __import__("os").environ.pop("GOALS_OS_LIBRARY_PATH", None)
+
+    def tearDown(self):
+        if self._prev is not None:
+            __import__("os").environ["GOALS_OS_LIBRARY_PATH"] = self._prev
+
+    def test_default_is_sibling_of_this_engines_own_repo_root(self):
+        # execute.py lives at <engine-repo-root>/scripts/execute.py; the
+        # documented Code/projects/Goals OS/{goals-os-engine,goals-os-library}
+        # topology puts goals-os-library one level ABOVE engine-repo-root,
+        # as a sibling of it.
+        resolved = execute.resolve_library_path(None)
+        engine_repo_root = Path(execute.__file__).resolve().parent.parent
+        self.assertEqual(resolved, engine_repo_root.parent / "goals-os-library")
+
+    def test_explicit_arg_overrides_default(self):
+        resolved = execute.resolve_library_path("/tmp/somewhere")
+        self.assertEqual(resolved, Path("/tmp/somewhere").resolve())
+
+    def test_env_var_used_when_no_explicit_arg(self):
+        __import__("os").environ["GOALS_OS_LIBRARY_PATH"] = "/tmp/env-library"
+        resolved = execute.resolve_library_path(None)
+        self.assertEqual(resolved, Path("/tmp/env-library").resolve())
+        del __import__("os").environ["GOALS_OS_LIBRARY_PATH"]
+
+
+HOOK_PLAN_TEXT = """---
+type: triage-plan
+source: fakesource
+date: 2026-07-21
+status: pending
+---
+
+# Triage Plan — fakesource — 2026-07-21
+
+| # | capture | preview | route | destination | confidence | rule | approve |
+|---|---|---|---|---|---|---|---|
+| 1 | [[inbox/raw/fakesource/2026-07-21-090000-filed.md]] | A filed item | Pass B | areas/home/_inbox.md | Medium | — | [x] |
+| 2 | [[inbox/raw/fakesource/2026-07-21-091000-discarded.md]] | not worth keeping | Pass B | discard | Medium | — | [x] |
+"""
+
+
+class TestSourceExecuteHook(unittest.TestCase):
+    """Ticket 14 (revised): Execute — not fetch.py — is now the only place
+    a source-specific side effect (e.g. Gmail archiving) can fire, and only
+    for a source whose plugin folder defines execute_hook.py. Verifies the
+    hook receives the archived capture's final path and the right
+    filed/discarded outcome, using a fake hook script (no real plugin, no
+    network) so this test has zero goals-os-library/Gmail dependency."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.brain_path = Path(self._tmp.name) / "brain"
+        (self.brain_path / "areas" / "home").mkdir(parents=True)
+        (self.brain_path / "inbox" / "raw" / "fakesource").mkdir(parents=True)
+        (self.brain_path / "inbox" / "triage").mkdir(parents=True)
+        for name in ("2026-07-21-090000-filed.md", "2026-07-21-091000-discarded.md"):
+            (self.brain_path / "inbox" / "raw" / "fakesource" / name).write_text(
+                "---\nraw: true\n---\nbody\n"
+            )
+        self.plan_path = self.brain_path / "inbox" / "triage" / "2026-07-21-fakesource.md"
+        self.plan_path.write_text(HOOK_PLAN_TEXT)
+        self.now = dt.datetime(2026, 7, 21, 15, 0)
+
+        # Fake library checkout with a fakesource/execute_hook.py that just
+        # records its argv to a file — enough to assert on without any real
+        # plugin or network dependency.
+        self.library_path = Path(self._tmp.name) / "library"
+        hook_dir = self.library_path / "plugins" / "claude-code" / "skills" / "fakesource"
+        hook_dir.mkdir(parents=True)
+        self.calls_file = Path(self._tmp.name) / "hook_calls.txt"
+        (hook_dir / "execute_hook.py").write_text(
+            "import sys\n"
+            f"with open({str(self.calls_file)!r}, 'a') as f:\n"
+            "    f.write('|'.join(sys.argv[1:]) + chr(10))\n"
+        )
+        self.config_dir = self.brain_path / "config"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _read_calls(self):
+        if not self.calls_file.exists():
+            return []
+        return [line for line in self.calls_file.read_text().splitlines() if line]
+
+    def test_hook_called_once_per_ticked_row_with_correct_outcome(self):
+        execute.execute_plan(
+            self.brain_path, self.plan_path, now=self.now,
+            config_dir=self.config_dir, library_path=self.library_path,
+        )
+        calls = self._read_calls()
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(any("--outcome|filed" in c for c in calls))
+        self.assertTrue(any("--outcome|discarded" in c for c in calls))
+
+    def test_hook_receives_the_archived_not_original_capture_path(self):
+        execute.execute_plan(
+            self.brain_path, self.plan_path, now=self.now,
+            config_dir=self.config_dir, library_path=self.library_path,
+        )
+        calls = self._read_calls()
+        archived_dir = str(self.brain_path / "archive" / "inbox" / "fakesource")
+        self.assertTrue(all(archived_dir in c for c in calls))
+        raw_dir = str(self.brain_path / "inbox" / "raw" / "fakesource")
+        self.assertTrue(all(raw_dir not in c for c in calls))
+
+    def test_hook_receives_the_given_config_dir(self):
+        execute.execute_plan(
+            self.brain_path, self.plan_path, now=self.now,
+            config_dir=self.config_dir, library_path=self.library_path,
+        )
+        calls = self._read_calls()
+        self.assertTrue(all(f"--config-dir|{self.config_dir}" in c for c in calls))
+
+    def test_no_hook_for_a_source_without_execute_hook_py_is_a_silent_noop(self):
+        # voice has no execute_hook.py anywhere — must not error or block.
+        text = HOOK_PLAN_TEXT.replace("fakesource", "voice")
+        (self.brain_path / "inbox" / "raw" / "voice").mkdir(parents=True)
+        for name in ("2026-07-21-090000-filed.md", "2026-07-21-091000-discarded.md"):
+            (self.brain_path / "inbox" / "raw" / "voice" / name).write_text("---\nraw: true\n---\nbody\n")
+        voice_plan = self.brain_path / "inbox" / "triage" / "2026-07-21-voice.md"
+        voice_plan.write_text(text)
+
+        result = execute.execute_plan(
+            self.brain_path, voice_plan, now=self.now,
+            config_dir=self.config_dir, library_path=self.library_path,
+        )
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(len(result["filed"]), 1)
+        self.assertEqual(len(result["discarded"]), 1)
+
+    def test_default_config_dir_is_brain_config_when_not_given(self):
+        execute.execute_plan(
+            self.brain_path, self.plan_path, now=self.now,
+            library_path=self.library_path,
+        )
+        calls = self._read_calls()
+        expected = str(self.brain_path / "config")
+        self.assertTrue(all(f"--config-dir|{expected}" in c for c in calls))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -12,6 +12,18 @@ triggers:
 
 The Claude Code binding for `protocols/execute.md`. All the logic — which rows are ticked, how `file-capture`/`discard-capture` behave, archiving, Action Log entries, and plan completion — lives in `scripts/execute.py`. This skill only calls it and relays the result.
 
+`execute.py` also checks, per row, whether that row's source has an
+`execute_hook.py` in its `goals-os-library` plugin folder — if so, it's
+called right after the capture is filed/discarded and archived, with the
+outcome. This is how a source-specific external-service side effect can run
+(e.g. `email`'s `execute_hook.py` archives the Gmail thread once its Triage
+row is actually acted on, ticket 14) without `execute.py` itself knowing
+anything about Gmail or any other plugin. Most sources have no hook, so this
+is a silent no-op for them. `--config-dir`/`--library-path` (or
+`$GOALS_OS_LIBRARY_PATH`) override the defaults if a Brain's layout ever
+deviates from the standard `<brain>/config` + sibling-repo convention — the
+plain invocation below normally needs neither.
+
 ## What to do
 
 1. Determine the Brain path and which Triage Plan to run — a specific path, or sweep `inbox/triage/*.md` for files with any `[x]` rows if the user doesn't name one (ask if ambiguous which plan they mean).

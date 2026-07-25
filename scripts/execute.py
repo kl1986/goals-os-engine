@@ -6,11 +6,22 @@ internal/reversible actions, `file-capture` and `discard-capture` — no
 Area/Capability agent dispatch (Phase 3), no auto-execute on confidence
 (graduation is Phase 5). Every row must already carry an explicit `[x]`
 tick; unticked rows are left untouched for a future run.
+
+Optional per-source hook (ticket 14): after a capture is filed or discarded
+(and moved to archive/inbox/<source>/), Execute checks whether that source's
+plugin folder in goals-os-library defines an `execute_hook.py` and, if so,
+calls it with the archived capture's path and outcome. This is the only
+extension point where a source-specific side effect (e.g. email's Gmail
+archive) can run — see `_run_source_execute_hook()`. Most sources have no
+hook; Execute itself stays fully generic and never imports/knows about any
+plugin directly.
 """
 
 import argparse
 import datetime as dt
+import os
 import re
+import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -87,6 +98,45 @@ def _mark_done(line: str, match: re.Match) -> str:
 def _mark_dispatched(line: str, match: re.Match) -> str:
     start, end = match.span("approve")
     return line[:start] + "[x] (dispatched)" + line[end:]
+
+
+def resolve_library_path(explicit: str | None = None) -> Path:
+    """goals-os-library checkout, to look up an optional per-source
+    execute_hook.py (ticket 14). Precedence: explicit --library-path >
+    $GOALS_OS_LIBRARY_PATH > sibling-repo convention (goals-os-library next
+    to this engine's own repo checkout — the documented
+    Code/projects/Goals OS/{goals-os-engine,goals-os-library} topology,
+    mirrored from fetch.py's own reverse lookup of goals-os-engine). Never
+    required to exist — most sources have no hook."""
+    candidate = explicit or os.environ.get("GOALS_OS_LIBRARY_PATH")
+    if candidate:
+        return Path(candidate).expanduser().resolve()
+    engine_repo_root = Path(__file__).resolve().parent.parent
+    return engine_repo_root.parent / "goals-os-library"
+
+
+def _run_source_execute_hook(
+    source: str, raw_path: Path, outcome: str, config_dir: Path, library_path: Path,
+) -> None:
+    """Optional per-source side effect, run only if that source's plugin
+    folder defines execute_hook.py (e.g. email/execute_hook.py — ticket 14:
+    Gmail archiving fires only once a Triage row is actually filed or
+    discarded, never at sweep time). A no-op for every source without one.
+    A hook failure is logged but never blocks Execute — the capture's own
+    file-write/archive-move has already happened by this point."""
+    hook = library_path / "plugins" / "claude-code" / "skills" / source / "execute_hook.py"
+    if not hook.exists():
+        return
+    try:
+        subprocess.run(
+            [sys.executable, str(hook),
+             "--config-dir", str(config_dir),
+             "--raw-capture", str(raw_path),
+             "--outcome", outcome],
+            check=False,
+        )
+    except OSError as e:
+        print(f"  ! source hook for {source!r} failed to run: {e}", file=sys.stderr)
 
 
 def _move_collision_safe(src: Path, dest_dir: Path) -> Path:
@@ -174,8 +224,13 @@ def _file_capture_today(brain_path: Path, date_str: str, entry_line: str):
     note_path.write_text(new_text)
 
 
-def execute_plan(brain_path: Path, plan_path: Path, now: dt.datetime = None) -> dict:
+def execute_plan(
+    brain_path: Path, plan_path: Path, now: dt.datetime = None,
+    config_dir: Path = None, library_path: Path = None,
+) -> dict:
     now = now or dt.datetime.now()
+    config_dir = Path(config_dir) if config_dir else brain_path / "config"
+    library_path = Path(library_path) if library_path else resolve_library_path(None)
     date_str = now.strftime("%Y-%m-%d")
     text = plan_path.read_text()
     rows = parse_plan_rows(text)
@@ -235,7 +290,9 @@ def execute_plan(brain_path: Path, plan_path: Path, now: dt.datetime = None) -> 
             continue
 
         if action_type != "agent-dispatched":
-            _move_collision_safe(raw_path, brain_path / "archive" / "inbox" / source)
+            archived_capture_path = _move_collision_safe(raw_path, brain_path / "archive" / "inbox" / source)
+            outcome_kind = "discarded" if action_type == "discard-capture" else "filed"
+            _run_source_execute_hook(source, archived_capture_path, outcome_kind, config_dir, library_path)
 
         # `rule` is always present in the groupdict (ROW_RE has no `?` on
         # that capture group) — the empty-string/"—" check below is the
@@ -287,6 +344,12 @@ def parse_args(argv):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--brain", required=True, help="Path to the Brain")
     p.add_argument("--plan", required=True, help="Path to the Triage Plan file (relative to --brain or absolute)")
+    p.add_argument("--config-dir", default=None,
+                    help="Brain config/ dir, passed to any per-source execute_hook.py. "
+                         "Defaults to <brain>/config.")
+    p.add_argument("--library-path", default=None,
+                    help="goals-os-library checkout, to look up per-source execute_hook.py. "
+                         "Falls back to $GOALS_OS_LIBRARY_PATH, then a sibling-repo default.")
     return p.parse_args(argv)
 
 
@@ -302,7 +365,10 @@ def main(argv=None):
     if not plan_path.exists():
         sys.exit(f"Triage Plan not found: {plan_path}")
 
-    result = execute_plan(brain_path, plan_path)
+    config_dir = Path(args.config_dir).expanduser().resolve() if args.config_dir else None
+    library_path = resolve_library_path(args.library_path)
+
+    result = execute_plan(brain_path, plan_path, config_dir=config_dir, library_path=library_path)
 
     print(f"Filed: {len(result['filed'])}, discarded: {len(result['discarded'])}, dispatched: {len(result['agent_dispatched'])}, errors: {len(result['errors'])}")
     for row in result["agent_dispatched"]:
