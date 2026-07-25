@@ -52,7 +52,7 @@ New action-type rows for `config/action-types.md`, following the same pattern as
 
 ## Tool scope
 
-Read/write scoped to `wiki/` only: `wiki/<concept-slug>.md` articles and `wiki/_index.md`. No access to `inbox/raw/`, `archive/inbox/` beyond read, `areas/`, or `projects/` — the Librarian synthesises from archived captures but never writes into the curated layer itself (CONTEXT.md's Curated layer entry: "the machine reads it; only the user writes it"). Backlink discipline (ticket 06) may extend this once decided; until then, no write access beyond `wiki/`.
+Read/write scoped to `wiki/` only: `wiki/<concept-slug>.md` articles and `wiki/_index.md`. No access to `inbox/raw/`, `archive/inbox/` beyond read, `areas/`, or `projects/` — the Librarian synthesises from archived captures but never writes into the curated layer itself. Per `CONTEXT.md`'s Curated layer entry, the user is that layer's author and the machine "may write into it only through a registered action type … every such write being logged and git-reversible"; every action type registered to the Librarian above writes inside `wiki/` and none of them is a curated write, so the boundary holds by the Librarian's own registration rather than by any blanket prohibition on machine writes. Backlink discipline (ticket 06) may extend this once decided; until then, no write access beyond `wiki/`.
 
 ## Non-goals (v0)
 
