@@ -116,14 +116,24 @@ def resolve_library_path(explicit: str | None = None) -> Path:
 
 
 def _run_source_execute_hook(
-    source: str, raw_path: Path, outcome: str, config_dir: Path, library_path: Path,
+    source: str, raw_path: Path, outcome: str, destination: str,
+    config_dir: Path, library_path: Path,
 ) -> None:
     """Optional per-source side effect, run only if that source's plugin
     folder defines execute_hook.py (e.g. email/execute_hook.py — ticket 14:
     Gmail archiving fires only once a Triage row is actually filed or
     discarded, never at sweep time). A no-op for every source without one.
     A hook failure is logged but never blocks Execute — the capture's own
-    file-write/archive-move has already happened by this point."""
+    file-write/archive-move has already happened by this point.
+
+    `destination` is the Triage row's own destination cell, forwarded as
+    `--destination` so a hook can honour the answer the user already gave by
+    ticking the row instead of re-deriving it and producing a second,
+    uncoordinated answer (execute.md v1.3). It is always passed — the caller
+    substitutes the literal `discard` for a discard row — so a hook may read
+    it unconditionally rather than branching on its absence. Forwarding a
+    string Execute has already parsed gives Execute no source-specific
+    knowledge."""
     hook = library_path / "plugins" / "claude-code" / "skills" / source / "execute_hook.py"
     if not hook.exists():
         return
@@ -132,7 +142,8 @@ def _run_source_execute_hook(
             [sys.executable, str(hook),
              "--config-dir", str(config_dir),
              "--raw-capture", str(raw_path),
-             "--outcome", outcome],
+             "--outcome", outcome,
+             "--destination", destination],
             check=False,
         )
     except OSError as e:
@@ -292,7 +303,15 @@ def execute_plan(
         if action_type != "agent-dispatched":
             archived_capture_path = _move_collision_safe(raw_path, brain_path / "archive" / "inbox" / source)
             outcome_kind = "discarded" if action_type == "discard-capture" else "filed"
-            _run_source_execute_hook(source, archived_capture_path, outcome_kind, config_dir, library_path)
+            # A discard row gets the canonical literal rather than its raw cell,
+            # which `action_type_for()` matched case-insensitively — so a `Discard`
+            # tick still reaches the hook as `discard`. Every other row forwards
+            # its cell verbatim, heading fragment included (execute.md v1.3).
+            hook_destination = "discard" if action_type == "discard-capture" else destination
+            _run_source_execute_hook(
+                source, archived_capture_path, outcome_kind, hook_destination,
+                config_dir, library_path,
+            )
 
         # `rule` is always present in the groupdict (ROW_RE has no `?` on
         # that capture group) — the empty-string/"—" check below is the

@@ -1,6 +1,6 @@
-# Protocol: Execute (v1.2)
+# Protocol: Execute (v1.3)
 
-Reads an approved Triage Plan and performs actions per ticked row. Supports generic, internal/reversible actions (`file-capture` or `discard-capture`) and `agent-dispatched` actions. For agent-dispatched actions, the output is QA'd by the Reviewer gate before surfacing. v1.1 (16/07/2026, `capture-source-plugins` map, ticket 09/15) generalizes `file-capture-today`'s insert-before-next-heading mechanic to any file — a `file#heading` destination (e.g. `people/Kat.md#🗣️ To Discuss`) files section-targeted, not just to today's daily note. No new action type — see the `file-capture` row below. v1.2 (21/07/2026, ticket 14) adds an optional per-source post-action hook — see "Per-source hooks" below — with zero new action types; Execute itself stays fully generic.
+Reads an approved Triage Plan and performs actions per ticked row. Supports generic, internal/reversible actions (`file-capture` or `discard-capture`) and `agent-dispatched` actions. For agent-dispatched actions, the output is QA'd by the Reviewer gate before surfacing. v1.1 (16/07/2026, `capture-source-plugins` map, ticket 09/15) generalizes `file-capture-today`'s insert-before-next-heading mechanic to any file — a `file#heading` destination (e.g. `people/Kat.md#🗣️ To Discuss`) files section-targeted, not just to today's daily note. No new action type — see the `file-capture` row below. v1.2 (21/07/2026, ticket 14) adds an optional per-source post-action hook — see "Per-source hooks" below — with zero new action types; Execute itself stays fully generic. v1.3 (25/07/2026, `meeting-processing` component, ADR-0028) passes the ticked row's destination to that hook as `--destination`, so a hook honours the answer the user already gave by ticking rather than re-deriving it — see "Per-source hooks". Still zero new action types and still no source-specific knowledge: Execute forwards a string it already parsed.
 
 ## Out of scope, explicitly
 
@@ -45,9 +45,24 @@ that source has an `execute_hook.py` at
 `<goals-os-library>/plugins/claude-code/skills/<source>/execute_hook.py`
 (`resolve_library_path()` — explicit `--library-path` > `$GOALS_OS_LIBRARY_PATH`
 > sibling-repo default). If it exists, it's called with `--config-dir`, the
-archived capture's final path (`--raw-capture`), and `--outcome` (`filed` for
-either file variant, `discarded` for discard). If it doesn't exist — true for
-every source except `email` today — this is a no-op.
+archived capture's final path (`--raw-capture`), `--outcome` (`filed` for
+either file variant, `discarded` for discard), and `--destination` (v1.3). If
+it doesn't exist — true for every source except `email` today — this is a no-op.
+
+`--destination` carries the row's own destination cell: the file path for a
+`file-capture` row (heading fragment included, so `people/Kat.md#🗣️ To Discuss`
+arrives whole), the literal `today` for `file-capture-today`, and the literal
+`discard` for a discard row — canonicalised, since `action_type_for()` matches
+that cell case-insensitively. It is passed on **every** hook invocation, so a
+hook reads it unconditionally and never branches on its absence.
+
+The flag exists because a hook otherwise cannot know which destination the
+human ticked, and would have to re-derive it — producing a second,
+uncoordinated answer to a question the tick already settled. Whether a hook
+*honours* the ticked destination or treats it as a hint it may override when
+uninformative is the hook's own business; Execute only guarantees delivery.
+Passing it costs Execute no source-specific knowledge: it forwards a string it
+already parsed to choose the action type.
 
 This is the only extension point for a source-specific side effect, and it
 exists specifically so a source's own plugin code (which *does* know about
