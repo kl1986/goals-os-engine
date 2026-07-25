@@ -585,5 +585,134 @@ class TestSourceExecuteHook(unittest.TestCase):
         self.assertTrue(all(f"--config-dir|{expected}" in c for c in calls))
 
 
+class TestSourceExecuteHookDestination(unittest.TestCase):
+    """`--destination` passes the Triage row's own destination cell through to
+    the hook, so a hook never has to re-derive the answer Kelvin already gave
+    by ticking the row (protocols/execute.md v1.3). The flag is present for
+    every outcome kind that runs a hook — `file-capture`, `file-capture-today`
+    and `discard-capture` — specifically so a hook can read it unconditionally
+    rather than branching on its absence. Execute gains no source-specific
+    knowledge from this: it forwards a string it already parsed."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.brain_path = Path(self._tmp.name) / "brain"
+        (self.brain_path / "areas" / "home").mkdir(parents=True)
+        (self.brain_path / "inbox" / "raw" / "fakesource").mkdir(parents=True)
+        (self.brain_path / "inbox" / "triage").mkdir(parents=True)
+        self.now = dt.datetime(2026, 7, 21, 15, 0)
+        # file-capture-today never creates the daily note, so it must exist.
+        (self.brain_path / "2026-07-21.md").write_text(
+            "# 2026-07-21\n\n## Today's tasks\n\n## Notes\n"
+        )
+
+        self.library_path = Path(self._tmp.name) / "library"
+        hook_dir = self.library_path / "plugins" / "claude-code" / "skills" / "fakesource"
+        hook_dir.mkdir(parents=True)
+        self.calls_file = Path(self._tmp.name) / "hook_calls.txt"
+        self.hook_path = hook_dir / "execute_hook.py"
+        self._write_hook(exit_code=0)
+        self.config_dir = self.brain_path / "config"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _write_hook(self, exit_code):
+        self.hook_path.write_text(
+            "import sys\n"
+            f"with open({str(self.calls_file)!r}, 'a') as f:\n"
+            "    f.write('|'.join(sys.argv[1:]) + chr(10))\n"
+            f"sys.exit({exit_code})\n"
+        )
+
+    def _run_plan(self, rows):
+        """Execute a plan whose ticked rows are `(capture-stem, destination)`."""
+        row_lines = []
+        for n, (stem, destination) in enumerate(rows, start=1):
+            (self.brain_path / "inbox" / "raw" / "fakesource" / f"{stem}.md").write_text(
+                "---\nraw: true\n---\nbody\n"
+            )
+            row_lines.append(
+                f"| {n} | [[inbox/raw/fakesource/{stem}.md]] | preview {n} "
+                f"| Pass B | {destination} | Medium | — | [x] |"
+            )
+        plan_path = self.brain_path / "inbox" / "triage" / "2026-07-21-fakesource.md"
+        plan_path.write_text(
+            "---\ntype: triage-plan\nsource: fakesource\ndate: 2026-07-21\n"
+            "status: pending\n---\n\n"
+            "# Triage Plan — fakesource — 2026-07-21\n\n"
+            "| # | capture | preview | route | destination | confidence | rule | approve |\n"
+            "|---|---|---|---|---|---|---|---|\n"
+            + "\n".join(row_lines) + "\n"
+        )
+        return execute.execute_plan(
+            self.brain_path, plan_path, now=self.now,
+            config_dir=self.config_dir, library_path=self.library_path,
+        )
+
+    def _read_calls(self):
+        if not self.calls_file.exists():
+            return []
+        return [line for line in self.calls_file.read_text().splitlines() if line]
+
+    def test_file_capture_row_passes_its_own_destination(self):
+        self._run_plan([("filed", "areas/home/_inbox.md")])
+        self.assertIn("--destination|areas/home/_inbox.md", self._read_calls()[0])
+
+    def test_file_capture_destination_keeps_its_heading_fragment(self):
+        # A `file#heading` destination (execute.md v1.1) is forwarded whole —
+        # the hook gets the same string Kelvin ticked, not a truncated path.
+        (self.brain_path / "people").mkdir()
+        (self.brain_path / "people" / "Kat.md").write_text(
+            "# Kat\n\n## To Discuss\n\n## Log\n"
+        )
+        self._run_plan([("filed", "people/Kat.md#To Discuss")])
+        self.assertIn("--destination|people/Kat.md#To Discuss", self._read_calls()[0])
+
+    def test_file_capture_today_row_passes_its_own_destination(self):
+        self._run_plan([("todayrow", "today")])
+        self.assertIn("--destination|today", self._read_calls()[0])
+
+    def test_discard_row_passes_the_literal_discard(self):
+        self._run_plan([("dropped", "discard")])
+        self.assertIn("--destination|discard", self._read_calls()[0])
+
+    def test_discard_row_normalises_case_to_the_literal_discard(self):
+        # `action_type_for()` matches case-insensitively, so a `Discard` cell is
+        # still a discard row; the hook must see the canonical literal either way.
+        self._run_plan([("dropped", "Discard")])
+        self.assertIn("--destination|discard", self._read_calls()[0])
+
+    def test_every_hook_invocation_carries_the_flag(self):
+        # A hook may read --destination unconditionally; it is never absent.
+        self._run_plan([
+            ("filed", "areas/home/_inbox.md"),
+            ("todayrow", "today"),
+            ("dropped", "discard"),
+        ])
+        calls = self._read_calls()
+        self.assertEqual(len(calls), 3)
+        self.assertTrue(all("--destination|" in c for c in calls))
+
+    def test_destination_is_passed_alongside_the_three_existing_flags(self):
+        self._run_plan([("filed", "areas/home/_inbox.md")])
+        call = self._read_calls()[0]
+        for flag in ("--config-dir|", "--raw-capture|", "--outcome|", "--destination|"):
+            self.assertIn(flag, call)
+
+    def test_nonzero_hook_exit_still_never_blocks_or_fails_the_row(self):
+        # The check=False guarantee must not regress now that the hook takes an
+        # extra flag: a hook that rejects its arguments and exits non-zero must
+        # not turn into an Execute error or an unfiled row.
+        self._write_hook(exit_code=2)
+        result = self._run_plan([
+            ("filed", "areas/home/_inbox.md"),
+            ("dropped", "discard"),
+        ])
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(len(result["filed"]), 1)
+        self.assertEqual(len(result["discarded"]), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
