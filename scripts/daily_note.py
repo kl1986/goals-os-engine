@@ -28,11 +28,22 @@ def _render_section(heading: str, content_lines: list) -> str:
     return out
 
 
+# `[ \t]*\n` after the heading, never `\s*\n`. `\s` matches newlines, so on an
+# *empty* section `\s*` swallowed the blank line and the match then began at the
+# NEXT heading — making the "body" of the empty section every section that
+# followed it. For `_replace_section` that silently deleted them (a daily note
+# with no open Waiting For items lost `## Notes` and everything after it on the
+# next same-day regeneration); for `_append_new_lines_to_section` it appended
+# new rows under the wrong heading. Matching only the heading line's own
+# terminator keeps an empty section empty.
+_SECTION_BODY = r"^## {}[ \t]*\n(.*?)(?=\n## |\Z)"
+
+
 def _append_new_lines_to_section(text: str, heading: str, existing_ok: callable, new_candidates: list) -> str:
-    match = re.search(rf"^## {re.escape(heading)}\s*\n(.*?)(?=\n## |\Z)", text, re.MULTILINE | re.DOTALL)
+    match = re.search(_SECTION_BODY.format(re.escape(heading)), text, re.MULTILINE | re.DOTALL)
     if not match:
         return text
-    
+
     existing_body = match.group(1)
     existing_lines = existing_body.splitlines()
     
@@ -53,6 +64,28 @@ def _append_new_lines_to_section(text: str, heading: str, existing_ok: callable,
     return text[:match.start(1)] + new_body + text[match.end(1):]
 
 
+def _ensure_section(text: str, heading: str, before_heading: str) -> str:
+    """Insert an empty `## {heading}` section before `## {before_heading}` if it
+    isn't already present, appending at the end if that anchor is missing too.
+
+    Needed because a daily note generated before a new section existed has no
+    such heading, and `_append_new_lines_to_section` is a no-op without one —
+    the section would silently never appear on the day the Engine is upgraded.
+    Inserting a heading is still additive-only: it adds lines and touches,
+    reorders and removes none."""
+    if re.search(rf"^## {re.escape(heading)}\s*$", text, re.MULTILINE):
+        return text
+
+    anchor = re.search(rf"^## {re.escape(before_heading)}\s*$", text, re.MULTILINE)
+
+    if anchor:
+        return text[:anchor.start()] + f"## {heading}\n\n" + text[anchor.start():]
+
+    if not text.endswith("\n"):
+        text += "\n"
+    return text + f"\n## {heading}\n"
+
+
 def _replace_section(text: str, heading: str, new_lines: list) -> str:
     """Wholesale-replace a section's body — used for Waiting For, which is a
     pure read-only mirror (decision 7: no checkboxes, no daily-note-src
@@ -61,7 +94,7 @@ def _replace_section(text: str, heading: str, new_lines: list) -> str:
     protect here, so recomputing the section fresh every call (same posture
     Dashboard already takes for this exact scan) avoids stale-plus-fresh
     duplicate lines when a hub's waiting-for text changes mid-day."""
-    match = re.search(rf"^## {re.escape(heading)}\s*\n(.*?)(?=\n## |\Z)", text, re.MULTILINE | re.DOTALL)
+    match = re.search(_SECTION_BODY.format(re.escape(heading)), text, re.MULTILINE | re.DOTALL)
     if not match:
         return text
     new_body = "".join(f"{line}\n" for line in new_lines)
@@ -204,6 +237,14 @@ def _render_waiting_for_lines(items: list) -> list:
     return [f"- {item['text']} — [[{item['path'].stem}]]" for item in items]
 
 
+def _render_proposed_lines(items: list) -> list:
+    """Plain bullets, NOT checkboxes — the same reasoning as Waiting For: a
+    checkbox here would be a false affordance, since approving a proposed item
+    happens in its own meeting note and ticking a mirror would silently do
+    nothing (protocols/daily-note.md v3)."""
+    return [f"- {item['text']} — [[{item['path'].stem}]]" for item in items]
+
+
 def _carry_forward_tasks(brain_path: Path) -> list:
     archive_dir = brain_path / "archive" / "daily-notes"
     if not archive_dir.is_dir():
@@ -250,7 +291,10 @@ def generate_daily_note(brain_path: Path, now: dt.datetime = None) -> Path:
     
     waiting_items = dashboard._open_waiting_for(brain_path)
     waiting_lines = _render_waiting_for_lines(waiting_items)
-    
+
+    proposed_items = dashboard._open_proposed_items(brain_path)
+    proposed_lines = _render_proposed_lines(proposed_items)
+
     if not note_path.exists():
         carried_tasks = _carry_forward_tasks(brain_path)
         today_lines = carried_tasks if carried_tasks else ["- [ ]"]
@@ -261,6 +305,7 @@ def generate_daily_note(brain_path: Path, now: dt.datetime = None) -> Path:
             _render_section("Today's tasks", today_lines),
             _render_section("Project next actions", project_lines),
             _render_section("Waiting for", waiting_lines),
+            _render_section("Proposed from meetings", proposed_lines),
             _render_section("Notes", []),
         ]
         
@@ -296,9 +341,22 @@ def generate_daily_note(brain_path: Path, now: dt.datetime = None) -> Path:
                     return True
             return False
             
+        def proposed_existing_ok(candidate_line: str, existing_lines: list) -> bool:
+            # Exact-line match. Unlike a ticket, a proposed item has no stable
+            # identity beyond its own text — several items share one meeting
+            # note, so the `[[note]]` wikilink alone would collapse them all
+            # into one and suppress every item after the first.
+            return candidate_line.strip() in {line.strip() for line in existing_lines}
+
         text = _append_new_lines_to_section(text, "Project next actions", project_existing_ok, project_lines)
         text = _replace_section(text, "Waiting for", waiting_lines)
-        
+        # Additive-only, unlike Waiting For's wholesale replace: the ticket
+        # requires rows be added for items not already present and existing
+        # lines never touched or reordered.
+        text = _ensure_section(text, "Proposed from meetings", "Notes")
+        text = _append_new_lines_to_section(text, "Proposed from meetings", proposed_existing_ok, proposed_lines)
+
+
         if text != original_text:
             note_path.write_text(text)
             

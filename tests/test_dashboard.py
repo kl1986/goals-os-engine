@@ -372,3 +372,104 @@ class TestWriteDashboard(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestOpenProposedItems(unittest.TestCase):
+    """protocols/dashboard.md v0.5 — meetings/*.md as a source, added the same
+    way people/*.md was."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.brain_path = Path(self._tmp.name)
+        (self.brain_path / "meetings").mkdir()
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _write_note(self, filename, body):
+        (self.brain_path / "meetings" / filename).write_text(body)
+
+    def test_finds_open_proposed_items(self):
+        self._write_note(
+            "2026-07-25 Planning call.md",
+            "---\ntype: meeting\ndate: 2026-07-25\n---\n\n"
+            "# Planning call\n\n"
+            "## Summary\n\nWe talked.\n\n"
+            "## Proposed\n"
+            "- [ ] Create a Person Hub for Dani\n"
+            "- [x] Already actioned this one\n"
+            "- [ ] ~~Withdrawn~~\n"
+            "- [ ] Close the stale 'pricing review' ticket?\n",
+        )
+        items = dashboard._open_proposed_items(self.brain_path)
+        self.assertEqual(len(items), 2)
+        self.assertEqual(items[0]["meeting"], "Planning call")
+        self.assertIn("Person Hub for Dani", items[0]["text"])
+        self.assertIn("pricing review", items[1]["text"])
+
+    def test_ticked_and_struck_through_items_do_not_count(self):
+        self._write_note(
+            "2026-07-25 Done.md",
+            "# Done\n\n## Proposed\n- [x] actioned\n- [ ] ~~withdrawn~~\n",
+        )
+        self.assertEqual(dashboard._open_proposed_items(self.brain_path), [])
+
+    def test_note_without_a_proposed_section_is_skipped(self):
+        self._write_note(
+            "2026-07-25 No proposals.md",
+            "# No proposals\n\n## Summary\n\n- [ ] this is not under Proposed\n",
+        )
+        self.assertEqual(dashboard._open_proposed_items(self.brain_path), [])
+
+    def test_stops_at_the_next_heading(self):
+        self._write_note(
+            "2026-07-25 Bounded.md",
+            "# Bounded\n\n## Proposed\n- [ ] in scope\n\n## Notes\n- [ ] out of scope\n",
+        )
+        items = dashboard._open_proposed_items(self.brain_path)
+        self.assertEqual([i["text"] for i in items], ["in scope"])
+
+    def test_ignores_readme_underscore_files_and_missing_dir(self):
+        self._write_note("README.md", "# meetings\n\n## Proposed\n- [ ] should not count\n")
+        self._write_note("_scratch.md", "# scratch\n\n## Proposed\n- [ ] should not count\n")
+        self.assertEqual(dashboard._open_proposed_items(self.brain_path), [])
+
+        empty_brain = Path(tempfile.mkdtemp())
+        self.assertEqual(dashboard._open_proposed_items(empty_brain), [])
+
+    def test_scan_is_non_destructive(self):
+        body = (
+            "# Planning call\n\n## Proposed\n- [ ] Create a Person Hub for Dani\n"
+        )
+        self._write_note("2026-07-25 Planning call.md", body)
+        dashboard._open_proposed_items(self.brain_path)
+        self.assertEqual(
+            (self.brain_path / "meetings" / "2026-07-25 Planning call.md").read_text(), body
+        )
+
+    def test_grouped_by_note_for_the_dashboard(self):
+        self._write_note(
+            "2026-07-24 First.md", "# First\n\n## Proposed\n- [ ] a\n- [ ] b\n")
+        self._write_note(
+            "2026-07-25 Second.md", "# Second\n\n## Proposed\n- [ ] c\n")
+        rows = dashboard._proposed_by_note(dashboard._open_proposed_items(self.brain_path))
+        self.assertEqual([(r["meeting"], r["count"]) for r in rows],
+                         [("First", 2), ("Second", 1)])
+
+    def test_renders_a_read_only_link_per_note(self):
+        self._write_note(
+            "2026-07-25 Planning call.md",
+            "# Planning call\n\n## Proposed\n- [ ] a\n- [ ] b\n")
+        data = dashboard.compute_dashboard_data(self.brain_path)
+        out = dashboard.render_dashboard(data)
+        self.assertIn("## Proposed from meetings", out)
+        self.assertIn("**Planning call** — 2 proposed items", out)
+        self.assertIn("[[meetings/2026-07-25 Planning call.md]]", out)
+
+    def test_singular_count_and_empty_state(self):
+        data = dashboard.compute_dashboard_data(self.brain_path)
+        self.assertIn("Nothing proposed.", dashboard.render_dashboard(data))
+
+        self._write_note("2026-07-25 One.md", "# One\n\n## Proposed\n- [ ] a\n")
+        data = dashboard.compute_dashboard_data(self.brain_path)
+        self.assertIn("1 proposed item (", dashboard.render_dashboard(data))

@@ -475,3 +475,174 @@ class TestCloseDailyNote(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestProposedFromMeetings(unittest.TestCase):
+    """protocols/daily-note.md v3 — meetings/*.md `## Proposed` items mirrored
+    into the daily note, additive-only and read-only."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.brain_path = Path(self._tmp.name)
+        (self.brain_path / "meetings").mkdir()
+        (self.brain_path / "config").mkdir()
+        (self.brain_path / "config" / "routine-state.md").write_text(
+            "| Routine | Last run |\n|---|---|\n"
+        )
+        self.now = dt.datetime(2026, 7, 25, 9, 0)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _write_note(self, filename, body):
+        (self.brain_path / "meetings" / filename).write_text(body)
+
+    def _generate(self):
+        return daily_note.generate_daily_note(self.brain_path, now=self.now)
+
+    def test_new_note_carries_proposed_items_as_plain_bullets(self):
+        self._write_note(
+            "2026-07-25 Planning call.md",
+            "# Planning call\n\n## Proposed\n"
+            "- [ ] Create a Person Hub for Dani\n- [ ] Close the pricing ticket?\n",
+        )
+        text = self._generate().read_text()
+        self.assertIn("## Proposed from meetings", text)
+        self.assertIn("- Create a Person Hub for Dani — [[2026-07-25 Planning call]]", text)
+        self.assertIn("- Close the pricing ticket? — [[2026-07-25 Planning call]]", text)
+        # Plain bullets, never checkboxes — a tick here would be a false
+        # affordance, exactly as for Waiting for.
+        self.assertNotIn("- [ ] Create a Person Hub for Dani", text)
+
+    def test_section_sits_between_waiting_for_and_notes(self):
+        text = self._generate().read_text()
+        self.assertLess(text.index("## Waiting for"), text.index("## Proposed from meetings"))
+        self.assertLess(text.index("## Proposed from meetings"), text.index("## Notes"))
+
+    def test_same_day_rerun_is_additive_and_does_not_duplicate(self):
+        self._write_note("2026-07-25 A.md", "# A\n\n## Proposed\n- [ ] first item\n")
+        self._generate()
+
+        self._write_note("2026-07-25 B.md", "# B\n\n## Proposed\n- [ ] second item\n")
+        text = self._generate().read_text()
+
+        self.assertEqual(text.count("- first item — [[2026-07-25 A]]"), 1)
+        self.assertEqual(text.count("- second item — [[2026-07-25 B]]"), 1)
+
+    def test_multiple_items_from_one_note_all_survive(self):
+        """Dedupe is on the exact line, not the wikilink — deduping on the link
+        would collapse these two into one."""
+        self._write_note("2026-07-25 A.md", "# A\n\n## Proposed\n- [ ] one\n- [ ] two\n")
+        self._generate()
+        text = self._generate().read_text()
+        self.assertIn("- one — [[2026-07-25 A]]", text)
+        self.assertIn("- two — [[2026-07-25 A]]", text)
+
+    def test_existing_lines_are_never_touched_or_reordered(self):
+        self._write_note("2026-07-25 A.md", "# A\n\n## Proposed\n- [ ] first item\n")
+        note_path = self._generate()
+
+        edited = note_path.read_text().replace(
+            "- first item — [[2026-07-25 A]]",
+            "- first item — [[2026-07-25 A]] (mine, hand-annotated)",
+        )
+        note_path.write_text(edited)
+
+        self._write_note("2026-07-25 B.md", "# B\n\n## Proposed\n- [ ] second item\n")
+        text = self._generate().read_text()
+
+        self.assertIn("(mine, hand-annotated)", text)
+        self.assertIn("- second item — [[2026-07-25 B]]", text)
+
+    def test_missing_heading_is_inserted_on_an_older_note(self):
+        """A note generated before v3 has no such heading; appending into a
+        missing heading is a silent no-op, so generation inserts it."""
+        note_path = self.brain_path / "2026-07-25.md"
+        note_path.write_text(
+            "---\ntype: daily-note\ndate: 2026-07-25\n---\n\n"
+            "# Saturday, 25 July 2026\n\n"
+            "## Today's tasks\n- [ ] something\n\n"
+            "## Project next actions\n\n"
+            "## Waiting for\n\n"
+            "## Notes\n- a note of mine\n"
+        )
+        self._write_note("2026-07-25 A.md", "# A\n\n## Proposed\n- [ ] first item\n")
+
+        text = self._generate().read_text()
+        self.assertIn("## Proposed from meetings", text)
+        self.assertIn("- first item — [[2026-07-25 A]]", text)
+        self.assertLess(text.index("## Proposed from meetings"), text.index("## Notes"))
+        self.assertIn("- a note of mine", text)
+        self.assertIn("- [ ] something", text)
+
+    def test_generation_never_writes_back_to_a_meeting_note(self):
+        body = "# A\n\n## Proposed\n- [ ] first item\n"
+        self._write_note("2026-07-25 A.md", body)
+        self._generate()
+        self._generate()
+        self.assertEqual((self.brain_path / "meetings" / "2026-07-25 A.md").read_text(), body)
+
+    def test_no_meetings_folder_is_not_an_error(self):
+        empty = Path(tempfile.mkdtemp())
+        (empty / "config").mkdir()
+        (empty / "config" / "routine-state.md").write_text("| Routine | Last run |\n|---|---|\n")
+        text = daily_note.generate_daily_note(empty, now=self.now).read_text()
+        self.assertIn("## Proposed from meetings", text)
+
+
+class TestEmptySectionDoesNotSwallowFollowingSections(unittest.TestCase):
+    """Regression for a pre-existing data-loss bug found while adding the
+    Proposed-from-meetings section.
+
+    `_replace_section`/`_append_new_lines_to_section` matched the heading with
+    `\\s*\\n`. `\\s` matches newlines, so on an EMPTY section it consumed the
+    blank line and the captured "body" became every section that followed —
+    which `_replace_section` then overwrote. A daily note with no open Waiting
+    For items therefore lost `## Notes` (where the user writes) and everything
+    after it on the next same-day regeneration."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.brain_path = Path(self._tmp.name)
+        (self.brain_path / "config").mkdir()
+        (self.brain_path / "config" / "routine-state.md").write_text(
+            "| Routine | Last run |\n|---|---|\n"
+        )
+        self.now = dt.datetime(2026, 7, 25, 9, 0)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_replace_section_on_an_empty_section_keeps_what_follows(self):
+        text = ("# Sat\n\n## Today's tasks\n- [ ] something\n\n"
+                "## Waiting for\n\n"
+                "## Notes\n- a note of mine\n")
+        out = daily_note._replace_section(text, "Waiting for", [])
+        self.assertIn("## Notes", out)
+        self.assertIn("- a note of mine", out)
+
+    def test_replace_section_still_replaces_a_populated_section(self):
+        text = ("## Waiting for\n- stale item — [[Old]]\n\n"
+                "## Notes\n- a note of mine\n")
+        out = daily_note._replace_section(text, "Waiting for", ["- fresh item — [[New]]"])
+        self.assertIn("- fresh item — [[New]]", out)
+        self.assertNotIn("- stale item", out)
+        self.assertIn("- a note of mine", out)
+
+    def test_append_into_an_empty_section_lands_under_its_own_heading(self):
+        text = ("## Project next actions\n\n"
+                "## Notes\n- a note of mine\n")
+        out = daily_note._append_new_lines_to_section(
+            text, "Project next actions", lambda c, e: False, ["- [ ] new — [[T]]"])
+        self.assertLess(out.index("- [ ] new — [[T]]"), out.index("## Notes"))
+        self.assertIn("- a note of mine", out)
+
+    def test_end_to_end_regeneration_preserves_user_notes(self):
+        note_path = self.brain_path / "2026-07-25.md"
+        daily_note.generate_daily_note(self.brain_path, now=self.now)
+
+        text = note_path.read_text().replace("## Notes\n", "## Notes\n- my hand-written note\n")
+        note_path.write_text(text)
+
+        daily_note.generate_daily_note(self.brain_path, now=self.now)
+        self.assertIn("- my hand-written note", note_path.read_text())
