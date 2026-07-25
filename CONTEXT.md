@@ -91,7 +91,15 @@ The machine-compiled, concept-organised knowledge layer. A pure function of Raw 
 _Avoid_: Knowledge base (that's the content layer as a whole — Wiki + curated layer; say Wiki specifically)
 
 **Curated layer**:
-The human-authored layer of decisions, standards, and goals per area. The machine reads it; only the user writes it. Boundary test: decided it → curated; learned it → Wiki.
+The human-authored layer of decisions, standards, and goals per area. The user is its author; the machine reads it and may write into it only through a registered action type (`project-update`, `person-update`, `area-update`, `ticket-create`, and a structuring mechanism's own writes — ADR-0028), every such write being logged and git-reversible. Boundary test: decided it → curated; learned it → Wiki.
+
+**Event layer**:
+The mixed human/machine layer of records of things that happened, at `meetings/` — a fourth layer alongside Raw, Wiki, and Curated (ADR-0028). The user authors agenda notes in it; a structuring mechanism augments those and writes new notes into it. Distinct from the Wiki in being event-organised rather than concept-organised, and not resynthesizable — it is written once, not rebuilt.
+_Avoid_: Meeting notes folder (half of what lands there may not be a meeting), derived layer (that's the Wiki)
+
+**Structuring**:
+Turning a long-form transcript into a readable note plus its downstream effects (backlinks, Person Hub items, tickets). Distinct from Triage, which only classifies, and from Compile, which synthesises concepts across many sources.
+_Avoid_: Processing, summarising (structuring produces a shaped artefact, not a précis)
 
 **Resynthesis guarantee**:
 The Engine invariant that the Wiki can be dropped and rebuilt from Raw Captures + feedback at any time, by any model, with no human work lost. A safety property, not a determinism claim — rebuilds may differ in wording.
