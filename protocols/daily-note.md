@@ -1,4 +1,4 @@
-# Protocol: Daily note (v2)
+# Protocol: Daily note (v3)
 
 A single, once-daily "command centre" note at the Brain root. Distinct from the pure-derivation Dashboard, the daily note is additive-only within a day and accumulates edits (ticked checkboxes) the user makes during the day. It is governed by two Routines: "Daily note" (generation, morning) and "Close daily note" (reconciliation + archive, evening).
 
@@ -29,15 +29,20 @@ Body, in this exact order:
 
 ## Waiting for
 
+## Proposed from meetings
+
 ## Notes
 ```
+
+v3 (meeting-processing) adds `## Proposed from meetings`. It gets its own heading rather than folding into an existing section: `## Waiting for` is a wholesale-replaced mirror and `## Today's tasks` carries hand-typed content, while this section is additive-only — three different edit semantics in one heading would be a trap. A separate heading also keeps the source obvious when an item needs chasing back to its meeting note.
 
 ## Daily note Routine (Generation & refresh)
 
 The generation Routine (cadence morning, heartbeat-checkable daily, risk tier internal & reversible, owner EA) uses `scripts/daily_note.py`'s `generate_daily_note` plus an Adapter skill.
 
 - Each new calendar day always gets a brand-new file. There is no cross-day continuation of the same file.
-- Re-invoking generation within the same day is **additive only**. It only ever adds rows for anything not already present (new project next-actions, new triaged captures filed via the `today` destination, new Waiting For items). It never touches, reorders, or removes an existing line. This is different from `dashboard.md`, which fully overwrites every run.
+- Re-invoking generation within the same day is **additive only**. It only ever adds rows for anything not already present (new project next-actions, new triaged captures filed via the `today` destination, new Waiting For items, new proposed items from meetings). It never touches, reorders, or removes an existing line. This is different from `dashboard.md`, which fully overwrites every run.
+- A note generated before a section existed has no such heading, and appending into a missing heading is a silent no-op. Generation therefore **inserts** a missing `## Proposed from meetings` heading (immediately before `## Notes`) rather than skipping the section for the day. Inserting a heading is still additive-only: it adds lines and touches, reorders and removes none.
 - **Carry-forward:** Generation scans the most recently archived note (`archive/daily-notes/`, picking the lexicographically-latest filename) for any still-unchecked `## Today's tasks` line, and copies it verbatim into the new day's `## Today's tasks`. This is origin-blind: a manually-typed task and a capture-derived task carry forward identically. This is the **only** section needing carry-forward. `## Project next actions` and `## Waiting for` are live mirrors of an external source (project notes, person hubs), so an unresolved item naturally persists at the source without carry-forward logic here.
 
 On completion, it bumps its own "Daily note" row in `config/routine-state.md` (`heartbeat.bump`), matching every other Routine.
@@ -79,6 +84,15 @@ Read-only, no write-back, and no `daily-note-src` comment ever. `people-tracking
 
 Renders as plain bullets, NOT checkboxes (a checkbox would be a false affordance — ticking it would silently do nothing): `- {item text} — [[Person Hub]]`. Ordered by hub filename, with items for the same person grouped together (same shape the Dashboard already uses).
 
+## Proposed from meetings section (v3)
+
+Computed by the same generation scan, reusing `dashboard._open_proposed_items()` — the same source `dashboard.py` scans, exactly as `## Waiting for` reuses `_open_waiting_for()`. The `meetings` plugin writes items it can't safely auto-file into a meeting note's `## Proposed` section because confirm-first is impossible in a headless hook; without a surface they'd be written and then missed.
+
+- **Source:** every unticked `- [ ]` line under a `## Proposed` heading in `meetings/*.md`, ordered by note filename. Struck-through (`~~`) lines are skipped; so are `README.md` and `_`-prefixed files.
+- **Rendered:** `- {item text} — [[meeting note]]` — plain bullets, NOT checkboxes, for the identical reason Waiting For uses none: approval happens in the meeting note, so a tick here would be a false affordance.
+- **Additive-only**, unlike Waiting For's wholesale replace. Rows are added for items not already present and existing lines are never touched or reordered. Dedupe is on the **exact rendered line**, not the `[[note]]` wikilink — several items share one meeting note, so deduping on the link would collapse them and suppress every item after the first.
+- **Read-only, no write-back.** The scan never ticks, edits, or moves a meeting note, and nothing here ever writes back to one. The same rule `people-tracking.md` states for delegations applies: the note is the only place an item is ever resolved, and the daily note is exactly such a second surface.
+
 ## Triage / Execute destination
 
 A new `today` destination literal (parallel to the existing `discard` literal) produces action type `file-capture-today`. Full mechanics are documented in [`execute.md`](./execute.md); do not duplicate them here.
@@ -87,10 +101,11 @@ A new `today` destination literal (parallel to the existing `discard` literal) p
 
 See [`adapters/claude-code/skills/daily-note-generate/`](../adapters/claude-code/skills/daily-note-generate/) and [`adapters/claude-code/skills/daily-note-close/`](../adapters/claude-code/skills/daily-note-close/).
 
-## Non-goals (v2)
+## Non-goals (v3)
 
 - No live checkboxes with real effects beyond what's described (ticking a Project next-actions box only does something once Close daily note runs, not instantly).
 - No Waiting-For write-back (closing an item always happens on the Person Hub, never here).
+- No proposed-item write-back and no auto-action on one (approving, filing, or dismissing a proposed item always happens in its own meeting note, never here). `## Project next actions` remains the **one** section whose ticked items imply an action elsewhere.
 - No delegation-from-daily-note (assigning a task to a person/agent from within the daily note is not yet specified).
 - No cross-day continuation of the same file (a new day is always a new file, carry-forward is copy-only).
 - No metrics/AFK ratio (later Routine, Phase 6, same as Dashboard's non-goal).

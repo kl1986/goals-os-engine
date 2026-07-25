@@ -5,13 +5,14 @@ Implements protocols/dashboard.md: surfaces overdue Routines (via
 heartbeat.py), pending Triage Plans (via execute.py's row parsing),
 pending rule-diff reviews (via rule_diff_review.py's diff parsing), a
 same-day Action Log summary, open Waiting For items (scanned from
-people/*.md), and pending Dropzone item counts (scanned from
-Files/dropzone/*, a sibling of the Brain root, not inside it). Read/
-link-only — writes <brain>/Dashboard.md, plus bumping its own "Dashboard"
-row in config/routine-state.md afterward (bookkeeping only — see
+people/*.md), open proposed items (scanned from meetings/*.md), and
+pending Dropzone item counts (scanned from Files/dropzone/*, a sibling of
+the Brain root, not inside it). Read/link-only — writes
+<brain>/Dashboard.md, plus bumping its own "Dashboard" row in
+config/routine-state.md afterward (bookkeeping only — see
 protocols/dashboard.md); approval and feedback happen in the linked
 files, not here — Waiting For items are only ever logged on a Person Hub,
-never here.
+and a proposed item is only ever approved in its own meeting note.
 """
 
 import argparse
@@ -104,6 +105,66 @@ def _open_waiting_for(brain_path: Path) -> list:
     return items
 
 
+def _open_proposed_items(brain_path: Path) -> list:
+    """Every unticked `- [ ]` line under a `## Proposed` heading across
+    `meetings/*.md`, per protocols/dashboard.md v0.5.
+
+    The `meetings` plugin writes items it cannot safely auto-file — new Person
+    Hubs, ambiguous names, "this looked resolved, close it?" — into a meeting
+    note's `## Proposed` section, because confirm-first is impossible in a
+    headless hook. Nothing surfaced them, so they were written and then missed.
+
+    Returns per-item dicts (the same shape `_open_waiting_for` returns) rather
+    than per-note ones: the Dashboard groups these by note, while the daily
+    note renders them per item, and one scan serves both. Non-destructive —
+    this never ticks, edits, or moves a meeting note.
+    """
+    meetings_dir = brain_path / "meetings"
+    if not meetings_dir.is_dir():
+        return []
+
+    items = []
+    for path in sorted(meetings_dir.glob("*.md")):
+        if path.name.startswith("_") or path.name == "README.md":
+            continue
+        text = path.read_text()
+        title_match = re.search(r'^# (.+)$', text, re.MULTILINE)
+        title = title_match.group(1).strip() if title_match else path.stem
+
+        # `[ \t]*\n`, not `\s*\n`: `\s` matches newlines, so on an empty
+        # `## Proposed` section the match would run on into the following
+        # sections and scoop up unrelated `- [ ]` lines as proposed items.
+        section_match = re.search(
+            r'^## .*Proposed[ \t]*\n(.*?)(?=\n## |\Z)', text, re.MULTILINE | re.DOTALL
+        )
+        if not section_match:
+            continue
+
+        for line in section_match.group(1).splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("- [ ]"):
+                continue
+            if "~~" in stripped:
+                continue
+            item_text = stripped[len("- [ ]"):].strip()
+            if not item_text:
+                continue
+            items.append({"meeting": title, "path": path, "text": item_text})
+    return items
+
+
+def _proposed_by_note(items: list) -> list:
+    """Collapse `_open_proposed_items()` output to one row per meeting note,
+    preserving scan order (already sorted by filename)."""
+    by_path = {}
+    for item in items:
+        key = item["path"]
+        if key not in by_path:
+            by_path[key] = {"meeting": item["meeting"], "path": key, "count": 0}
+        by_path[key]["count"] += 1
+    return list(by_path.values())
+
+
 def _awaiting_review_tickets(brain_path: Path) -> list:
     tasks_dir = brain_path / "tasks"
     if not tasks_dir.is_dir():
@@ -168,6 +229,7 @@ def compute_dashboard_data(brain_path: Path, now: dt.datetime = None) -> dict:
         "pending_rule_diffs": _pending_rule_diffs(brain_path),
         "awaiting_review_tickets": _awaiting_review_tickets(brain_path),
         "waiting_for": _open_waiting_for(brain_path),
+        "proposed_from_meetings": _proposed_by_note(_open_proposed_items(brain_path)),
         "action_log": _action_log_summary(brain_path, now.strftime("%Y-%m-%d")),
         "dropzone": _dropzone_counts(brain_path),
     }
@@ -229,6 +291,17 @@ def render_dashboard(data: dict) -> str:
             lines.append(f"- **{item['person']}** — {item['text']} ({link})")
     else:
         lines.append("Nothing open.")
+
+    lines += ["", "## Proposed from meetings", ""]
+    if data.get("proposed_from_meetings"):
+        for note in data["proposed_from_meetings"]:
+            link = _wikilink(note["path"], "meetings")
+            plural = "" if note["count"] == 1 else "s"
+            lines.append(
+                f"- **{note['meeting']}** — {note['count']} proposed item{plural} ({link})"
+            )
+    else:
+        lines.append("Nothing proposed.")
 
     lines += ["", "## Today's Action Log", ""]
     log = data["action_log"]
