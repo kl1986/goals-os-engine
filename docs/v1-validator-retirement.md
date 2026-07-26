@@ -6,7 +6,7 @@ and neither of which knows anything about the v2 **ticket** schema.
 
 This document is the retirement plan. **Nothing here has been deleted by the
 build**, deliberately: both skills live in
-`/Users/kelvinlee/Library/Mobile Documents/iCloud~md~obsidian/Documents/.claude/skills/`,
+`<vault-root>/.claude/skills/`,
 and `Documents/` is **not a git repository**. Removing untracked, unversioned
 files there is irreversible, so it is Kelvin's call and Kelvin's hand.
 
@@ -56,7 +56,9 @@ checks either, so bringing them across would be scope this build did not have.
 ~/…/Documents/.claude/skills/vault-lint/                               (the now-empty dir)
 ```
 
-(`~/…/Documents` = `/Users/kelvinlee/Library/Mobile Documents/iCloud~md~obsidian/Documents`.)
+(`<vault-root>` is the directory containing both the Brain repo and `Code/` — this
+Engine repo is public, so the operator's absolute home path is deliberately not
+written down here.)
 
 ## Callers that break on deletion — fix these first
 
