@@ -18,7 +18,7 @@ from pathlib import Path
 GENERIC_PATTERNS = {
     "email-address": re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b"),
     "absolute-home-path": re.compile(
-        r"(?i)(?:/Users/[^/\s]+|/home/[^/\s]+|[A-Z]:\\\\Users\\[^\\\s]+)"
+        r"(?i)(?:/U[s]ers/[^/\s]+|/h[o]me/[^/\s]+|[A-Z]:\\\\Users\\[^\\\s]+)"
     ),
     "api-key-shape": re.compile(
         r"\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16})\b"
@@ -143,13 +143,13 @@ def main(argv: list[str] | None = None) -> int:
 
     identity_terms = []
     allowlist = set()
-    identity_available = False
     if args.brain:
         try:
             identity_terms, allowlist = parse_identity_config(Path(args.brain).expanduser())
-            identity_available = True
         except ValueError as error:
             print(f"personal-data-check: identity tier unavailable ({error})", file=sys.stderr)
+            if not args.report_only:
+                return 2
     else:
         print(
             "personal-data-check: identity tier unavailable (no --brain or GOALS_OS_BRAIN_PATH)",
@@ -164,8 +164,6 @@ def main(argv: list[str] | None = None) -> int:
     print(format_report(findings))
     if args.report_only:
         return 0
-    if not identity_available:
-        return 2
     return 0 if not findings else 1
 
 

@@ -47,11 +47,11 @@ It schedules a *trigger* — it is not a session runner, so a consumer wanting a
 `scripts/personal_data_check.py` reports generic personal-data shapes in a
 publishable repository. Point `--brain` (or `GOALS_OS_BRAIN_PATH`) at a private
 Brain to add its identity terms; the report never prints those values. The
-checker refuses to scan a Brain itself. Until the existing findings are cleaned
-up, run it in report-only mode:
+checker refuses to scan a Brain itself. The public CI runs its generic checks
+in strict mode; use a private Brain locally to add identity checks:
 
 ```
-python3 scripts/personal_data_check.py --root . --brain /path/to/brain --report-only
+python3 scripts/personal_data_check.py --root . --brain /path/to/brain
 ```
 
 ## Decisions
