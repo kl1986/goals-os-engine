@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import heartbeat  # noqa: E402
 import log_action  # noqa: E402
 import dashboard  # noqa: E402
+import md_sections  # noqa: E402
 
 
 def _render_section(heading: str, content_lines: list) -> str:
@@ -28,15 +29,10 @@ def _render_section(heading: str, content_lines: list) -> str:
     return out
 
 
-# `[ \t]*\n` after the heading, never `\s*\n`. `\s` matches newlines, so on an
-# *empty* section `\s*` swallowed the blank line and the match then began at the
-# NEXT heading — making the "body" of the empty section every section that
-# followed it. For `_replace_section` that silently deleted them (a daily note
-# with no open Waiting For items lost `## Notes` and everything after it on the
-# next same-day regeneration); for `_append_new_lines_to_section` it appended
-# new rows under the wrong heading. Matching only the heading line's own
-# terminator keeps an empty section empty.
-_SECTION_BODY = r"^## {}[ \t]*\n(.*?)(?=\n## |\Z)"
+# Hoisted to scripts/md_sections.py so dashboard.py and execute.py can share it
+# without a circular import. Kept as a module-level alias because this module was
+# its original home; see md_sections.SECTION_BODY for why `[ \t]*\n`, not `\s*\n`.
+_SECTION_BODY = md_sections.SECTION_BODY
 
 
 def _append_new_lines_to_section(text: str, heading: str, existing_ok: callable, new_candidates: list) -> str:
@@ -256,7 +252,9 @@ def _carry_forward_tasks(brain_path: Path) -> list:
         
     latest_file = files[-1]
     text = latest_file.read_text()
-    section_match = re.search(r"^## Today's tasks\s*\n(.*?)(?=\n## |\Z)", text, re.MULTILINE | re.DOTALL)
+    section_match = re.search(
+        _SECTION_BODY.format(re.escape("Today's tasks")), text, re.MULTILINE | re.DOTALL
+    )
     if not section_match:
         return []
         
@@ -391,7 +389,9 @@ def close_daily_note(brain_path: Path, now: dt.datetime = None) -> dict:
         return summary
 
     text = note_path.read_text()
-    section_match = re.search(r"^## Project next actions\s*\n(.*?)(?=\n## |\Z)", text, re.MULTILINE | re.DOTALL)
+    section_match = re.search(
+        _SECTION_BODY.format(re.escape("Project next actions")), text, re.MULTILINE | re.DOTALL
+    )
     if section_match:
         tasks_dir = brain_path / "tasks"
         for line in section_match.group(1).splitlines():
