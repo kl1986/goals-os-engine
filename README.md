@@ -8,6 +8,13 @@ The Engine contains **zero user data**. It ships protocols, schemas, core routin
 
 See [`CONTEXT.md`](./CONTEXT.md) for the full glossary (Engine, Library, Brain, Protocol, Adapter, Action Log, and the rest of the system's vocabulary).
 
+## Start here
+
+Read the [user guide](./docs/user-guide.md) for the daily Capture → Triage →
+Execute → Compile lifecycle, the reference Brain's drop zones, Heartbeat, and
+the boundary between the Brain and the Engine. Architecture-level decisions
+are recorded in the [ADRs](./docs/adr/).
+
 ## Protocols
 
 Markdown-defined, runtime-independent behaviour specs — what the Engine ships; Adapters make them executable. See [`protocols/`](./protocols/):
