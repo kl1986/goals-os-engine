@@ -36,6 +36,11 @@ NON_ARTICLE_FILES = {
 INDEX_ROW_RE = re.compile(r'^\|\s*\[\[([^\]|]+)(?:\|[^\]]*)?\]\]\s*\|\s*(.*?)\s*\|\s*$')
 SOURCE_LINK_RE = re.compile(r'\[\[(archive/inbox/[^\]|]+)\]\]')
 WIKILINK_RE = re.compile(r'\[\[([^\]|]+)(?:\|[^\]]*)?\]\]')
+SOURCE_FEEDBACK_ROW_RE = re.compile(
+    r'^\|\s*\[\[(archive/inbox/[^\]|]+)\]\]\s*\|\s*'
+    r'(exclude|force-concept)\s*\|\s*([^|]*)\|\s*$'
+)
+CONCEPT_SLUG_RE = re.compile(r'^[a-z0-9]+(?:-[a-z0-9]+)*$')
 
 
 def _flat_articles(brain_path: Path) -> list:
@@ -62,6 +67,84 @@ def read_index(brain_path: Path) -> list:
         slug, summary = m.group(1).strip(), m.group(2).strip()
         rows.append({"slug": slug, "summary": summary})
     return rows
+
+
+def source_feedback_path(brain_path: Path) -> Path:
+    """The durable, editable source-selection record for Wiki Compile.
+
+    It intentionally lives outside the Raw Capture: source content remains
+    immutable while a person can correct future resynthesis decisions.
+    """
+    return brain_path / "config" / "wiki-source-feedback.md"
+
+
+def read_source_feedback(brain_path: Path) -> dict:
+    """Return {archive-path: {directive, concept?}} from the feedback record.
+
+    Malformed hand-edited rows are ignored rather than guessed. A later valid
+    row for the same capture wins, giving hand editing straightforward
+    last-write-wins semantics without changing the Raw Capture.
+    """
+    path = source_feedback_path(brain_path)
+    if not path.exists():
+        return {}
+    feedback = {}
+    for line in path.read_text().splitlines():
+        match = SOURCE_FEEDBACK_ROW_RE.match(line.strip())
+        if not match:
+            continue
+        capture_path, directive, concept = match.groups()
+        concept = concept.strip()
+        if directive == "force-concept" and not CONCEPT_SLUG_RE.fullmatch(concept):
+            continue
+        if directive == "exclude" and concept:
+            continue
+        entry = {"directive": directive}
+        if directive == "force-concept":
+            entry["concept"] = concept
+        feedback[capture_path] = entry
+    return feedback
+
+
+def write_source_feedback(
+    brain_path: Path, capture_path: str, directive: str, concept: str | None = None
+) -> Path:
+    """Create or replace a directive for one archived capture.
+
+    Only archived captures are valid targets. This makes feedback auditable
+    and prevents live Raw queue state from becoming an accidental input to
+    Compile.
+    """
+    if directive not in {"exclude", "force-concept"}:
+        raise ValueError("directive must be 'exclude' or 'force-concept'")
+    if not capture_path.startswith("archive/inbox/") or not (brain_path / f"{capture_path}.md").is_file():
+        raise ValueError(f"capture must name an existing archived capture: {capture_path}")
+    if directive == "force-concept":
+        if not concept or not CONCEPT_SLUG_RE.fullmatch(concept):
+            raise ValueError("force-concept requires a lowercase-hyphenated concept slug")
+    elif concept:
+        raise ValueError("exclude does not accept a concept")
+
+    feedback = read_source_feedback(brain_path)
+    feedback[capture_path] = {"directive": directive}
+    if directive == "force-concept":
+        feedback[capture_path]["concept"] = concept
+
+    path = source_feedback_path(brain_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for source_path in sorted(feedback):
+        item = feedback[source_path]
+        rows.append(f"| [[{source_path}]] | {item['directive']} | {item.get('concept', '')} |")
+    path.write_text(
+        "---\ntype: wiki-source-feedback\n---\n\n"
+        "# Wiki source feedback\n\n"
+        "Machine-read directives for future Wiki resynthesis. Raw captures stay immutable. "
+        "Edit this table or use `wiki_librarian.py source-feedback-set`.\n\n"
+        "| Capture | Directive | Concept |\n|---|---|---|\n"
+        + "\n".join(rows) + "\n"
+    )
+    return path
 
 
 def list_archived_captures(brain_path: Path) -> list:
@@ -112,6 +195,14 @@ def new_captures_for_compile(brain_path: Path) -> list:
     return [c for c in list_archived_captures(brain_path) if c["path"] not in cited]
 
 
+def _articles_citing_source(brain_path: Path, source_path: str) -> set:
+    """Concept slugs whose current Sources cite `source_path`."""
+    return {
+        article.stem for article in _flat_articles(brain_path)
+        if source_path in set(SOURCE_LINK_RE.findall(article.read_text()))
+    }
+
+
 def compile_scan(brain_path: Path, scope: str = None) -> dict:
     """Pure read-only scan — the mechanical half of a Compile pass.
 
@@ -123,14 +214,48 @@ def compile_scan(brain_path: Path, scope: str = None) -> dict:
     scope="full", this function does not gate it itself).
     """
     index = read_index(brain_path)
-    new_captures = new_captures_for_compile(brain_path)
+    all_captures = list_archived_captures(brain_path)
+    captures_by_path = {capture["path"]: capture for capture in all_captures}
+    feedback = read_source_feedback(brain_path)
+    cited = cited_capture_paths(brain_path)
+    excluded_paths = {
+        path for path, item in feedback.items() if item["directive"] == "exclude"
+    }
+    new_captures = [
+        capture for capture in all_captures
+        if capture["path"] not in cited and capture["path"] not in excluded_paths
+    ]
+    forced_assignments = {
+        path: item["concept"] for path, item in feedback.items()
+        if item["directive"] == "force-concept" and path in captures_by_path
+    }
+    present_paths = {capture["path"] for capture in new_captures}
+    for path, concept in forced_assignments.items():
+        if path not in present_paths:
+            capture = dict(captures_by_path[path])
+            capture["forced_concept"] = concept
+            new_captures.append(capture)
+            present_paths.add(path)
     if scope == "full":
         forced_concepts = [row["slug"] for row in index]
     elif scope:
         forced_concepts = [scope]
     else:
         forced_concepts = []
-    return {"index": index, "new_captures": new_captures, "forced_concepts": forced_concepts}
+    # Feedback changes an article's source set, so every current article that
+    # cited the source must also be fully resynthesized without it. A forced
+    # assignment additionally makes the named target concept resynthesize.
+    for path in excluded_paths | set(forced_assignments):
+        forced_concepts.extend(_articles_citing_source(brain_path, path))
+    forced_concepts.extend(forced_assignments.values())
+    forced_concepts = sorted(set(forced_concepts))
+    return {
+        "index": index,
+        "new_captures": new_captures,
+        "forced_concepts": forced_concepts,
+        "excluded_captures": [captures_by_path[path] for path in sorted(excluded_paths) if path in captures_by_path],
+        "forced_assignments": forced_assignments,
+    }
 
 
 def compile_run(brain_path: Path, scope: str = None, now: dt.datetime = None) -> dict:
@@ -173,9 +298,28 @@ def apply_compile(brain_path: Path, concept_slug: str, concept_title: str, artic
     wiki_dir.mkdir(parents=True, exist_ok=True)
     article_path = wiki_dir / f"{concept_slug}.md"
 
+    feedback = read_source_feedback(brain_path)
+
+    def permitted(source_path: str) -> bool:
+        item = feedback.get(source_path)
+        if not item:
+            return True
+        if item["directive"] == "exclude":
+            return False
+        return item["concept"] == concept_slug
+
     existing_sources = []
     if article_path.exists():
-        existing_sources = _existing_sources(article_path.read_text())
+        existing_sources = [
+            source for source in _existing_sources(article_path.read_text())
+            if permitted(source[1])
+        ]
+    invalid_refs = [link for _, link in source_refs if not permitted(link)]
+    if invalid_refs:
+        raise ValueError(
+            f"source feedback forbids these source refs for {concept_slug}: "
+            + ", ".join(invalid_refs)
+        )
     existing_links = {link for _, link in existing_sources}
     merged_sources = list(existing_sources)
     for date_str, link in source_refs:
@@ -453,6 +597,11 @@ def parse_args(argv):
     apply_c.add_argument("--summary", default=None)
     apply_c.add_argument("--confidence", default="Medium", choices=("High", "Medium", "Low"))
 
+    feedback = sub.add_parser("source-feedback-set", help="Record an exclusion or forced concept for one archived capture.")
+    feedback.add_argument("--capture-path", required=True, help="archive/inbox/<source>/<id>, without .md")
+    feedback.add_argument("--directive", required=True, choices=("exclude", "force-concept"))
+    feedback.add_argument("--concept", default=None, help="Required for force-concept; lowercase-hyphenated slug.")
+
     sub.add_parser("audit-scan-mechanical", help="Read-only dead-link + orphan scan. Zero LLM calls, no writes.")
 
     fix = sub.add_parser("audit-apply-fix-dead-link")
@@ -490,6 +639,8 @@ def main(argv=None):
         print(f"Indexed concepts: {len(result['index'])}")
         if result["forced_concepts"]:
             print(f"Forced concepts: {', '.join(result['forced_concepts'])}")
+        if result["excluded_captures"]:
+            print(f"Excluded captures: {len(result['excluded_captures'])}")
         print(json.dumps(result, indent=2))
 
     elif args.command == "compile-apply":
@@ -500,6 +651,12 @@ def main(argv=None):
             summary=args.summary, confidence=args.confidence,
         )
         print(f"Wrote {path}")
+
+    elif args.command == "source-feedback-set":
+        path = write_source_feedback(
+            brain_path, args.capture_path, args.directive, args.concept
+        )
+        print(f"Updated {path}")
 
     elif args.command == "audit-scan-mechanical":
         result = audit_scan_mechanical(brain_path)

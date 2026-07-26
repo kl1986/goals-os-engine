@@ -51,6 +51,7 @@ See [`docs/adr/`](./docs/adr/) for the architecture decision records this repo w
 | 0008 | Two-lane self-improvement |
 | 0009 | Voice in core, dialogue as plugin |
 | 0010 | Pure-derivation Wiki |
+| 0029 | Durable, immutable-source Wiki feedback |
 | 0030 | Cadence ownership moves from the Engine manifest to the Brain's `config/schedules.md` (lives in the Brain's `docs/adr/`) |
 
 ## Status

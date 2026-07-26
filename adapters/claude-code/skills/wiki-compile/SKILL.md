@@ -28,6 +28,12 @@ python3 <path-to-goals-os-engine>/scripts/wiki_librarian.py --brain "<path-to-br
 
 This bumps Compile's own `config/routine-state.md` row regardless of outcome (the Routine ran and checked, even with 0 new captures) and prints the current index, any new (not-yet-cited) archived captures, and any concepts the scope argument forces.
 
+   The JSON includes `excluded_captures` and `forced_assignments` from
+   `config/wiki-source-feedback.md`. Do not include excluded captures in an
+   article. A forced capture belongs only to its named concept; every concept
+   listed in `forced_concepts` must be resynthesized so an old assignment is
+   actually removed, not merely duplicated.
+
 4. For every concept that needs resynthesizing (a `forced_concepts` entry, or — in default/incremental mode — any existing or new concept you judge at least one new capture belongs to):
    - Read `wiki/_index.md` and the concept's current article (if it exists), plus every relevant new capture (follow the `archive/inbox/<source>/<id>` paths from the scan output).
    - Decide, in-session, which existing concept each new capture belongs to, or whether it spawns a new one — there is no rule-based pre-filter for this (ticket 02); it is always your judgement call.
