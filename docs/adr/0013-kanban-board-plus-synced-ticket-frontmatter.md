@@ -1,0 +1,5 @@
+# Global Kanban board stays the write surface; per-ticket YAML frontmatter is synced machine state
+
+The Obsidian Kanban plugin only ever reads/writes its own board file — inspecting the plugin source confirms it has no mechanism to update a linked note's frontmatter when a card is dragged. Rather than lose drag-and-drop (board-as-truth) or lose a single clean per-ticket file for agents to read/write (frontmatter-as-truth with a read-only generated board), both stay: one global `tasks/kanban.md` remains the human drag-and-drop surface, each ticket file carries a `status:` field in YAML frontmatter as its own machine-readable state, and a two-way sync script keeps them consistent (board edit → frontmatter write; agent frontmatter edit → board card move). Decided 21/07/2026.
+
+**Rejected:** board-as-truth only (agents would have to parse the whole board to find one ticket's state); frontmatter-as-truth with a read-only generated board (breaks the drag-and-drop UX that's the actual daily interaction).
