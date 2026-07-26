@@ -62,7 +62,7 @@ Each diff is a `###`-headed section, in file order, numbered `Diff 1`, `Diff 2`,
    - [ ] Approve
    - [ ] Reject
    ```
-   Both start unticked. the user (or an Adapter acting only on his explicit instruction) ticks **at most one**. Never tick a box on this surface automatically or speculatively — same discipline as Triage Plan approval.
+   Both start unticked. The user (or an Adapter acting only on his explicit instruction) ticks **at most one**. Never tick a box on this surface automatically or speculatively — same discipline as Triage Plan approval.
 
 ### Processed-state marker
 
