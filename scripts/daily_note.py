@@ -35,6 +35,9 @@ def _render_section(heading: str, content_lines: list) -> str:
 _SECTION_BODY = md_sections.SECTION_BODY
 
 
+_DAILY_PRIORITIES_EMBED = "![[tasks/all-tickets.base#Daily priorities]]"
+
+
 def _append_new_lines_to_section(text: str, heading: str, existing_ok: callable, new_candidates: list) -> str:
     match = re.search(_SECTION_BODY.format(re.escape(heading)), text, re.MULTILINE | re.DOTALL)
     if not match:
@@ -301,6 +304,7 @@ def generate_daily_note(brain_path: Path, now: dt.datetime = None) -> Path:
         
         body_sections = [
             _render_section("Today's tasks", today_lines),
+            _render_section("Daily priorities", [_DAILY_PRIORITIES_EMBED]),
             _render_section("Project next actions", project_lines),
             _render_section("Waiting for", waiting_lines),
             _render_section("Proposed from meetings", proposed_lines),
@@ -346,6 +350,13 @@ def generate_daily_note(brain_path: Path, now: dt.datetime = None) -> Path:
             # into one and suppress every item after the first.
             return candidate_line.strip() in {line.strip() for line in existing_lines}
 
+        text = _ensure_section(text, "Daily priorities", "Project next actions")
+        text = _append_new_lines_to_section(
+            text,
+            "Daily priorities",
+            lambda candidate_line, existing_lines: candidate_line in existing_lines,
+            [_DAILY_PRIORITIES_EMBED],
+        )
         text = _append_new_lines_to_section(text, "Project next actions", project_existing_ok, project_lines)
         text = _replace_section(text, "Waiting for", waiting_lines)
         # Additive-only, unlike Waiting For's wholesale replace: the ticket

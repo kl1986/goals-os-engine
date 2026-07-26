@@ -1,4 +1,4 @@
-# Protocol: Daily note (v3)
+# Protocol: Daily note (v4)
 
 A single, once-daily "command centre" note at the Brain root. Distinct from the pure-derivation Dashboard, the daily note is additive-only within a day and accumulates edits (ticked checkboxes) the user makes during the day. It is governed by two Routines: "Daily note" (generation, morning) and "Close daily note" (reconciliation + archive, evening).
 
@@ -25,6 +25,9 @@ Body, in this exact order:
 ## Today's tasks
 - [ ]
 
+## Daily priorities
+![[tasks/all-tickets.base#Daily priorities]]
+
 ## Project next actions
 
 ## Waiting for
@@ -36,13 +39,15 @@ Body, in this exact order:
 
 v3 (meeting-processing) adds `## Proposed from meetings`. It gets its own heading rather than folding into an existing section: `## Waiting for` is a wholesale-replaced mirror and `## Today's tasks` carries hand-typed content, while this section is additive-only — three different edit semantics in one heading would be a trap. A separate heading also keeps the source obvious when an item needs chasing back to its meeting note.
 
+v4 adds `## Daily priorities` immediately after `## Today's tasks`. It is a static named-view embed of the Brain's shared `tasks/all-tickets.base#Daily priorities` Base Board view, not a second task store: dragging a card writes its `status` directly to the source ticket's frontmatter. Generation ensures the one fixed embed is present on new and pre-existing daily notes without duplicating it or touching any other user-authored content.
+
 ## Daily note Routine (Generation & refresh)
 
 The generation Routine (risk tier internal & reversible, owner EA; Schedule *fixed-interval*, a morning clock time — heartbeat-checkable daily — in the Brain's `config/schedules.md`) uses `scripts/daily_note.py`'s `generate_daily_note` plus an Adapter skill.
 
 - Each new calendar day always gets a brand-new file. There is no cross-day continuation of the same file.
 - Re-invoking generation within the same day is **additive only**. It only ever adds rows for anything not already present (new project next-actions, new triaged captures filed via the `today` destination, new Waiting For items, new proposed items from meetings). It never touches, reorders, or removes an existing line. This is different from `dashboard.md`, which fully overwrites every run.
-- A note generated before a section existed has no such heading, and appending into a missing heading is a silent no-op. Generation therefore **inserts** a missing `## Proposed from meetings` heading (immediately before `## Notes`) rather than skipping the section for the day. Inserting a heading is still additive-only: it adds lines and touches, reorders and removes none.
+- A note generated before a section existed has no such heading, and appending into a missing heading is a silent no-op. Generation therefore **inserts** a missing `## Daily priorities` heading (immediately before `## Project next actions`) and `## Proposed from meetings` heading (immediately before `## Notes`) rather than skipping either section for the day. Inserting a heading is still additive-only: it adds lines and touches, reorders and removes none.
 - **Carry-forward:** Generation scans the most recently archived note (`archive/daily-notes/`, picking the lexicographically-latest filename) for any still-unchecked `## Today's tasks` line, and copies it verbatim into the new day's `## Today's tasks`. This is origin-blind: a manually-typed task and a capture-derived task carry forward identically. This is the **only** section needing carry-forward. `## Project next actions` and `## Waiting for` are live mirrors of an external source (project notes, person hubs), so an unresolved item naturally persists at the source without carry-forward logic here.
 
 On completion, it bumps its own "Daily note" row in `config/routine-state.md` (`heartbeat.bump`), matching every other Routine.

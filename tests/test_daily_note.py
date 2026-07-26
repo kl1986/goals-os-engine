@@ -105,14 +105,27 @@ class TestGenerateFreshCreation(unittest.TestCase):
         text = path.read_text()
         self.assertIn("# Monday, 13 July 2026\n", text)
 
-    def test_four_sections_in_order_with_empty_state_rendering(self):
+    def test_sections_in_order_with_daily_priorities_embed_and_empty_state_rendering(self):
         path = daily_note.generate_daily_note(self.brain_path, now=MONDAY)
         text = path.read_text()
-        for heading in ("## Today's tasks", "## Project next actions", "## Waiting for", "## Notes"):
+        for heading in (
+            "## Today's tasks",
+            "## Daily priorities",
+            "## Project next actions",
+            "## Waiting for",
+            "## Notes",
+        ):
             self.assertIn(heading, text)
         # Order
-        positions = [text.index(h) for h in ("## Today's tasks", "## Project next actions", "## Waiting for", "## Notes")]
+        positions = [text.index(h) for h in (
+            "## Today's tasks",
+            "## Daily priorities",
+            "## Project next actions",
+            "## Waiting for",
+            "## Notes",
+        )]
         self.assertEqual(positions, sorted(positions))
+        self.assertEqual(text.count("![[tasks/all-tickets.base#Daily priorities]]"), 1)
         # Empty-state: bare placeholder checkbox, no source projects/people yet
         self.assertIn("## Today's tasks\n- [ ]\n", text)
 
@@ -385,6 +398,28 @@ class TestAdditiveSameDayRefresh(unittest.TestCase):
         first_text = (self.brain_path / "2026-07-13.md").read_text()
         daily_note.generate_daily_note(self.brain_path, now=MONDAY)
         second_text = (self.brain_path / "2026-07-13.md").read_text()
+        self.assertEqual(first_text, second_text)
+
+    def test_rerun_adds_missing_daily_priorities_embed_once_before_project_actions(self):
+        note_path = self.brain_path / "2026-07-13.md"
+        note_path.write_text(
+            "---\ntype: daily-note\ndate: 2026-07-13\n---\n\n"
+            "# Monday, 13 July 2026\n\n"
+            "## Today's tasks\n- [ ] Keep this\n\n"
+            "## Project next actions\n\n"
+            "## Waiting for\n\n"
+            "## Notes\nKeep this too.\n"
+        )
+
+        daily_note.generate_daily_note(self.brain_path, now=MONDAY)
+        first_text = note_path.read_text()
+        daily_note.generate_daily_note(self.brain_path, now=MONDAY)
+        second_text = note_path.read_text()
+
+        self.assertEqual(first_text.count("![[tasks/all-tickets.base#Daily priorities]]"), 1)
+        self.assertLess(first_text.index("## Daily priorities"), first_text.index("## Project next actions"))
+        self.assertIn("- [ ] Keep this", first_text)
+        self.assertIn("Keep this too.", first_text)
         self.assertEqual(first_text, second_text)
 
     def test_rerun_same_day_replaces_changed_waiting_for_text_instead_of_duplicating(self):
