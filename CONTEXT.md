@@ -107,10 +107,10 @@ The Engine invariant that the Wiki can be dropped and rebuilt from Raw Captures 
 ## Operations
 
 **Routine**:
-A recurring behaviour declared in the Engine's Routine manifest (name, protocol, cadence, risk tier), with last-run state recorded in the Brain.
+A recurring behaviour declared in the Engine's Routine manifest (name, protocol, risk tier, owner), with its **timing** declared as a Schedule in the Brain and last-run state recorded in the Brain. The manifest says what a Routine *is*; `config/schedules.md` says when it runs (ADR-0030).
 
 **Heartbeat**:
-The due-check at every session start that finds overdue Routines and nudges or auto-runs them per their autonomy level.
+The due-check at every session start that finds overdue Routines and nudges or auto-runs them per their autonomy level. Layer 1 of ADR-0007's triggering stack; reads cadence from the Brain's Schedules.
 
 **Tune**:
 The Librarian's report-only loop proposing upgrades to agent and skill definitions, grounded in cited knowledge. Brain-owned targets apply locally on approval; Engine-owned targets become upstream contributions.
@@ -120,3 +120,23 @@ The periodic external-research cycle that scans new releases/approaches, distils
 
 **AFK ratio**:
 Share of actions executed autonomously rather than confirm-first — the primary fitness metric, alongside cycle time, goal progress, and review debt/correction rate.
+
+## Scheduling
+
+**Schedule**:
+One row in the Brain's `config/schedules.md` declaring *when* a Routine or a standalone script runs — both trigger and timing. The **sole source of truth for timing** (ADR-0030); the only place timing is ever edited. Has a **kind**: *fixed-interval* (fires on a clock — heartbeat-checkable) or *poll* (an event-trigger such as "on new raw," realised as a frequent check — excluded from due-checking).
+_Avoid_: Cron entry (a Schedule is declarative and runtime-independent; launchd is one binding of it), cadence (retired — see below)
+
+**Job**:
+The concrete launchd `.plist` that realises a Schedule. Either realises a Routine's Schedule, or is a *standalone* scheduled script with no Routine (capture pullers, vault backup) — both are first-class rows.
+_Avoid_: Task, cron job (Job means the realised artefact specifically, not the work it performs)
+
+**Managed Job / Unmanaged Job**:
+**Managed** = generated and owned by the Scheduler Adapter, marked by the namespaced `GoalsOSManaged` key in the plist so ownership is decidable from the file alone. **Unmanaged** = any hand-written plist, including third-party ones; the adapter **never touches** one and refuses loudly on a Label collision.
+
+**Scheduler Adapter**:
+`scripts/sync_schedules.py` plus `protocols/schedules.md` — ADR-0007's layer 2. Renders and reconciles Managed Jobs from the Brain's Schedules, idempotently. It schedules a **trigger**; it is not a session runner and does not fire an unattended agent session.
+
+**Cadence** (retired from the Engine):
+How often a Routine runs. Formerly a column in the Engine's `protocols/routines.md` manifest; since ADR-0030 it lives only in the Brain, derived from a Schedule's kind and Timing. Do not reintroduce a cadence field to any Engine file — that is the double-source-of-truth ADR-0030 collapsed.
+_Avoid_: using "cadence" as if the Engine owned it; say "the Routine's Schedule"

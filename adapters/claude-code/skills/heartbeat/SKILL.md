@@ -1,6 +1,6 @@
 ---
 name: heartbeat
-description: Report which Routines are overdue against the Engine's manifest (protocols/routines.md) and a Brain's config/routine-state.md. Nudge-only — never runs anything. Use at the start of a session, or whenever the user wants to know what's due.
+description: Report which Routines are overdue against the Engine's manifest (protocols/routines.md), the Brain's cadence in config/schedules.md, and the Brain's config/routine-state.md. Nudge-only — never runs anything. Use at the start of a session, or whenever the user wants to know what's due.
 allowed-tools:
   - Bash
 triggers:
@@ -22,7 +22,8 @@ The Claude Code binding for `protocols/routines.md`'s due-check. All the logic �
 python3 <path-to-goals-os-engine>/scripts/heartbeat.py --brain "<path-to-brain>"
 ```
 
-3. Relay the output as-is. If routines are overdue, name them and point at the relevant skill to run them (`triage-plan`, `dashboard`, `version-control`) — but never run them yourself without being asked. This is a nudge, not a dispatch.
+3. If it exits with "No usable .../config/schedules.md", say so plainly: cadence lives in the Brain since ADR-0030, so due-checking is impossible until that file exists — the Brain Template ships a starter table, and `scripts/onboard.py` materialises one.
+4. Relay the output as-is. If routines are overdue, name them and point at the relevant skill to run them (`triage-plan`, `dashboard`, `version-control`) — but never run them yourself without being asked. This is a nudge, not a dispatch.
 
 ## Contract this Adapter fulfils (ADR-0002)
 

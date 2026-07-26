@@ -47,5 +47,5 @@ Every successful `stamp()` call also bumps Capture sweep's own row in `config/ro
 ## Non-goals (v0)
 
 - **Manual/text capture only.** Phase 2 ships one path: a human (or an Adapter skill on their behalf) supplies source + title + body. No Gmail fetcher, no voice-transcription pipeline, no meeting-recorder integration — those are Library plugins, later phases (§12 of the PRD; roadmap Phase 3+).
-- The manifest's "continuous/hourly" cadence for Capture sweep is therefore aspirational until a real puller exists — Phase 2's Capture sweep is event-triggered (fires per manual invocation), not due-checked (`protocols/routines.md`).
+- Capture sweep's Schedule is therefore *poll* kind — event-triggered (fires per manual invocation, or per puller once one exists), not due-checked (`protocols/routines.md`, `protocols/schedules.md`). A real puller declares its own poll interval as a standalone Job row in the Brain's `config/schedules.md`.
 - No dedup or near-duplicate detection across captures — every call to `stamp()` writes a new file.

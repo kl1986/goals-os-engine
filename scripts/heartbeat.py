@@ -1,26 +1,29 @@
 #!/usr/bin/env python3
-"""Due-check a Brain's Routines against the Engine's manifest.
+"""Due-check a Brain's Routines against the Engine's manifest and the Brain's Schedules.
 
-Implements protocols/routines.md's Heartbeat half: reads this repo's
-manifest table and a Brain's config/routine-state.md (last-run only) and
-reports which heartbeat-checkable, implemented Routines are overdue.
+Implements protocols/routines.md's Heartbeat half. Reads three things:
+
+- the Engine's `protocols/routines.md` manifest — protocol binding, risk
+  tier, owner, Phase 2 status;
+- the Brain's `config/schedules.md` — **cadence**, which per ADR-0030 left
+  the Engine entirely and lives in the Brain as a Schedule;
+- the Brain's `config/routine-state.md` — last-run timestamps only.
+
+and reports which heartbeat-checkable, implemented Routines are overdue.
+A Routine is heartbeat-checkable when its Schedule's kind is
+*fixed-interval*; *poll* Schedules are event-triggers and excluded from
+due-checking by design.
+
 Pure Python, zero LLM calls, nudge-only — never runs anything itself.
 """
 
 import argparse
 import datetime as dt
-import re
 import sys
 from pathlib import Path
 
-CADENCE_DAYS = {
-    "hourly": 1 / 24,
-    "daily": 1,
-    "weekly": 7,
-    "fortnightly": 14,
-    "monthly": 30,
-    "quarterly": 90,
-}
+sys.path.insert(0, str(Path(__file__).parent))
+import schedules as schedules_mod  # noqa: E402
 
 MANIFEST_PATH = Path(__file__).parent.parent / "protocols" / "routines.md"
 TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M"
@@ -88,35 +91,34 @@ def bump(brain_path: Path, routine: str, now: dt.datetime) -> bool:
     return update_last_run(brain_path / "config" / "routine-state.md", routine, now.strftime(TIMESTAMP_FORMAT))
 
 
-def _cadence_days(cadence_cell: str):
-    match = re.search(
-        r"\b(hourly|daily|weekly|fortnightly|monthly|quarterly)\b", cadence_cell.lower()
-    )
-    return CADENCE_DAYS[match.group(1)] if match else None
-
-
-def compute_overdue(manifest: list, routine_state: dict, now: dt.datetime = None) -> list:
+def compute_overdue(manifest: list, routine_state: dict, schedules: list,
+                    now: dt.datetime = None) -> list:
     """Return the heartbeat-checkable, implemented Routines that are due.
 
-    Only Routines whose manifest row is marked "implemented" (Phase 2
-    status) *and* whose cadence is heartbeat-checkable are evaluated at
-    all — event-triggered Routines and declared-not-implemented ones are
-    silently skipped, by design (ADR-0007, protocols/routines.md).
+    A Routine is evaluated only if its manifest row is marked "implemented"
+    (Phase 2 status) *and* it has a heartbeat-checkable Schedule in the
+    Brain's `config/schedules.md` — poll Schedules (event-triggers), Routines
+    with no Schedule at all, and declared-not-implemented ones are silently
+    skipped, by design (ADR-0007, ADR-0030, protocols/routines.md).
+
+    `schedules` is the list of `schedules.Schedule` objects for the Brain.
     """
     now = now or dt.datetime.now()
+    cadences = schedules_mod.cadence_by_routine(schedules or [])
     overdue = []
     for row in manifest:
         status = row.get("Phase 2 status", "")
-        cadence_cell = row.get("Cadence", "")
         if not status.startswith("implemented"):
-            continue
-        if "heartbeat-checkable" not in cadence_cell:
-            continue
-        days = _cadence_days(cadence_cell)
-        if days is None:
             continue
 
         routine = row["Routine"]
+        schedule = cadences.get(routine)
+        if not schedule or not schedule["checkable"]:
+            continue
+        days = schedule["cadence_days"]
+        if days is None:
+            continue
+
         last_run = routine_state.get(routine, "never")
 
         if last_run == "never":
@@ -136,9 +138,41 @@ def compute_overdue(manifest: list, routine_state: dict, now: dt.datetime = None
     return overdue
 
 
+def parse_brain_schedules(brain_path: Path, strict: bool = False) -> list:
+    """Read a Brain's Schedules, warning loudly if they're missing or broken.
+
+    ADR-0030's accepted price: layer 1 now couples to a Brain file, so a
+    Brain with no `config/schedules.md` has no due-checking. That is a
+    condition to report, never to crash a caller (Dashboard) over — hence
+    the non-strict default.
+    """
+    try:
+        return schedules_mod.parse_schedules(schedules_mod.schedules_path(brain_path))
+    except schedules_mod.ScheduleError as exc:
+        message = (
+            f"No usable {schedules_mod.schedules_path(brain_path)} — nothing can be "
+            f"due-checked until it exists (ADR-0030).\n{exc}"
+        )
+        if strict:
+            sys.exit(message)
+        print(message, file=sys.stderr)
+        return []
+
+
+def overdue_for_brain(brain_path: Path, now: dt.datetime = None, strict: bool = False) -> list:
+    """The Heartbeat due-check for one Brain, end to end. Shared with Dashboard."""
+    return compute_overdue(
+        parse_manifest(),
+        parse_routine_state(brain_path / "config" / "routine-state.md"),
+        parse_brain_schedules(brain_path, strict=strict),
+        now=now,
+    )
+
+
 def parse_args(argv):
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--brain", required=True, help="Path to the Brain (contains config/routine-state.md)")
+    p.add_argument("--brain", required=True,
+                   help="Path to the Brain (contains config/schedules.md and config/routine-state.md)")
     return p.parse_args(argv)
 
 
@@ -148,9 +182,7 @@ def main(argv=None):
     if not brain_path.is_dir():
         sys.exit(f"Brain path does not exist: {brain_path}")
 
-    manifest = parse_manifest()
-    routine_state = parse_routine_state(brain_path / "config" / "routine-state.md")
-    overdue = compute_overdue(manifest, routine_state)
+    overdue = overdue_for_brain(brain_path, strict=True)
 
     if not overdue:
         print("Nothing overdue.")

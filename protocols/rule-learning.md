@@ -67,7 +67,7 @@ A proposed diff is tier `internal & reversible` (ticket 02's default for every r
 
 ## Cadence & Routine-manifest entry
 
-Registered in `protocols/routines.md` as its own row, "Rule learning," cadence `weekly — heartbeat-checkable`, owner `EA` (the judgement-bearing layer, matching the Adapter-side grouping step above — not `scripts`, since this Routine is not silent-automatic like Version Control or Graduation check). `scripts/rule_learning.py`'s `run()` bumps its own row in `config/routine-state.md`, same convention as every other Routine-implementing script (`scripts/heartbeat.py`'s `bump()`), so `scripts/heartbeat.py`'s due-checker can flag it overdue like any other heartbeat-checkable Routine.
+Registered in `protocols/routines.md` as its own row, "Rule learning," owner `EA`, with its cadence declared in the **Brain's** `config/schedules.md` as a *fixed-interval* Schedule of `weekly` (ADR-0030 moved cadence out of the manifest; see `protocols/schedules.md`) (the judgement-bearing layer, matching the Adapter-side grouping step above — not `scripts`, since this Routine is not silent-automatic like Version Control or Graduation check). `scripts/rule_learning.py`'s `run()` bumps its own row in `config/routine-state.md`, same convention as every other Routine-implementing script (`scripts/heartbeat.py`'s `bump()`), so `scripts/heartbeat.py`'s due-checker can flag it overdue like any other heartbeat-checkable Routine.
 
 ## Adapter binding
 

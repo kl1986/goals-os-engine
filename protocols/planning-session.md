@@ -16,7 +16,7 @@ The Routine `protocols/charters/area-ceo.md` exists to run (ticket 16): one Area
 
 ## Cadence
 
-Weekly / on demand, heartbeat-checkable (`routines.md`'s manifest, ADR-0007) — `scripts/heartbeat.py`'s due-check flags `Planning session` overdue once its `config/routine-state.md` row is more than 7 days stale, the same mechanism every other heartbeat-checkable Routine uses. No auto-run: Heartbeat only ever nudges (`routines.md`'s own non-goal).
+Weekly / on demand, heartbeat-checkable — a *fixed-interval* Schedule of `weekly` in the Brain's `config/schedules.md` (ADR-0007 layer 1, cadence relocated by ADR-0030) — `scripts/heartbeat.py`'s due-check flags `Planning session` overdue once its `config/routine-state.md` row is more than 7 days stale, the same mechanism every other heartbeat-checkable Routine uses. No auto-run: Heartbeat only ever nudges (`routines.md`'s own non-goal).
 
 ## Adapter binding
 

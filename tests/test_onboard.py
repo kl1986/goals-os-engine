@@ -4,7 +4,9 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+import heartbeat  # noqa: E402
 import onboard  # noqa: E402
+import schedules  # noqa: E402
 
 
 class TestFreshOnboardIncludesDailyNoteRows(unittest.TestCase):
@@ -174,6 +176,44 @@ class TestUpgradeExistingBrainWikiRows(unittest.TestCase):
         self.assertEqual(action_text.count("wiki-compile"), 1)
         routine_text = (self.brain_path / "config" / "routine-state.md").read_text()
         self.assertIn("| Compile | never |", routine_text)
+
+
+class TestSchedulesBootstrap(unittest.TestCase):
+    """ADR-0030's required bootstrap: a fresh Brain must boot with Schedules.
+
+    Cadence left the Engine, so a Brain with no config/schedules.md has no
+    due-checking at all. Onboarding materialises the Engine's starter table
+    (the same file the Brain Template ships).
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.brain_path = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_onboarding_materialises_schedules_and_heartbeat_can_read_it(self):
+        result = onboard.onboard(self.brain_path, "Work", "Will", "work", 3, 5)
+        self.assertIn("config/schedules.md", result["created"])
+
+        scheds = schedules.parse_schedules(self.brain_path / "config" / "schedules.md")
+        self.assertTrue(scheds)
+        # A fresh Brain must not conjure launchd jobs out of nowhere.
+        self.assertEqual([s.label for s in scheds if s.renders_job], [])
+
+        overdue = {o["routine"] for o in heartbeat.overdue_for_brain(self.brain_path)}
+        self.assertIn("Triage", overdue)
+        self.assertIn("Dashboard", overdue)
+        self.assertNotIn("Execute", overdue)        # poll — event-triggered
+        self.assertNotIn("Weekly Review", overdue)  # declared, not implemented
+
+    def test_second_onboard_run_does_not_duplicate_schedules(self):
+        onboard.onboard(self.brain_path, "Work", "Will", "work", 3, 5)
+        before = (self.brain_path / "config" / "schedules.md").read_text()
+        result = onboard.onboard(self.brain_path, "Work", "Will", "work", 3, 5)
+        self.assertIn("config/schedules.md", result["skipped"])
+        self.assertEqual((self.brain_path / "config" / "schedules.md").read_text(), before)
 
 
 if __name__ == "__main__":
