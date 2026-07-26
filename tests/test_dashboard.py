@@ -1,4 +1,5 @@
 import datetime as dt
+import shutil
 import sys
 import tempfile
 import unittest
@@ -283,6 +284,13 @@ class TestWriteDashboard(unittest.TestCase):
                 "Weekly Review", "Coaching session", "Goal review", "Upgrade review",
                 "Architecture review", "Version control", "Metrics pulse",
             ])
+        )
+        # Cadence comes from the Brain since ADR-0030 — a Brain with no
+        # config/schedules.md has nothing to due-check, so the fixture ships
+        # the same starter table a fresh Brain clones.
+        shutil.copyfile(
+            Path(__file__).parent.parent / "protocols" / "examples" / "schedules.md",
+            self.brain_path / "config" / "schedules.md",
         )
         (self.brain_path / "inbox" / "triage").mkdir(parents=True)
         (self.brain_path / "inbox" / "triage" / "2026-07-11-voice.md").write_text(

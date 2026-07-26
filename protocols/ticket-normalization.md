@@ -2,7 +2,7 @@
 
 The Routine that keeps every ticket under `tasks/**/*.md` conforming to ADR-0015's schema and `docs/agents/issue-tracker.md`'s naming convention (a filename slugified from the ticket's own title, per ADR-0020 — no project/area prefix, no number), even when a ticket was created by a path that doesn't fill in the whole shape — chiefly Base Board's quick-add, which only ever sets `status` and `kanban_order` on a new card (confirmed live: `tasks/projects/return-on-constraints/bye.md` and `return-on-constraints-1.md`, both real files with only those two keys, no title, no body, and a filename that doesn't describe anything). Left alone, these cards are invisible to anything that expects a full ADR-0015 ticket — `daily-note.md`'s Project-next-actions scan, Heartbeat-adjacent tooling, a human scanning the board — because they're missing the fields that scan relies on (ADR-0018 fixed this).
 
-Cadence **daily**, heartbeat-checkable (`protocols/routines.md`'s manifest — same shape as every other daily Routine). Risk tier **internal & reversible**: every write is either a blank-field backfill or a rename/relocate within `tasks/`, nothing destructive, nothing touching content outside `tasks/`. Owner **EA**.
+Cadence **daily**, heartbeat-checkable — declared as a *fixed-interval* Schedule in the Brain's `config/schedules.md`, the same shape as every other daily Routine (cadence left the Engine manifest per ADR-0030; see `protocols/schedules.md`). Risk tier **internal & reversible**: every write is either a blank-field backfill or a rename/relocate within `tasks/`, nothing destructive, nothing touching content outside `tasks/`. Owner **EA**.
 
 ## What it scans
 

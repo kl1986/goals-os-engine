@@ -8,6 +8,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 import graduation  # noqa: E402
 import graduation_routine as gr  # noqa: E402
 import heartbeat  # noqa: E402
+import schedules  # noqa: E402
+
+# Cadence lives in the Brain since ADR-0030; the Engine's shipped starter table
+# (what a fresh Brain clones as config/schedules.md) is the reference for it.
+STARTER_SCHEDULES = schedules.parse_schedules(
+    Path(__file__).parent.parent / "protocols" / "examples" / "schedules.md"
+)
 
 NOW = dt.datetime(2026, 7, 15, 12, 0)  # "today", for every test that needs a fixed clock
 
@@ -418,12 +425,12 @@ class TestHeartbeatIntegration(unittest.TestCase):
     def test_flags_graduation_check_overdue_then_stops_after_bump(self):
         manifest = [{
             "Routine": "Graduation check",
-            "Cadence": "daily — heartbeat-checkable",
             "Phase 2 status": "implemented (execution batch)",
         }]
+        scheds = STARTER_SCHEDULES
         now = dt.datetime(2026, 7, 15, 9, 0)
 
-        overdue = heartbeat.compute_overdue(manifest, {"Graduation check": "never"}, now=now)
+        overdue = heartbeat.compute_overdue(manifest, {"Graduation check": "never"}, scheds, now=now)
         self.assertEqual(len(overdue), 1)
         self.assertEqual(overdue[0]["routine"], "Graduation check")
 
@@ -437,7 +444,7 @@ class TestHeartbeatIntegration(unittest.TestCase):
             heartbeat.bump(brain_path, "Graduation check", now)
             routine_state = heartbeat.parse_routine_state(brain_path / "config" / "routine-state.md")
 
-            overdue_after = heartbeat.compute_overdue(manifest, routine_state, now=now)
+            overdue_after = heartbeat.compute_overdue(manifest, routine_state, scheds, now=now)
             self.assertEqual(overdue_after, [])
         finally:
             tmp.cleanup()
@@ -446,9 +453,11 @@ class TestHeartbeatIntegration(unittest.TestCase):
         manifest = heartbeat.parse_manifest()
         row = next((r for r in manifest if r.get("Routine") == "Graduation check"), None)
         self.assertIsNotNone(row, "protocols/routines.md is missing its 'Graduation check' row")
-        self.assertIn("daily", row["Cadence"])
-        self.assertIn("heartbeat-checkable", row["Cadence"])
         self.assertTrue(row["Phase 2 status"].startswith("implemented"))
+        # Cadence left the Engine (ADR-0030) — it is the Schedule that must be daily.
+        schedule = next(s for s in STARTER_SCHEDULES if s.routine == "Graduation check")
+        self.assertEqual(schedule.kind, "fixed-interval")
+        self.assertEqual(schedule.cadence_days, 1)
 
         names = [r["Routine"] for r in manifest]
         self.assertLess(

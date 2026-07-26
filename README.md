@@ -16,6 +16,8 @@ Markdown-defined, runtime-independent behaviour specs — what the Engine ships;
 |-----|----------|
 | [`action-log-schema.md`](./protocols/action-log-schema.md) | The Action Log entry schema (v0) — the fields every agent action appends to the Brain's `log/`, per ADR-0005/0006. |
 | [`onboarding.md`](./protocols/onboarding.md) | Turns a blank Brain clone into a working, personalised Brain (v0) — interview + idempotent materialisation of `config/` and one Area at a time, per ADR-0004. |
+| [`routines.md`](./protocols/routines.md) | The Routine manifest (v0) — protocol binding, risk tier, owner and Phase 2 status per Routine. Timing is **not** here; see below. |
+| [`schedules.md`](./protocols/schedules.md) | The Schedules schema (v0) — the Brain's `config/schedules.md` is the sole source of truth for timing (ADR-0030), read by Heartbeat for cadence and by the Scheduler Adapter to generate launchd Jobs. |
 
 ## Adapters
 
@@ -24,6 +26,14 @@ Runtime bindings for the Protocols above — see [`adapters/`](./adapters/). Cla
 | Adapter | Status |
 |---|---|
 | [`claude-code/`](./adapters/claude-code/) | First live Protocol execution proven — `log-action` skill appends schema-valid Action Log entries to a cloned Brain. |
+
+**Scheduler Adapter** — `scripts/sync_schedules.py` is ADR-0007's layer 2: it renders one Managed launchd `.plist` per enabled row of a Brain's `config/schedules.md` and reconciles `~/Library/LaunchAgents/` to that table, idempotently. It never touches a hand-written (Unmanaged) plist. Dry-run first:
+
+```
+python3 scripts/sync_schedules.py --brain /path/to/brain --dry-run
+```
+
+It schedules a *trigger* — it is not a session runner, so a consumer wanting an unattended agent session supplies that runner itself as the row's Command.
 
 ## Decisions
 
@@ -41,6 +51,7 @@ See [`docs/adr/`](./docs/adr/) for the architecture decision records this repo w
 | 0008 | Two-lane self-improvement |
 | 0009 | Voice in core, dialogue as plugin |
 | 0010 | Pure-derivation Wiki |
+| 0030 | Cadence ownership moves from the Engine manifest to the Brain's `config/schedules.md` (lives in the Brain's `docs/adr/`) |
 
 ## Status
 

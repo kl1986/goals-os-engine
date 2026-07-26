@@ -10,7 +10,7 @@ The reference Adapter (ADR-0002): the thin mapping layer binding the Engine's Pr
 |---|---|---|
 | [`skills/log-action/`](./skills/log-action/) | [`action-log-schema.md`](../../protocols/action-log-schema.md) | Appends a schema-valid Action Log entry to a Brain's `log/` folder. |
 | [`skills/onboard/`](./skills/onboard/) | [`onboarding.md`](../../protocols/onboarding.md) | Interviews the user for one Area, then idempotently materialises `config/` and that Area in a cloned Brain. |
-| [`skills/heartbeat/`](./skills/heartbeat/) | [`routines.md`](../../protocols/routines.md) | Reports overdue Routines against the manifest and a Brain's `config/routine-state.md`. Nudge-only. |
+| [`skills/heartbeat/`](./skills/heartbeat/) | [`routines.md`](../../protocols/routines.md) | Reports overdue Routines against the manifest, the Brain's `config/schedules.md` (cadence, ADR-0030) and its `config/routine-state.md`. Nudge-only. |
 | [`skills/capture/`](./skills/capture/) | [`capture.md`](../../protocols/capture.md) | Stamps a manual/text capture into `inbox/raw/<source>/`. |
 | [`skills/triage-plan/`](./skills/triage-plan/) | [`triage.md`](../../protocols/triage.md) | Pass A (script) + Pass B (in-session) classification into a Triage Plan under `inbox/triage/`. |
 | [`skills/execute-triage/`](./skills/execute-triage/) | [`execute.md`](../../protocols/execute.md) | Files or discards a Triage Plan's ticked rows, archives the Raw Capture, logs the action. |

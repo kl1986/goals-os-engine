@@ -54,6 +54,10 @@ Outward-facing / hard-to-reverse action types never graduate on silence —
 explicit validation only, regardless of these defaults.
 """
 
+# The starter Schedules table shipped for a fresh Brain (ADR-0030's required
+# bootstrap). Same file the Brain Template ships as its config/schedules.md.
+STARTER_SCHEDULES_PATH = Path(__file__).parent.parent / "protocols" / "examples" / "schedules.md"
+
 ROUTINE_STATE = """---
 type: config
 config: routine-state
@@ -61,10 +65,11 @@ config: routine-state
 
 # Routine state
 
-Last-run timestamp per Routine. Cadence and risk tier live in the
-Engine's manifest (`protocols/routines.md`, ADR-0007) — this file only
-ever records *when* a Routine last ran, read by `scripts/heartbeat.py`'s
-due-check at session start. `never` means the Routine hasn't run yet in
+Last-run timestamp per Routine. Risk tier lives in the Engine's manifest
+(`protocols/routines.md`, ADR-0007) and **cadence lives in this Brain's
+`config/schedules.md`** (ADR-0030) — this file only ever records *when* a
+Routine last ran, read by `scripts/heartbeat.py`'s due-check at session
+start. `never` means the Routine hasn't run yet in
 this Brain — machine-updated on completion, don't hand-edit the
 "Last run" column.
 
@@ -236,6 +241,9 @@ def onboard(brain_path: Path, area_name: str, area_agent: str, area_slug: str,
         graduation_min_sessions=graduation_min_sessions,
     ))
     track("config/routine-state.md", ROUTINE_STATE)
+    # ADR-0030: cadence lives in the Brain, so a Brain without config/schedules.md
+    # has no due-checking at all. Materialise the Engine's starter table.
+    track("config/schedules.md", STARTER_SCHEDULES_PATH.read_text())
     track("config/routing-rules.md", ROUTING_RULES)
     track("config/action-types.md", ACTION_TYPES)
     track(f"areas/{area_slug}/{area_name}.md", AREA_NOTE.format(

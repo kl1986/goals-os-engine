@@ -38,7 +38,7 @@ v3 (meeting-processing) adds `## Proposed from meetings`. It gets its own headin
 
 ## Daily note Routine (Generation & refresh)
 
-The generation Routine (cadence morning, heartbeat-checkable daily, risk tier internal & reversible, owner EA) uses `scripts/daily_note.py`'s `generate_daily_note` plus an Adapter skill.
+The generation Routine (risk tier internal & reversible, owner EA; Schedule *fixed-interval*, a morning clock time — heartbeat-checkable daily — in the Brain's `config/schedules.md`) uses `scripts/daily_note.py`'s `generate_daily_note` plus an Adapter skill.
 
 - Each new calendar day always gets a brand-new file. There is no cross-day continuation of the same file.
 - Re-invoking generation within the same day is **additive only**. It only ever adds rows for anything not already present (new project next-actions, new triaged captures filed via the `today` destination, new Waiting For items, new proposed items from meetings). It never touches, reorders, or removes an existing line. This is different from `dashboard.md`, which fully overwrites every run.
@@ -68,7 +68,7 @@ Unlike v1, there is **no `<!-- daily-note-src -->` HTML comment** — the `[[tic
 
 ## Close daily note Routine
 
-A thin, mechanical bookend Routine (cadence evening, heartbeat-checkable daily, risk tier internal & reversible, owner EA). Uses `scripts/daily_note.py`'s `close_daily_note` plus an Adapter skill.
+A thin, mechanical bookend Routine (risk tier internal & reversible, owner EA; Schedule *fixed-interval*, an evening clock time — heartbeat-checkable daily — in the Brain's `config/schedules.md`). Uses `scripts/daily_note.py`'s `close_daily_note` plus an Adapter skill.
 
 What it does, in order, nothing more:
 1. Runs the write-back reconciliation above over every ticked `## Project next actions` line (parses the `[[ticket file]]` wikilink, locates the ticket under `tasks/**/`, writes `status: done` + `resolved:` to its frontmatter, or logs the miss per-line — no separate summary log entry on top of the per-line ones).

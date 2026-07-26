@@ -4,7 +4,7 @@ The Routine that fires the graduation engine (ADR-0006, `scripts/graduation.py`,
 
 ## Two-pass shape
 
-One combined Routine, **"Graduation check,"** cadence `daily` — internally two ordered passes, mirroring Triage's Pass A/B precedent exactly (`protocols/triage.md`) rather than proliferating manifest rows for steps that always run together in a fixed order:
+One combined Routine, **"Graduation check,"** Schedule *fixed-interval* `daily` (in the Brain's `config/schedules.md`, per ADR-0030) — internally two ordered passes, mirroring Triage's Pass A/B precedent exactly (`protocols/triage.md`) rather than proliferating manifest rows for steps that always run together in a fixed order:
 
 - **Pass (i) — feedback classification.** Deterministic *detection* (`scripts/graduation.py`'s `find_unclassified_feedback()`) finds any Action Log entry whose `feedback` field isn't one of the three canonical shapes (`—` / `validated` / `corrected — <detail>`). The actual classification *judgement* — is this hand-written comment an approval or a correction? — is genuine model reasoning, done in-session by this Routine's Adapter binding (same shape as Triage's in-session Pass B). The decision is written back **in place**, into the existing entry's own `feedback:` line, via `scripts/graduation_routine.py`'s `write_feedback_classification()`. **No new Action Log entry is created for this step** — normalizing an existing field is not itself a loggable action (ticket 04's resolution); logging every field-normalization would be noisy for something with no real-world consequence beyond tidying already-logged data.
 

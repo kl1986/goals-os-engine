@@ -7,6 +7,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 import heartbeat  # noqa: E402
 import rule_learning  # noqa: E402
+import schedules  # noqa: E402
+
+# Cadence lives in the Brain since ADR-0030; the Engine's shipped starter table
+# (what a fresh Brain clones as config/schedules.md) is the reference for it.
+STARTER_SCHEDULES = schedules.parse_schedules(
+    Path(__file__).parent.parent / "protocols" / "examples" / "schedules.md"
+)
 
 
 def _log_text(entries: str) -> str:
@@ -427,30 +434,33 @@ class TestHeartbeatIntegration(unittest.TestCase):
     ticket 06's daily-row check, adapted for this Routine's weekly cadence).
     """
 
-    def test_manifest_row_is_weekly_heartbeat_checkable_and_implemented(self):
+    def test_manifest_row_is_implemented_and_its_schedule_is_weekly(self):
         manifest = heartbeat.parse_manifest()
         row = next(r for r in manifest if r["Routine"] == "Rule learning")
-        self.assertIn("weekly", row["Cadence"])
-        self.assertIn("heartbeat-checkable", row["Cadence"])
         self.assertTrue(row["Phase 2 status"].startswith("implemented"))
+        # Cadence left the Engine's manifest (ADR-0030) — it is the Schedule's now.
+        schedule = next(s for s in STARTER_SCHEDULES if s.routine == "Rule learning")
+        self.assertEqual(schedule.kind, "fixed-interval")
+        self.assertEqual(schedule.cadence_days, 7)
+        self.assertTrue(schedule.checkable)
 
     def test_never_run_is_overdue(self):
         manifest = heartbeat.parse_manifest()
-        overdue = heartbeat.compute_overdue(manifest, {"Rule learning": "never"})
+        overdue = heartbeat.compute_overdue(manifest, {"Rule learning": "never"}, STARTER_SCHEDULES)
         self.assertIn("Rule learning", {item["routine"] for item in overdue})
 
     def test_run_within_the_week_is_not_overdue(self):
         now = dt.datetime(2026, 7, 15, 10, 0)
         manifest = heartbeat.parse_manifest()
         last_run = (now - dt.timedelta(days=3)).strftime(heartbeat.TIMESTAMP_FORMAT)
-        overdue = heartbeat.compute_overdue(manifest, {"Rule learning": last_run}, now=now)
+        overdue = heartbeat.compute_overdue(manifest, {"Rule learning": last_run}, STARTER_SCHEDULES, now=now)
         self.assertNotIn("Rule learning", {item["routine"] for item in overdue})
 
     def test_run_past_a_week_is_overdue(self):
         now = dt.datetime(2026, 7, 15, 10, 0)
         manifest = heartbeat.parse_manifest()
         last_run = (now - dt.timedelta(days=8)).strftime(heartbeat.TIMESTAMP_FORMAT)
-        overdue = heartbeat.compute_overdue(manifest, {"Rule learning": last_run}, now=now)
+        overdue = heartbeat.compute_overdue(manifest, {"Rule learning": last_run}, STARTER_SCHEDULES, now=now)
         self.assertIn("Rule learning", {item["routine"] for item in overdue})
 
     def test_run_bumps_the_real_routine_state_shape(self):

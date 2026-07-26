@@ -220,12 +220,12 @@ def _action_log_summary(brain_path: Path, date_str: str) -> dict:
 
 def compute_dashboard_data(brain_path: Path, now: dt.datetime = None) -> dict:
     now = now or dt.datetime.now()
-    manifest = heartbeat.parse_manifest()
-    routine_state = heartbeat.parse_routine_state(brain_path / "config" / "routine-state.md")
     return {
         "generated": now.strftime(heartbeat.TIMESTAMP_FORMAT),
         "date_str": now.strftime("%Y-%m-%d"),
-        "overdue": heartbeat.compute_overdue(manifest, routine_state, now=now),
+        # Cadence comes from the Brain's config/schedules.md (ADR-0030); a Brain
+        # without one simply has no overdue section, and heartbeat warns.
+        "overdue": heartbeat.overdue_for_brain(brain_path, now=now),
         "pending_plans": _pending_plans(brain_path),
         "pending_rule_diffs": _pending_rule_diffs(brain_path),
         "awaiting_review_tickets": _awaiting_review_tickets(brain_path),
