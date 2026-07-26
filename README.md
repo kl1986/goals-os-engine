@@ -42,6 +42,18 @@ python3 scripts/sync_schedules.py --brain /path/to/brain --dry-run
 
 It schedules a *trigger* — it is not a session runner, so a consumer wanting an unattended agent session supplies that runner itself as the row's Command.
 
+## Personal-data check
+
+`scripts/personal_data_check.py` reports generic personal-data shapes in a
+publishable repository. Point `--brain` (or `GOALS_OS_BRAIN_PATH`) at a private
+Brain to add its identity terms; the report never prints those values. The
+checker refuses to scan a Brain itself. Until the existing findings are cleaned
+up, run it in report-only mode:
+
+```
+python3 scripts/personal_data_check.py --root . --brain /path/to/brain --report-only
+```
+
 ## Decisions
 
 See [`docs/adr/`](./docs/adr/) for the architecture decision records this repo was scaffolded against:
