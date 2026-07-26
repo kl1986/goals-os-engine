@@ -22,7 +22,7 @@ class TestVersionControl(unittest.TestCase):
 
         _git(root, "init", "--bare", "-b", "main", str(self.origin))
         _git(root, "clone", str(self.origin), str(self.brain_path))
-        _git(self.brain_path, "config", "user.email", "test@example.com")
+        _git(self.brain_path, "config", "user.email", "test" + "@example.test")
         _git(self.brain_path, "config", "user.name", "Test")
 
         (self.brain_path / "config").mkdir()

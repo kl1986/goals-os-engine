@@ -1,6 +1,6 @@
 # Protocol: Rule-diff review surface (v0)
 
-The confirm-first review gate for a proposed rule-set change (PRD §7, Phase 5 — Learning). Ticket 05's generic rule-learning mechanism detects a recurring correction pattern and proposes a diff; this Protocol defines the file that diff lands in, how Kelvin approves or rejects it, and what happens next. It is a dedicated surface — not folded into Triage Plans or Execute — but mirrors their location/lifecycle convention exactly (destination-naming decision, 14/07/2026; wayfinder ticket 06's resolution, 15/07/2026).
+The confirm-first review gate for a proposed rule-set change (PRD §7, Phase 5 — Learning). Ticket 05's generic rule-learning mechanism detects a recurring correction pattern and proposes a diff; this Protocol defines the file that diff lands in, how the user approves or rejects it, and what happens next. It is a dedicated surface — not folded into Triage Plans or Execute — but mirrors their location/lifecycle convention exactly (destination-naming decision, 14/07/2026; wayfinder ticket 06's resolution, 15/07/2026).
 
 This doc is the **sole source of truth for the file format** a rule-diff proposal-writer (ticket 07, not yet built) must produce. It is deliberately precise enough to implement against without further clarification — read it in full before writing a proposal-writer or a consumer of this format.
 
@@ -62,7 +62,7 @@ Each diff is a `###`-headed section, in file order, numbered `Diff 1`, `Diff 2`,
    - [ ] Approve
    - [ ] Reject
    ```
-   Both start unticked. Kelvin (or an Adapter acting only on his explicit instruction) ticks **at most one**. Never tick a box on this surface automatically or speculatively — same discipline as Triage Plan approval.
+   Both start unticked. the user (or an Adapter acting only on his explicit instruction) ticks **at most one**. Never tick a box on this surface automatically or speculatively — same discipline as Triage Plan approval.
 
 ### Processed-state marker
 

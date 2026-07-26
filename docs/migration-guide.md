@@ -6,7 +6,7 @@ This document outlines the upgrade path from Goals OS v1 to the v2 architecture.
 
 The primary invariant of v2 is that **the Engine structurally cannot touch your Brain** other than through controlled, additive appends (`_memory.md`, daily notes, Action Logs) and the single mutable bottleneck (`inbox/triage/`). 
 
-Migrating an existing v1 Vault involves mapping your old content into the v2 `goals-os-brain-template` structure. This must be done manually or via a custom script, as the Engine respects the invariant of not rewriting your Brain.
+Migrating an existing v1 Vault involves mapping your old content into the v2 Brain Template structure. This must be done manually or via a custom script, as the Engine respects the invariant of not rewriting your Brain.
 
 ## 1. Content Porting Mapping
 
@@ -28,7 +28,7 @@ v2 enforces specific YAML frontmatter schemas for configuration files.
 - Move your settings to `config/`.
 - Ensure all config files include the `type: config` frontmatter.
 - Create `config/routing-rules.md` (for deterministic Pass A rules) and `config/autonomy-policy.md`.
-- Review the `goals-os-brain-template/config/` examples for the exact required schemas.
+- Review the Brain Template's `config/` examples for the exact required schemas.
 
 **Post-Migration Step:** The migration process must include running the v2 enforcer, `scripts/schema_enforce.py --brain <brain>`, across the migrated Brain to flag legacy ticket frontmatter, Project/Area slug drift, and broken wikilinks. It reports by default; re-run with `--apply` (clean git tree required) to repair. The v1 `validate-schema` skill it replaces is retired — see [`v1-validator-retirement.md`](./v1-validator-retirement.md).
 
@@ -40,7 +40,7 @@ If you extensively used the Wiki feature in v1, you must migrate those documents
 ## 4. The Resynthesis Option
 
 Because v2 changes the fundamental routing and execution logic, you have the option of a "Resynthesis" approach instead of a direct mapping:
-1. Start with a fresh clone of `goals-os-brain-template`.
+1. Start with a fresh clone of the Brain Template.
 2. Run `onboard.py` to recreate your Areas clean.
 3. Manually copy over active Project next actions and Area memories.
 4. Place all other legacy v1 files into an `archive/legacy-v1/` folder.

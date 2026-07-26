@@ -18,9 +18,9 @@ status: pending
 
 | # | capture | preview | route | destination | confidence | rule | approve |
 |---|---|---|---|---|---|---|---|
-| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | areas/home/_inbox.md | High | a1b2c3d4 | [x] |
+| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | areas/household/_inbox.md | High | a1b2c3d4 | [x] |
 | 2 | [[inbox/raw/voice/2026-07-11-140500-junk.md]] | not worth keeping | Pass B | discard | Medium | — | [x] |
-| 3 | [[inbox/raw/voice/2026-07-11-140600-later.md]] | deal with this later | Pass B | areas/home/_inbox.md | Medium | — | [ ] |
+| 3 | [[inbox/raw/voice/2026-07-11-140600-later.md]] | deal with this later | Pass B | areas/household/_inbox.md | Medium | — | [ ] |
 """
 
 
@@ -30,7 +30,7 @@ class TestActionTypeFor(unittest.TestCase):
         self.assertEqual(execute.action_type_for("Discard"), "discard-capture")
 
     def test_path_destination_is_file_capture(self):
-        self.assertEqual(execute.action_type_for("areas/home/_inbox.md"), "file-capture")
+        self.assertEqual(execute.action_type_for("areas/household/_inbox.md"), "file-capture")
 
     def test_agent_destination_is_agent_dispatched(self):
         self.assertEqual(execute.action_type_for("agent: Researcher"), "agent-dispatched")
@@ -44,27 +44,27 @@ class TestActionTypeFor(unittest.TestCase):
     def test_file_heading_destination_is_still_file_capture(self):
         # `file#heading` is a `file-capture` sub-form, not a new action type.
         self.assertEqual(
-            execute.action_type_for("people/Kat.md#🗣️ To Discuss"), "file-capture"
+            execute.action_type_for("people/Example Person.md#🗣️ To Discuss"), "file-capture"
         )
 
 
 class TestSplitDestination(unittest.TestCase):
     def test_plain_file_has_no_heading(self):
         self.assertEqual(
-            execute.split_destination("areas/home/_inbox.md"),
-            ("areas/home/_inbox.md", None),
+            execute.split_destination("areas/household/_inbox.md"),
+            ("areas/household/_inbox.md", None),
         )
 
     def test_file_hash_heading_splits_into_both_parts(self):
         self.assertEqual(
-            execute.split_destination("people/Kat.md#🗣️ To Discuss"),
-            ("people/Kat.md", "🗣️ To Discuss"),
+            execute.split_destination("people/Example Person.md#🗣️ To Discuss"),
+            ("people/Example Person.md", "🗣️ To Discuss"),
         )
 
     def test_whitespace_around_parts_is_trimmed(self):
         self.assertEqual(
-            execute.split_destination("  people/Kat.md # ⏳ Waiting For  "),
-            ("people/Kat.md", "⏳ Waiting For"),
+            execute.split_destination("  people/Example Person.md # ⏳ Waiting For  "),
+            ("people/Example Person.md", "⏳ Waiting For"),
         )
 
 
@@ -94,7 +94,7 @@ class TestExecutePlan(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.brain_path = Path(self._tmp.name)
-        (self.brain_path / "areas" / "home").mkdir(parents=True)
+        (self.brain_path / "areas" / "household").mkdir(parents=True)
         (self.brain_path / "inbox" / "raw" / "voice").mkdir(parents=True)
         (self.brain_path / "inbox" / "triage").mkdir(parents=True)
         for name in ("2026-07-11-140203-buy-milk.md", "2026-07-11-140500-junk.md", "2026-07-11-140600-later.md"):
@@ -112,7 +112,7 @@ class TestExecutePlan(unittest.TestCase):
         self.assertEqual(len(result["discarded"]), 1)
         self.assertEqual(result["errors"], [])
 
-        inbox_note = (self.brain_path / "areas" / "home" / "_inbox.md").read_text()
+        inbox_note = (self.brain_path / "areas" / "household" / "_inbox.md").read_text()
         self.assertIn("buy-milk", inbox_note)
         self.assertIn("Remember to buy milk", inbox_note)
 
@@ -150,8 +150,8 @@ class TestExecutePlan(unittest.TestCase):
         # Defensive case: a Pass A row whose rule cell is "—" (e.g. a
         # hand-edited plan) must not produce a malformed trigger.
         text = PLAN_TEXT.replace(
-            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | areas/home/_inbox.md | High | a1b2c3d4 | [x] |",
-            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | areas/home/_inbox.md | High | — | [x] |",
+            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | areas/household/_inbox.md | High | a1b2c3d4 | [x] |",
+            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | areas/household/_inbox.md | High | — | [x] |",
         )
         self.plan_path.write_text(text)
         execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
@@ -173,8 +173,8 @@ class TestExecutePlan(unittest.TestCase):
         execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
         text = self.plan_path.read_text()
         text = text.replace(
-            "| 3 | [[inbox/raw/voice/2026-07-11-140600-later.md]] | deal with this later | Pass B | areas/home/_inbox.md | Medium | — | [ ] |",
-            "| 3 | [[inbox/raw/voice/2026-07-11-140600-later.md]] | deal with this later | Pass B | areas/home/_inbox.md | Medium | — | [x] |",
+            "| 3 | [[inbox/raw/voice/2026-07-11-140600-later.md]] | deal with this later | Pass B | areas/household/_inbox.md | Medium | — | [ ] |",
+            "| 3 | [[inbox/raw/voice/2026-07-11-140600-later.md]] | deal with this later | Pass B | areas/household/_inbox.md | Medium | — | [x] |",
         )
         self.plan_path.write_text(text)
 
@@ -192,7 +192,7 @@ class TestExecutePlan(unittest.TestCase):
 
     def test_unmatched_destination_on_ticked_row_reports_error(self):
         text = PLAN_TEXT.replace(
-            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | areas/home/_inbox.md | High | a1b2c3d4 | [x] |",
+            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | areas/household/_inbox.md | High | a1b2c3d4 | [x] |",
             "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass B | unmatched | — | — | [x] |",
         )
         self.plan_path.write_text(text)
@@ -211,7 +211,7 @@ class TestExecutePlan(unittest.TestCase):
 
     def test_agent_dispatched_leaves_raw_capture_and_returns_log_id(self):
         text = PLAN_TEXT.replace(
-            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | areas/home/_inbox.md | High | a1b2c3d4 | [x] |",
+            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | areas/household/_inbox.md | High | a1b2c3d4 | [x] |",
             "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | agent: Reviewer | High | a1b2c3d4 | [x] |",
         )
         self.plan_path.write_text(text)
@@ -242,7 +242,7 @@ status: pending
 | # | capture | preview | route | destination | confidence | rule | approve |
 |---|---|---|---|---|---|---|---|
 | 1 | [[inbox/raw/voice/2026-07-13-090000-call-plumber.md]] | Call the plumber | Pass A | today | High | e5f6a7b8 | [x] |
-| 2 | [[inbox/raw/voice/2026-07-13-091000-later.md]] | deal with this later | Pass B | areas/home/_inbox.md | Medium | — | [ ] |
+| 2 | [[inbox/raw/voice/2026-07-13-091000-later.md]] | deal with this later | Pass B | areas/household/_inbox.md | Medium | — | [ ] |
 """
 
 
@@ -328,11 +328,11 @@ class TestFileCaptureToday(unittest.TestCase):
         # Tick the second row too, and give it a real destination — it
         # should still get filed even though row 1 errors out.
         text = self.plan_path.read_text().replace(
-            "| 2 | [[inbox/raw/voice/2026-07-13-091000-later.md]] | deal with this later | Pass B | areas/home/_inbox.md | Medium | — | [ ] |",
-            "| 2 | [[inbox/raw/voice/2026-07-13-091000-later.md]] | deal with this later | Pass B | areas/home/_inbox.md | Medium | — | [x] |",
+            "| 2 | [[inbox/raw/voice/2026-07-13-091000-later.md]] | deal with this later | Pass B | areas/household/_inbox.md | Medium | — | [ ] |",
+            "| 2 | [[inbox/raw/voice/2026-07-13-091000-later.md]] | deal with this later | Pass B | areas/household/_inbox.md | Medium | — | [x] |",
         )
         self.plan_path.write_text(text)
-        (self.brain_path / "areas" / "home").mkdir(parents=True)
+        (self.brain_path / "areas" / "household").mkdir(parents=True)
 
         result = execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
 
@@ -340,7 +340,7 @@ class TestFileCaptureToday(unittest.TestCase):
         self.assertEqual(len(result["filed"]), 1)
         self.assertIn(
             "[[inbox/raw/voice/2026-07-13-091000-later.md]]",
-            (self.brain_path / "areas" / "home" / "_inbox.md").read_text(),
+            (self.brain_path / "areas" / "household" / "_inbox.md").read_text(),
         )
 
 
@@ -355,8 +355,8 @@ status: pending
 
 | # | capture | preview | route | destination | confidence | rule | approve |
 |---|---|---|---|---|---|---|---|
-| 1 | [[inbox/raw/text/2026-07-16-090000-ask-kat.md]] | Ask Kat about the mortgage | Pass B | people/Kat.md#🗣️ To Discuss | Medium | — | [x] |
-| 2 | [[inbox/raw/text/2026-07-16-091000-waiting-kat.md]] | Waiting on Kat for the invoice | Pass B | people/Kat.md#⏳ Waiting For | Medium | — | [ ] |
+| 1 | [[inbox/raw/text/2026-07-16-090000-ask-example-person.md]] | Ask Example Person about the mortgage | Pass B | people/Example Person.md#🗣️ To Discuss | Medium | — | [x] |
+| 2 | [[inbox/raw/text/2026-07-16-091000-waiting-example-person.md]] | Waiting on Example Person for the invoice | Pass B | people/Example Person.md#⏳ Waiting For | Medium | — | [ ] |
 """
 
 
@@ -367,20 +367,20 @@ class TestFileCaptureHeading(unittest.TestCase):
         (self.brain_path / "people").mkdir(parents=True)
         (self.brain_path / "inbox" / "raw" / "text").mkdir(parents=True)
         (self.brain_path / "inbox" / "triage").mkdir(parents=True)
-        for name in ("2026-07-16-090000-ask-kat.md", "2026-07-16-091000-waiting-kat.md"):
+        for name in ("2026-07-16-090000-ask-example-person.md", "2026-07-16-091000-waiting-example-person.md"):
             (self.brain_path / "inbox" / "raw" / "text" / name).write_text("---\nraw: true\n---\nbody\n")
         self.plan_path = self.brain_path / "inbox" / "triage" / "2026-07-16-text.md"
         self.plan_path.write_text(PERSON_PLAN_TEXT)
         self.now = dt.datetime(2026, 7, 16, 15, 0)
-        self.hub_path = self.brain_path / "people" / "Kat.md"
+        self.hub_path = self.brain_path / "people" / "Example Person.md"
 
     def tearDown(self):
         self._tmp.cleanup()
 
     def _write_hub(self, to_discuss_body="<!-- Open agenda items -->"):
         self.hub_path.write_text(
-            "---\ntype: person\nname: Kat\n---\n\n"
-            "# Kat\n> Wife\n\n"
+            "---\ntype: person\nname: Example Person\n---\n\n"
+            "# Example Person\n> Wife\n\n"
             f"## 🗣️ To Discuss\n{to_discuss_body}\n\n"
             "## ⏳ Waiting For\n<!-- Things delegated -->\n\n"
             "## 🧠 Context\n<!-- Durable facts -->\n\n"
@@ -399,7 +399,7 @@ class TestFileCaptureHeading(unittest.TestCase):
         lines = [ln for ln in section.splitlines() if ln.strip()]
         self.assertEqual(lines, [
             "- Existing agenda item",
-            "- 2026-07-16 — [[inbox/raw/text/2026-07-16-090000-ask-kat.md]] — Ask Kat about the mortgage",
+            "- 2026-07-16 — [[inbox/raw/text/2026-07-16-090000-ask-example-person.md]] — Ask Example Person about the mortgage",
         ])
         # It landed before the next heading, not appended at EOF.
         self.assertIn("## ⏳ Waiting For", hub_text.split("2026-07-16 —", 1)[1])
@@ -409,35 +409,35 @@ class TestFileCaptureHeading(unittest.TestCase):
         execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
 
         self.assertFalse(
-            (self.brain_path / "inbox" / "raw" / "text" / "2026-07-16-090000-ask-kat.md").exists()
+            (self.brain_path / "inbox" / "raw" / "text" / "2026-07-16-090000-ask-example-person.md").exists()
         )
         self.assertTrue(
-            (self.brain_path / "archive" / "inbox" / "text" / "2026-07-16-090000-ask-kat.md").exists()
+            (self.brain_path / "archive" / "inbox" / "text" / "2026-07-16-090000-ask-example-person.md").exists()
         )
         plan_text = self.plan_path.read_text()
         self.assertIn("[x] (done)", plan_text)
 
     def test_missing_heading_reports_error_leaves_row_untouched(self):
         # Hub exists but has no "To Discuss" heading at all.
-        self.hub_path.write_text("---\ntype: person\nname: Kat\n---\n\n# Kat\n\n## 🧠 Context\nsome facts\n")
+        self.hub_path.write_text("---\ntype: person\nname: Example Person\n---\n\n# Example Person\n\n## 🧠 Context\nsome facts\n")
         result = execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
 
         self.assertEqual(len(result["errors"]), 1)
         self.assertIn("To Discuss", result["errors"][0])
         self.assertEqual(result["filed"], [])
         self.assertTrue(
-            (self.brain_path / "inbox" / "raw" / "text" / "2026-07-16-090000-ask-kat.md").exists()
+            (self.brain_path / "inbox" / "raw" / "text" / "2026-07-16-090000-ask-example-person.md").exists()
         )
 
     def test_missing_file_reports_error_never_creates_hub(self):
-        # No Kat.md at all — a file#heading destination never creates it.
+        # No Example Person.md at all — a file#heading destination never creates it.
         result = execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
 
         self.assertEqual(len(result["errors"]), 1)
         self.assertIn("does not exist", result["errors"][0])
         self.assertFalse(self.hub_path.exists())
         self.assertTrue(
-            (self.brain_path / "inbox" / "raw" / "text" / "2026-07-16-090000-ask-kat.md").exists()
+            (self.brain_path / "inbox" / "raw" / "text" / "2026-07-16-090000-ask-example-person.md").exists()
         )
 
 
@@ -480,7 +480,7 @@ status: pending
 
 | # | capture | preview | route | destination | confidence | rule | approve |
 |---|---|---|---|---|---|---|---|
-| 1 | [[inbox/raw/fakesource/2026-07-21-090000-filed.md]] | A filed item | Pass B | areas/home/_inbox.md | Medium | — | [x] |
+| 1 | [[inbox/raw/fakesource/2026-07-21-090000-filed.md]] | A filed item | Pass B | areas/household/_inbox.md | Medium | — | [x] |
 | 2 | [[inbox/raw/fakesource/2026-07-21-091000-discarded.md]] | not worth keeping | Pass B | discard | Medium | — | [x] |
 """
 
@@ -496,7 +496,7 @@ class TestSourceExecuteHook(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.brain_path = Path(self._tmp.name) / "brain"
-        (self.brain_path / "areas" / "home").mkdir(parents=True)
+        (self.brain_path / "areas" / "household").mkdir(parents=True)
         (self.brain_path / "inbox" / "raw" / "fakesource").mkdir(parents=True)
         (self.brain_path / "inbox" / "triage").mkdir(parents=True)
         for name in ("2026-07-21-090000-filed.md", "2026-07-21-091000-discarded.md"):
@@ -587,7 +587,7 @@ class TestSourceExecuteHook(unittest.TestCase):
 
 class TestSourceExecuteHookDestination(unittest.TestCase):
     """`--destination` passes the Triage row's own destination cell through to
-    the hook, so a hook never has to re-derive the answer Kelvin already gave
+    the hook, so a hook never has to re-derive the answer the user already gave
     by ticking the row (protocols/execute.md v1.3). The flag is present for
     every outcome kind that runs a hook — `file-capture`, `file-capture-today`
     and `discard-capture` — specifically so a hook can read it unconditionally
@@ -597,7 +597,7 @@ class TestSourceExecuteHookDestination(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.brain_path = Path(self._tmp.name) / "brain"
-        (self.brain_path / "areas" / "home").mkdir(parents=True)
+        (self.brain_path / "areas" / "household").mkdir(parents=True)
         (self.brain_path / "inbox" / "raw" / "fakesource").mkdir(parents=True)
         (self.brain_path / "inbox" / "triage").mkdir(parents=True)
         self.now = dt.datetime(2026, 7, 21, 15, 0)
@@ -656,18 +656,18 @@ class TestSourceExecuteHookDestination(unittest.TestCase):
         return [line for line in self.calls_file.read_text().splitlines() if line]
 
     def test_file_capture_row_passes_its_own_destination(self):
-        self._run_plan([("filed", "areas/home/_inbox.md")])
-        self.assertIn("--destination|areas/home/_inbox.md", self._read_calls()[0])
+        self._run_plan([("filed", "areas/household/_inbox.md")])
+        self.assertIn("--destination|areas/household/_inbox.md", self._read_calls()[0])
 
     def test_file_capture_destination_keeps_its_heading_fragment(self):
         # A `file#heading` destination (execute.md v1.1) is forwarded whole —
-        # the hook gets the same string Kelvin ticked, not a truncated path.
+        # the hook gets the same string the user ticked, not a truncated path.
         (self.brain_path / "people").mkdir()
-        (self.brain_path / "people" / "Kat.md").write_text(
-            "# Kat\n\n## To Discuss\n\n## Log\n"
+        (self.brain_path / "people" / "Example Person.md").write_text(
+            "# Example Person\n\n## To Discuss\n\n## Log\n"
         )
-        self._run_plan([("filed", "people/Kat.md#To Discuss")])
-        self.assertIn("--destination|people/Kat.md#To Discuss", self._read_calls()[0])
+        self._run_plan([("filed", "people/Example Person.md#To Discuss")])
+        self.assertIn("--destination|people/Example Person.md#To Discuss", self._read_calls()[0])
 
     def test_file_capture_today_row_passes_its_own_destination(self):
         self._run_plan([("todayrow", "today")])
@@ -686,7 +686,7 @@ class TestSourceExecuteHookDestination(unittest.TestCase):
     def test_every_hook_invocation_carries_the_flag(self):
         # A hook may read --destination unconditionally; it is never absent.
         self._run_plan([
-            ("filed", "areas/home/_inbox.md"),
+            ("filed", "areas/household/_inbox.md"),
             ("todayrow", "today"),
             ("dropped", "discard"),
         ])
@@ -695,7 +695,7 @@ class TestSourceExecuteHookDestination(unittest.TestCase):
         self.assertTrue(all("--destination|" in c for c in calls))
 
     def test_destination_is_passed_alongside_the_three_existing_flags(self):
-        self._run_plan([("filed", "areas/home/_inbox.md")])
+        self._run_plan([("filed", "areas/household/_inbox.md")])
         call = self._read_calls()[0]
         for flag in ("--config-dir|", "--raw-capture|", "--outcome|", "--destination|"):
             self.assertIn(flag, call)
@@ -706,7 +706,7 @@ class TestSourceExecuteHookDestination(unittest.TestCase):
         # not turn into an Execute error or an unfiled row.
         self._write_hook(exit_code=2)
         result = self._run_plan([
-            ("filed", "areas/home/_inbox.md"),
+            ("filed", "areas/household/_inbox.md"),
             ("dropped", "discard"),
         ])
         self.assertEqual(result["errors"], [])

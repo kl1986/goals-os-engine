@@ -6,7 +6,7 @@ Turns a freshly cloned, blank Brain Template into a working, personalised Brain 
 
 1. **Interview** (the Adapter's job, not the script) — ask the user:
    - Which life area do they want an Area agent for, to start? (Onboarding is re-runnable per area — more can be added later, one run each.)
-   - What name/tone for that Area agent? (The Engine ships a generic Area CEO charter; the name and tone are Brain content, chosen here — see `CONTEXT.md`'s note that "Will/Harry/etc. are Kelvin's Brain content, not product.")
+   - What name/tone for that Area agent? (The Engine ships a generic Area CEO charter; the name and tone are Brain content, chosen here — see `CONTEXT.md`'s note that "Will/Harry/etc. are the user's Brain content, not product.")
    - Any autonomy-policy overrides to the defaults — review window, graduation minimum sessions (ADR-0006)?
 2. **Materialise** (`scripts/onboard.py`, deterministic, no LLM judgement) — for the Brain passed in:
    - `config/model-routing.md`, `config/autonomy-policy.md`, `config/routine-state.md` — created only if missing.

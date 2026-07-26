@@ -36,7 +36,7 @@ python3 <path-to-goals-os-engine>/scripts/rule_learning.py --brain "<path-to-bra
 ```
 
 This writes each non-duplicate group as a diff into `inbox/rule-diffs/{date}-{ruleset}.md` (matching `protocols/rule-diff-review.md`'s format exactly), logs a `propose-rule-diff` Action Log entry per diff written, and bumps this Routine's row in `config/routine-state.md`. A group is silently skipped (reported, not written) if it's a duplicate of an already-pending, already-applied, or already-rejected diff for that ruleset — safe to re-run without checking state first.
-5. **Report back:** how many diffs were written vs skipped (and why, for each skip). Never tick `Approve`/`Reject` yourself, and never edit `config/{ruleset}.md` directly — point to `/rule-diff-review` (or `Dashboard.md`'s `## Pending review` section) for Kelvin to decide.
+5. **Report back:** how many diffs were written vs skipped (and why, for each skip). Never tick `Approve`/`Reject` yourself, and never edit `config/{ruleset}.md` directly — point to `/rule-diff-review` (or `Dashboard.md`'s `## Pending review` section) for the user to decide.
 
 ## Contract this Adapter fulfils (ADR-0002)
 

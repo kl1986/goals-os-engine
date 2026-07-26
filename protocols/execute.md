@@ -1,6 +1,6 @@
 # Protocol: Execute (v1.3)
 
-Reads an approved Triage Plan and performs actions per ticked row. Supports generic, internal/reversible actions (`file-capture` or `discard-capture`) and `agent-dispatched` actions. For agent-dispatched actions, the output is QA'd by the Reviewer gate before surfacing. v1.1 (16/07/2026, `capture-source-plugins` map, ticket 09/15) generalizes `file-capture-today`'s insert-before-next-heading mechanic to any file — a `file#heading` destination (e.g. `people/Kat.md#🗣️ To Discuss`) files section-targeted, not just to today's daily note. No new action type — see the `file-capture` row below. v1.2 (21/07/2026, ticket 14) adds an optional per-source post-action hook — see "Per-source hooks" below — with zero new action types; Execute itself stays fully generic. v1.3 (25/07/2026, `meeting-processing` component, ADR-0028) passes the ticked row's destination to that hook as `--destination`, so a hook honours the answer the user already gave by ticking rather than re-deriving it — see "Per-source hooks". Still zero new action types and still no source-specific knowledge: Execute forwards a string it already parsed.
+Reads an approved Triage Plan and performs actions per ticked row. Supports generic, internal/reversible actions (`file-capture` or `discard-capture`) and `agent-dispatched` actions. For agent-dispatched actions, the output is QA'd by the Reviewer gate before surfacing. v1.1 (16/07/2026, `capture-source-plugins` map, ticket 09/15) generalizes `file-capture-today`'s insert-before-next-heading mechanic to any file — a `file#heading` destination (e.g. `people/Example Person.md#🗣️ To Discuss`) files section-targeted, not just to today's daily note. No new action type — see the `file-capture` row below. v1.2 (21/07/2026, ticket 14) adds an optional per-source post-action hook — see "Per-source hooks" below — with zero new action types; Execute itself stays fully generic. v1.3 (25/07/2026, `meeting-processing` component, ADR-0028) passes the ticked row's destination to that hook as `--destination`, so a hook honours the answer the user already gave by ticking rather than re-deriving it — see "Per-source hooks". Still zero new action types and still no source-specific knowledge: Execute forwards a string it already parsed.
 
 ## Out of scope, explicitly
 
@@ -13,8 +13,8 @@ Registered in `config/action-types.md` (materialised at onboarding), all current
 
 | Destination cell | Action type | What happens |
 |---|---|---|
-| a real path, e.g. `areas/home/_inbox.md` | `file-capture` | Appends a dated bullet — a link back to the Raw Capture plus its preview — into that **existing** file. Never creates a new area or project; the destination's parent directory must already exist. |
-| a real path with a heading anchor, e.g. `people/Kat.md#🗣️ To Discuss` | `file-capture` (same action type — a destination sub-form, not a new one) | Inserts the same dated bullet as the last line of the named `## heading` section — before the next heading, never a blind end-of-file append. Reuses `file-capture-today`'s existing insert-before-next-heading mechanic against *any* file and *any* heading, generalized rather than reinvented (ticket 09). The target **file** must already exist — a `file#heading` destination never creates it, same "never creates the destination" rule as plain `file-capture`'s directory requirement. The named heading must also already exist in that file. |
+| a real path, e.g. `areas/household/_inbox.md` | `file-capture` | Appends a dated bullet — a link back to the Raw Capture plus its preview — into that **existing** file. Never creates a new area or project; the destination's parent directory must already exist. |
+| a real path with a heading anchor, e.g. `people/Example Person.md#🗣️ To Discuss` | `file-capture` (same action type — a destination sub-form, not a new one) | Inserts the same dated bullet as the last line of the named `## heading` section — before the next heading, never a blind end-of-file append. Reuses `file-capture-today`'s existing insert-before-next-heading mechanic against *any* file and *any* heading, generalized rather than reinvented (ticket 09). The target **file** must already exist — a `file#heading` destination never creates it, same "never creates the destination" rule as plain `file-capture`'s directory requirement. The named heading must also already exist in that file. |
 | literal `discard` | `discard-capture` | Writes no destination at all. |
 | starts with `agent:` (e.g. `agent: Researcher`) | `agent-dispatched` | Routes the action through a Reviewer commission before the output surfaces. The Reviewer's pass/fail is logged as an Action Log entry chained to the original commission. |
 | literal `today` | `file-capture-today` | Inserts a checkbox line as the last line of the daily note's `## Today's tasks` section (before the next heading) — never a blind end-of-file append like `file-capture`. No date prefix (the note's own filename/title is the date). Requires today's note (`<brain>/YYYY-MM-DD.md`) to already exist — this action never creates it. |
@@ -50,7 +50,7 @@ either file variant, `discarded` for discard), and `--destination` (v1.3). If
 it doesn't exist — true for every source except `email` today — this is a no-op.
 
 `--destination` carries the row's own destination cell: the file path for a
-`file-capture` row (heading fragment included, so `people/Kat.md#🗣️ To Discuss`
+`file-capture` row (heading fragment included, so `people/Example Person.md#🗣️ To Discuss`
 arrives whole), the literal `today` for `file-capture-today`, and the literal
 `discard` for a discard row — canonicalised, since `action_type_for()` matches
 that cell case-insensitively. It is passed on **every** hook invocation, so a
@@ -75,7 +75,7 @@ has already been filed/discarded and archived by the time the hook runs.
 `email`'s hook (ticket 14) archives the corresponding Gmail thread — this
 was originally built to fire at *sweep* time instead (before any Triage
 step), then deliberately moved here, per direct instruction, so the Gmail
-mutation stays tied to Kelvin's own tick on the row rather than firing the
+mutation stays tied to the user's own tick on the row rather than firing the
 moment mail is swept.
 
 ## Error handling

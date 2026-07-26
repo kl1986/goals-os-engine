@@ -12,7 +12,7 @@ class TestPersonalDataCheck(unittest.TestCase):
     def test_generic_findings_identify_category_file_and_line(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            (root / "note.md").write_text("Contact person@example.test\n")
+            (root / "note.md").write_text("Contact person" + "@example.test\n")
 
             findings = personal_data_check.scan_paths(root, [root / "note.md"])
 

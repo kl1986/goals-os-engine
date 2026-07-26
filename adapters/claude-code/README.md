@@ -27,7 +27,7 @@ A Brain "installs" this Adapter by making its `skills/` discoverable to Claude C
 ## Verifying end-to-end (ticket 04 proof)
 
 ```bash
-git clone https://github.com/kl1986/goals-os-brain-template.git /tmp/test-brain
+git clone <brain-template-repository-url> /tmp/test-brain
 
 python3 scripts/log_action.py \
   --brain /tmp/test-brain \
@@ -42,4 +42,4 @@ cat /tmp/test-brain/log/$(date +%F).md   # schema-valid entry, plain markdown
 cd /tmp/test-brain && git status --short  # untracked/modified log file — plain, git-diffable
 ```
 
-Run against a fresh clone of the public `goals-os-brain-template` on 11/07/2026: two entries appended correctly (in order, no overwrite), each matching the 8-field schema in `action-log-schema.md`, and visible as a normal `git diff` on `log/`.
+Run against a fresh clone of the public Brain Template on 11/07/2026: two entries appended correctly (in order, no overwrite), each matching the 8-field schema in `action-log-schema.md`, and visible as a normal `git diff` on `log/`.

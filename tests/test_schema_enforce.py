@@ -24,7 +24,7 @@ import schema_enforce as se  # noqa: E402
 def _git_init(repo: Path):
     repo.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t" + "@example.test"], cwd=repo, check=True)
     subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
 
 
@@ -71,7 +71,7 @@ def brain(tmp_path):
     """A clean, committed tmp Brain with one conforming ticket."""
     root = tmp_path / "Vault"
     _git_init(root)
-    for slug in ("goals-os", "epoch-fit-mvp"):
+    for slug in ("goals-os", "example-project"):
         (root / "projects" / slug).mkdir(parents=True)
         _write(root / "projects" / slug / f"{slug}.md", f"# {slug}\n")
     (root / "areas" / "work").mkdir(parents=True)
@@ -425,13 +425,13 @@ def test_rename_never_repoints_an_already_valid_bare_link(brain, roots, tmp_path
 
 def test_rename_repoints_the_path_form_links_it_actually_breaks(brain, roots, tmp_path):
     """(1) Path-form links are the ones a directory rename really breaks."""
-    _write(brain / "tasks" / "projects" / "Epoch Fit MVP" / "t.md", CONFORMING_TICKET)
+    _write(brain / "tasks" / "projects" / "Example Project MVP" / "t.md", CONFORMING_TICKET)
     _write(brain / "Dashboard.md",
-           "# Dashboard\n\n[[tasks/projects/Epoch Fit MVP/t|the ticket]]\n")
+           "# Dashboard\n\n[[tasks/projects/Example Project MVP/t|the ticket]]\n")
     _git_commit_all(brain)
 
     _run(brain, roots, tmp_path, apply=True)
-    assert "[[tasks/projects/epoch-fit-mvp/t|the ticket]]" in (brain / "Dashboard.md").read_text()
+    assert "[[tasks/projects/example-project/t|the ticket]]" in (brain / "Dashboard.md").read_text()
 
 
 def test_fix_pass_honours_fences_inline_code_and_frontmatter(brain, roots, tmp_path):
@@ -474,16 +474,16 @@ def test_archive_is_immune_to_every_write(brain, roots, tmp_path):
 
 def test_two_in_brain_renames_both_land_in_one_run(brain, roots, tmp_path):
     """(3) Rename #1 dirties the tree; it must not veto rename #2."""
-    _write(brain / "tasks" / "projects" / "Epoch Fit MVP" / "t.md", CONFORMING_TICKET)
+    _write(brain / "tasks" / "projects" / "Example Project MVP" / "t.md", CONFORMING_TICKET)
     _write(brain / "tasks" / "areas" / "Work Area" / "t.md", CONFORMING_TICKET)
     (brain / "areas" / "work-area").mkdir(parents=True)
     _write(brain / "areas" / "work-area" / "work-area.md", "# work-area\n")
     _git_commit_all(brain)
 
     _run(brain, roots, tmp_path, apply=True)
-    assert (brain / "tasks" / "projects" / "epoch-fit-mvp").is_dir()
+    assert (brain / "tasks" / "projects" / "example-project").is_dir()
     assert (brain / "tasks" / "areas" / "work-area").is_dir()
-    assert not (brain / "tasks" / "projects" / "Epoch Fit MVP").exists()
+    assert not (brain / "tasks" / "projects" / "Example Project MVP").exists()
 
 
 def test_pure_case_only_rename_is_fixable(brain, roots, tmp_path):
@@ -502,7 +502,7 @@ def test_pure_case_only_rename_is_fixable(brain, roots, tmp_path):
 
 def test_findings_are_rederived_after_a_rename(brain, roots, tmp_path):
     """(5) A rename invalidates the paths every (a)/(c) finding carries."""
-    stub = brain / "tasks" / "projects" / "Epoch Fit MVP" / "stub.md"
+    stub = brain / "tasks" / "projects" / "Example Project MVP" / "stub.md"
     _write(stub, BASE_BOARD_STUB)
     _git_commit_all(brain)
 
@@ -510,7 +510,7 @@ def test_findings_are_rederived_after_a_rename(brain, roots, tmp_path):
     assert "ticket-orphan-parent" in _kinds(before, "c")
 
     result = _run(brain, roots, tmp_path, apply=True)
-    moved = brain / "tasks" / "projects" / "epoch-fit-mvp" / "stub.md"
+    moved = brain / "tasks" / "projects" / "example-project" / "stub.md"
     assert moved.is_file() and not stub.exists()
     values = se.parse_frontmatter(moved.read_text())
     assert all(key in values for key in se.REQUIRED_KEYS), \

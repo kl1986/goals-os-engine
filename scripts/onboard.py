@@ -108,7 +108,7 @@ example commented out) at onboarding time.
 
 ```
 # if: source == "voice" and contains("milk")
-# then: route -> areas/home/_inbox.md
+# then: route -> areas/household/_inbox.md
 # confidence: High
 ```
 """

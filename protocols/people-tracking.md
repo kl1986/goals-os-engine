@@ -37,9 +37,9 @@ created: YYYY-MM-DD
 - YYYY-MM-DD — created
 ```
 
-`areas:` is a **list** of goals-os-brain Area slugs (unlike Projects' singular `area:`) — a person can legitimately span more than one Area (e.g. a contact touching both `work` and `ho-lee-fook`). Each value must match a folder under `areas/`.
+`areas:` is a **list** of Brain Area slugs (unlike Projects' singular `area:`) — a person can legitimately span more than one Area (e.g. a contact touching both `work` and `example-business`). Each value must match a folder under `areas/`.
 
-The `# <Full Name>` / `> <role>` header (unlike Projects, which have none) matches both v1's own Person Hub template and `goals-os-brain`'s existing Area notes (`# Home`, etc.) — a Person Hub is an identity note, the same shape as an Area, where a Project note is not.
+The `# <Full Name>` / `> <role>` header (unlike Projects, which have none) matches both v1's own Person Hub template and the Brain's existing Area notes (`# Home`, etc.) — a Person Hub is an identity note, the same shape as an Area, where a Project note is not.
 
 ## `#waiting-for` and the read-only roll-up guarantee
 
@@ -51,7 +51,7 @@ A hub is the **only** place a delegation to that person gets logged — never a 
 
 ## How a Person Hub gets created or updated
 
-No script. Whichever Adapter (or Kelvin directly) is creating or updating a hub writes the file following this schema, then logs the change via the existing generic `log-action` skill (`action-log-schema.md`) — `action type` is `person-create` (or `person-update`), `input link` is the hub's path. `actor` follows `action-log-schema.md`'s closed taxonomy: `EA` when no more specific Area/Capability agent is directing the change, never a Protocol's own name.
+No script. Whichever Adapter (or the user directly) is creating or updating a hub writes the file following this schema, then logs the change via the existing generic `log-action` skill (`action-log-schema.md`) — `action type` is `person-create` (or `person-update`), `input link` is the hub's path. `actor` follows `action-log-schema.md`'s closed taxonomy: `EA` when no more specific Area/Capability agent is directing the change, never a Protocol's own name.
 
 ## Non-goals (v0)
 

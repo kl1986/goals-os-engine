@@ -110,7 +110,7 @@ class TestFreshOnboardIncludesWikiRows(unittest.TestCase):
 
 class TestUpgradeExistingBrainWikiRows(unittest.TestCase):
     """Mirrors TestUpgradeExistingBrain's daily-note precedent — an
-    already-onboarded Brain (like Kelvin's live Vault) shouldn't be
+    already-onboarded Brain (like the user's live Vault) shouldn't be
     permanently missing the Compile routine-state row or the 5 wiki-*
     action types just because it was onboarded before this ticket."""
 
@@ -158,7 +158,7 @@ class TestUpgradeExistingBrainWikiRows(unittest.TestCase):
         self.assertEqual(action_text.count("wiki-compile"), 1)
 
     def test_upgrade_is_noop_when_wiki_rows_already_present(self):
-        # Simulates Kelvin's real Vault: action-types.md already has all 5
+        # Simulates the user's real Vault: action-types.md already has all 5
         # wiki-* rows and model-routing.md already has wiki-compile (shipped
         # by the design-spec ticket), only routine-state.md's Compile row
         # is actually missing.

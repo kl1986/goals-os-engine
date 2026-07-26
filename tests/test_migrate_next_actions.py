@@ -149,7 +149,7 @@ class TestMigrateNextActions(unittest.TestCase):
 
     def test_long_line_truncated_to_reasonable_filename_length(self):
         long_line = (
-            "- [ ] Kelvin: decide on the parity-before-release gate, still "
+            "- [ ] the user: decide on the parity-before-release gate, still "
             "open though the personal migration decision partially pre-empts it"
         )
         _write_project(
@@ -162,7 +162,7 @@ class TestMigrateNextActions(unittest.TestCase):
         self.assertEqual(len(matches), 1)
         self.assertLessEqual(len(matches[0].stem), 60)
         # The ticket's own H1 keeps the full text, only the filename is short.
-        self.assertIn("Kelvin: decide on the parity-before-release gate", matches[0].read_text())
+        self.assertIn("the user: decide on the parity-before-release gate", matches[0].read_text())
 
 
 if __name__ == "__main__":

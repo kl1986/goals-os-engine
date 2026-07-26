@@ -8,7 +8,7 @@ This document is the retirement plan. **Nothing here has been deleted by the
 build**, deliberately: both skills live in
 `<vault-root>/.claude/skills/`,
 and `Documents/` is **not a git repository**. Removing untracked, unversioned
-files there is irreversible, so it is Kelvin's call and Kelvin's hand.
+files there is irreversible, so it is the user's call and the user's hand.
 
 ## Why each one goes
 
@@ -43,7 +43,7 @@ conformance, and the enforcer deliberately does not inherit them:
 None of them are silently lost — but none of them are in this ticket's three
 checks either, so bringing them across would be scope this build did not have.
 
-## Files Kelvin must delete by hand
+## Files the user must delete by hand
 
 ```
 ~/…/Documents/.claude/skills/validate-schema/SKILL.md
