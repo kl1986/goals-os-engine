@@ -20,7 +20,7 @@ This establishes a documented token-frugal default, preventing agents from impro
 
 ## Compile
 
-The Librarian compiles archived raw captures and validated feedback into Wiki articles. The Compile verb reads exclusively from the `archive/inbox/<source>/` directories (already-triaged, Execute-processed captures), and **never** reads the live `inbox/raw/` queue.
+The Librarian compiles archived raw captures and validated feedback into Wiki articles. The Compile verb reads exclusively from the `archive/inbox/<source>/` directories (already-triaged, Execute-processed captures or explicitly direct-archived captures), and **never** reads the live `inbox/raw/` queue.
 
 - **Concept assignment**: Concept assignment is model-driven. The Librarian reads `wiki/_index.md`'s current concept list and the archived capture's content, and the model decides which existing concept the item belongs to, or whether it spawns a new one. There is no deterministic pre-filter.
 - **Invocation & Scope**: There is no separate "resynthesis command." Compile is invoked in two ways:
@@ -30,6 +30,19 @@ The Librarian compiles archived raw captures and validated feedback into Wiki ar
 - **Routine-state bookkeeping**: As a heartbeat-checkable (daily) Routine, every successful Compile run bumps its own row in `config/routine-state.md` to track when it last ran.
 - **Model routing**: The default model tier (`claude-sonnet-5`) performs synthesis as it is bounded summarization. This is explicitly configured in `config/model-routing.md` under `wiki-compile`.
 - **Backlink discipline**: Compile maintains one merged, dated `## Sources` section per article. Each entry follows the format `- YYYY-MM-DD — [[archive/inbox/<source>/<id>]]`, appended every run it resynthesizes that concept based on a new input. Consistent with the flat structure, it avoids duplicating a "Decision Log" separate from sources.
+
+### Per-source feedback
+
+`config/wiki-source-feedback.md` is the durable, editable record for a correction about one archived source. It is deliberately separate from the capture so Raw remains immutable (ADR-0029). Its table has one row per source:
+
+| Capture | Directive | Concept |
+|---|---|---|
+| `[[archive/inbox/youtube/example]]` | `exclude` | |
+| `[[archive/inbox/youtube/another-example]]` | `force-concept` | `agent-systems` |
+
+- `exclude` removes the capture from future synthesis. If it was previously cited, Compile forces the affected article to be fully resynthesized without it.
+- `force-concept` makes the capture eligible only for the supplied lowercase-hyphenated concept. Compile forces both that target and every article which had previously cited the capture, so a source cannot silently remain assigned to the old concept.
+- Use `scripts/wiki_librarian.py ... source-feedback-set` or edit the table. Malformed rows are ignored rather than guessed. The target must already be an archived capture; live Raw is never a feedback target.
 
 ## Audit
 

@@ -76,6 +76,7 @@ See [`docs/adr/`](./docs/adr/) for the architecture decision records this repo w
 | 0026 | Build adds a Surveyor and Reviewer execution rights |
 | 0027 | Build SCM conventions |
 | 0028 | Meetings are a fourth content layer structured by an Execute hook |
+| 0029 | Durable, immutable-source Wiki feedback |
 | 0030 | Cadence ownership moves from the Engine manifest to the Brain's `config/schedules.md` (lives in the Brain's `docs/adr/`) |
 
 ## Status

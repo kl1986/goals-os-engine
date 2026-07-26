@@ -136,6 +136,66 @@ class TestNewCapturesForCompile(unittest.TestCase):
         self.assertEqual(new, [])
 
 
+class TestSourceFeedback(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.brain_path = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_write_and_read_force_concept_feedback(self):
+        capture = _write_archived_capture(
+            self.brain_path, "youtube", "2026-07-26-video.md", "2026-07-26"
+        )
+        path = wiki_librarian.write_source_feedback(
+            self.brain_path, capture, "force-concept", "agent-systems"
+        )
+        self.assertTrue(path.exists())
+        self.assertEqual(
+            wiki_librarian.read_source_feedback(self.brain_path),
+            {capture: {"directive": "force-concept", "concept": "agent-systems"}},
+        )
+
+    def test_rejects_live_or_missing_capture(self):
+        with self.assertRaises(ValueError):
+            wiki_librarian.write_source_feedback(
+                self.brain_path, "inbox/raw/youtube/not-archived", "exclude"
+            )
+
+    def test_compile_scan_excludes_source_and_forces_previously_citing_article(self):
+        capture = _write_archived_capture(
+            self.brain_path, "youtube", "2026-07-26-video.md", "2026-07-26"
+        )
+        wiki_dir = self.brain_path / "wiki"
+        wiki_dir.mkdir()
+        (wiki_dir / "old-topic.md").write_text(
+            f"# Old topic\n\n## Sources\n- 2026-07-26 — [[{capture}]]\n"
+        )
+        wiki_librarian.write_source_feedback(self.brain_path, capture, "exclude")
+        result = wiki_librarian.compile_scan(self.brain_path)
+        self.assertEqual(result["new_captures"], [])
+        self.assertEqual(result["forced_concepts"], ["old-topic"])
+        self.assertEqual(result["excluded_captures"][0]["path"], capture)
+
+    def test_compile_scan_force_moves_cited_source_to_named_concept(self):
+        capture = _write_archived_capture(
+            self.brain_path, "youtube", "2026-07-26-video.md", "2026-07-26"
+        )
+        wiki_dir = self.brain_path / "wiki"
+        wiki_dir.mkdir()
+        (wiki_dir / "old-topic.md").write_text(
+            f"# Old topic\n\n## Sources\n- 2026-07-26 — [[{capture}]]\n"
+        )
+        wiki_librarian.write_source_feedback(
+            self.brain_path, capture, "force-concept", "new-topic"
+        )
+        result = wiki_librarian.compile_scan(self.brain_path)
+        self.assertEqual(result["forced_concepts"], ["new-topic", "old-topic"])
+        self.assertEqual(result["forced_assignments"], {capture: "new-topic"})
+        self.assertEqual(result["new_captures"][0]["forced_concept"], "new-topic")
+
+
 class TestCompileScan(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -252,6 +312,32 @@ class TestApplyCompile(unittest.TestCase):
         )
         text = (self.brain_path / "wiki" / "hyrox-training.md").read_text()
         self.assertEqual(text.count("archive/inbox/voice/2026-07-11-a"), 1)
+
+    def test_excluded_feedback_removes_existing_source_on_resynthesis(self):
+        source = "archive/inbox/voice/2026-07-11-a"
+        _write_archived_capture(self.brain_path, "voice", "2026-07-11-a.md", "2026-07-11")
+        wiki_librarian.apply_compile(
+            self.brain_path, "hyrox-training", "Hyrox Training", "Original body.",
+            [("2026-07-11", source)], now=NOW,
+        )
+        wiki_librarian.write_source_feedback(self.brain_path, source, "exclude")
+        wiki_librarian.apply_compile(
+            self.brain_path, "hyrox-training", "Hyrox Training", "Corrected body.", [], now=NOW,
+        )
+        text = (self.brain_path / "wiki" / "hyrox-training.md").read_text()
+        self.assertNotIn(source, text)
+
+    def test_forced_feedback_rejects_source_in_wrong_concept(self):
+        source = "archive/inbox/voice/2026-07-11-a"
+        _write_archived_capture(self.brain_path, "voice", "2026-07-11-a.md", "2026-07-11")
+        wiki_librarian.write_source_feedback(
+            self.brain_path, source, "force-concept", "strength-training"
+        )
+        with self.assertRaises(ValueError):
+            wiki_librarian.apply_compile(
+                self.brain_path, "hyrox-training", "Hyrox Training", "Body.",
+                [("2026-07-11", source)], now=NOW,
+            )
 
     def test_logs_action_log_entry(self):
         wiki_librarian.apply_compile(
