@@ -43,7 +43,14 @@ still inert, because this thing renames folders.
 
 `--apply` refuses to run against a **dirty** Brain working tree, and
 otherwise lays down an empty marker commit immediately before the first fix
-so any bad move is a one-command `git reset --hard <sha>`.
+so any bad move is a one-command `git reset --hard <sha>`. It then commits
+its own output, so the next run meets a clean tree rather than aborting on
+dirt this tool created. With nothing fixable to do it writes nothing at all
+— no marker commit, no change log, no Action Log entry — so a scheduled
+`--apply` on a conforming Brain is a true no-op.
+
+`archive/` and `inbox/raw/` are the Brain's immutable record: they are
+indexed and checked, and never written to.
 
 That guard only covers the Brain repo. A path outside it — notably
 `Code/projects/<name>/`, which lives under `Documents/` and is not inside
@@ -64,6 +71,7 @@ rename ticket files to their slugified H1 or quarantine to `tasks/_unfiled/`
 
 import argparse
 import datetime as dt
+import os
 import re
 import subprocess
 import sys
@@ -111,8 +119,14 @@ UK_DATE_RE = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
 # non-note assets, which is not what (c) is about.
 WIKILINK_RE = re.compile(r"(?<!!)\[\[([^\[\]|#]+)((?:#[^\[\]|]*)?)(\|[^\[\]]*)?\]\]")
 FENCE_RE = re.compile(r"^(```|~~~)")
+INLINE_CODE_RE = re.compile(r"`+[^`\n]*`+")
 
 SKIP_DIR_NAMES = {".git", ".obsidian", "__pycache__", ".trash", "node_modules"}
+
+# `inbox/raw/` captures are immutable on arrival and everything under
+# `archive/` is the executed record of them, so no repair may ever write
+# there — the audit trail has to stay byte-identical to what was filed.
+IMMUTABLE_ROOTS = ("archive", "inbox/raw")
 
 
 # --------------------------------------------------------------------------
@@ -193,11 +207,40 @@ def parse_frontmatter(text: str) -> dict:
     return values
 
 
-def set_frontmatter_value(text: str, key: str, value: str) -> str:
-    """Rewrite one existing frontmatter key's value, leaving every other
-    line — `kanban_order` included — byte-identical."""
+def block_keys(text: str) -> set:
+    """Frontmatter keys whose value continues onto following indented lines.
+
+    `status:\\n  - backlog` is a perfectly good YAML block sequence, but this
+    module's frontmatter helpers are line-based: rewriting the `status:` line
+    alone would strand the `- backlog` item and leave unparseable YAML. Such
+    keys are reported and never rewritten.
+    """
     m = tn.FRONTMATTER_RE.match(text)
     if not m:
+        return set()
+    lines = m.group(2).splitlines()
+    blocks = set()
+    for i, line in enumerate(lines):
+        key_match = tn.FRONTMATTER_KEY_RE.match(line)
+        if not key_match:
+            continue
+        nxt = lines[i + 1] if i + 1 < len(lines) else ""
+        if nxt[:1] in (" ", "\t") and nxt.strip():
+            blocks.add(key_match.group(1))
+    return blocks
+
+
+def set_frontmatter_value(text: str, key: str, value: str) -> str:
+    """Rewrite one existing frontmatter key's value, leaving every other
+    line — `kanban_order` included — byte-identical.
+
+    Refuses (returns `text` unchanged) when the key's value continues onto
+    following indented lines; see `block_keys`.
+    """
+    m = tn.FRONTMATTER_RE.match(text)
+    if not m:
+        return text
+    if key in block_keys(text):
         return text
     lines = m.group(2).splitlines()
     for i, line in enumerate(lines):
@@ -263,12 +306,20 @@ def check_tickets(brain_path: Path) -> list:
             ))
 
         values = parse_frontmatter(text)
+        blocks = block_keys(text)
+        for key in sorted(blocks & (set(("status", "type")) | set(DATE_KEYS))):
+            findings.append(Finding(
+                "a", f"multiline-{key}", rel,
+                f"`{key}` is a multi-line YAML value",
+                blocked_reason="its value continues onto indented lines — rewriting "
+                               "the key line alone would produce invalid YAML",
+            ))
         for key, allowed, aliases in (
             ("status", STATUS_VALUES, STATUS_ALIASES),
             ("type", TYPE_VALUES, TYPE_ALIASES),
         ):
-            if key not in values:
-                continue  # already reported as a missing key
+            if key not in values or key in blocks:
+                continue  # already reported as a missing/multi-line key
             raw = values[key]
             if not raw.strip():
                 findings.append(Finding(
@@ -291,6 +342,8 @@ def check_tickets(brain_path: Path) -> list:
             ))
 
         for key in DATE_KEYS:
+            if key in blocks:
+                continue
             raw = values.get(key, "")
             if not raw.strip():
                 continue  # blank is legitimate (an unresolved ticket)
@@ -382,7 +435,7 @@ def check_structure(brain_path: Path, code_root: Path, files_root: Path,
             # Renaming onto a slug that resolves to nothing — or to the wrong
             # kind of thing — would launder a real filing question into a
             # cosmetic rename, so it is reported and left alone.
-            if target.exists():
+            if _collides(d, target):
                 blocked = (f"{root.label}/{slug} already exists — merging two "
                            f"directories is not a mechanical rename")
             elif kind != root.expect:
@@ -400,8 +453,30 @@ def check_structure(brain_path: Path, code_root: Path, files_root: Path,
     return findings
 
 
-def _in_clean_git_repo(path: Path):
-    """`(ok, reason)` — whether a rename at `path` is git-reversible."""
+def _collides(src: Path, dest: Path) -> bool:
+    """Is `dest` a *different* directory entry than `src`?
+
+    `dest.exists()` alone is not the question on a case-insensitive
+    filesystem: APFS answers True for `…/alpha` when `…/Alpha` is the very
+    directory being renamed, which would misreport every pure case-only
+    drift as an unfixable collision.
+    """
+    if not dest.exists():
+        return False
+    try:
+        return not os.path.samefile(src, dest)
+    except OSError:
+        return True
+
+
+def _in_clean_git_repo(path: Path, clean_repos: set = None):
+    """`(ok, reason)` — whether a rename at `path` is git-reversible.
+
+    `clean_repos` memoises repositories already found clean earlier in the
+    same run: this tool's own first rename dirties the tree, and refusing
+    every later rename over dirt the tool itself created would mean only one
+    rename per repo per run ever succeeded.
+    """
     probe = subprocess.run(
         ["git", "-C", str(path.parent), "rev-parse", "--show-toplevel"],
         capture_output=True, text=True,
@@ -412,19 +487,41 @@ def _in_clean_git_repo(path: Path):
             f"could not be reverted"
         )
     toplevel = probe.stdout.strip()
+    if clean_repos is not None and toplevel in clean_repos:
+        return True, None
     status = subprocess.run(
         ["git", "-C", toplevel, "status", "--porcelain"],
         capture_output=True, text=True,
     )
     if status.stdout.strip():
         return False, f"the git repository at {toplevel} has a dirty working tree"
+    if clean_repos is not None:
+        clean_repos.add(toplevel)
     return True, None
 
 
+def _is_inside(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
+
+
 def fix_structure_finding(brain_path: Path, code_root: Path, files_root: Path,
-                          finding: Finding):
-    """Rename a drifted directory to its canonical slug, then rewrite every
-    inbound `[[wikilink]]` in the Brain that named the old directory.
+                          finding: Finding, clean_repos: set = None):
+    """Rename a drifted directory to its canonical slug, then repoint the
+    `[[path/form/links]]` that the move actually broke.
+
+    A directory name and a wikilink target are different namespaces: a link
+    is resolved by *note filename*, so `[[Goals OS]]` names the note
+    `Goals OS.md`, not the folder `projects/Goals OS/`. Rewriting bare names
+    off the back of a folder rename therefore silently repointed links that
+    were valid — and left the path-form links that a folder rename genuinely
+    does break (`[[projects/Goals OS/note]]`) untouched. Only path-form links
+    whose leading segments are the renamed directory are rewritten, and a
+    rename outside the Brain rewrites nothing at all (a link target is always
+    Brain-relative, so no Brain link can name a `Code/` or `Files/` folder).
 
     Returns `(True, note)` on success, `(False, reason)` when the rename is
     refused — the Brain's pre-fix marker commit only protects the Brain repo,
@@ -435,18 +532,26 @@ def fix_structure_finding(brain_path: Path, code_root: Path, files_root: Path,
                 if r.label == label)
     src = root.path / name
     dest = root.path / tn.slugify(name)
-    if not src.is_dir() or dest.exists():
+    if not src.is_dir() or _collides(src, dest):
         return False, "source vanished or destination now exists"
 
-    ok, reason = _in_clean_git_repo(src)
-    if not ok:
-        return False, reason
+    inside_brain = _is_inside(src, brain_path)
+    if not inside_brain:
+        # The Brain's own pre-fix marker commit already makes every
+        # Brain-internal rename revertible, so only foreign trees need their
+        # own reversibility proof.
+        ok, reason = _in_clean_git_repo(src, clean_repos)
+        if not ok:
+            return False, reason
 
     src.rename(dest)
-    rewritten = rewrite_wikilink_targets(brain_path, {name: dest.name})
     note = f"renamed to {label}/{dest.name}"
-    if rewritten:
-        note += f"; rewrote {rewritten} inbound wikilink(s)"
+    if inside_brain:
+        old_rel = src.resolve().relative_to(brain_path.resolve()).as_posix()
+        new_rel = dest.resolve().relative_to(brain_path.resolve()).as_posix()
+        rewritten = rewrite_path_links(brain_path, old_rel, new_rel)
+        if rewritten:
+            note += f"; repointed path links in {rewritten} note(s)"
     return True, note
 
 
@@ -462,6 +567,18 @@ def brain_notes(brain_path: Path):
                for part in path.relative_to(brain_path).parts):
             continue
         yield path
+
+
+def is_writable(brain_path: Path, path: Path) -> bool:
+    """False for the Brain's immutable record (`archive/`, `inbox/raw/`).
+
+    Those files are still *indexed and checked* — a broken link in the
+    archive is worth knowing about — but no repair may rewrite one, so the
+    audit trail stays byte-identical to what was filed.
+    """
+    rel = path.relative_to(brain_path).as_posix()
+    return not any(rel == root or rel.startswith(root + "/")
+                   for root in IMMUTABLE_ROOTS)
 
 
 def build_link_index(brain_path: Path) -> dict:
@@ -481,20 +598,67 @@ def build_link_index(brain_path: Path) -> dict:
     return index
 
 
-def iter_wikilinks(text: str):
-    """`(target, line_number)` for every wikilink outside a fenced code
-    block. Links inside fences are documentation of syntax, not references."""
+def _mask_inline_code(line: str) -> str:
+    """`line` with every inline-code span blanked to same-length filler.
+
+    Offsets are preserved, so a match on the masked line indexes straight
+    back into the real one.
+    """
+    return INLINE_CODE_RE.sub(lambda m: "\x00" * len(m.group(0)), line)
+
+
+def iter_link_matches(text: str):
+    """`(lineno, match, line_offset)` for every wikilink in live prose.
+
+    The single place that decides what counts as a link. Excluded: YAML
+    frontmatter (rewriting a value there is a YAML edit, not a prose edit),
+    fenced code blocks and inline code (documentation of the syntax, not
+    references). Detection and repair both walk this, so a link the scan
+    ignores can never be rewritten by the fixer, and vice versa.
+    """
+    m = tn.FRONTMATTER_RE.match(text)
+    body_start = m.end() if m else 0
     in_fence = False
-    for lineno, line in enumerate(text.splitlines(), start=1):
-        if FENCE_RE.match(line.strip()):
+    pos = 0
+    for lineno, line in enumerate(text.splitlines(keepends=True), start=1):
+        line_start, pos = pos, pos + len(line)
+        if line_start < body_start:
+            continue
+        bare = line.rstrip("\n")
+        if FENCE_RE.match(bare.strip()):
             in_fence = not in_fence
             continue
         if in_fence:
             continue
-        for m in WIKILINK_RE.finditer(line):
-            target = m.group(1).strip()
-            if target:
-                yield target, lineno
+        for match in WIKILINK_RE.finditer(_mask_inline_code(bare)):
+            yield lineno, match, line_start
+
+
+def iter_wikilinks(text: str):
+    """`(target, line_number)` for every wikilink this tool considers real."""
+    for lineno, match, _offset in iter_link_matches(text):
+        target = match.group(1).strip()
+        if target:
+            yield target, lineno
+
+
+def rewrite_links_in_text(text: str, sub) -> str:
+    """Apply `sub(match) -> replacement or None` to exactly the links
+    `iter_link_matches` yields, splicing by absolute offset."""
+    out = []
+    last = 0
+    for _lineno, match, offset in iter_link_matches(text):
+        replacement = sub(match)
+        if replacement is None:
+            continue
+        start, end = offset + match.start(), offset + match.end()
+        out.append(text[last:start])
+        out.append(replacement)
+        last = end
+    if not out:
+        return text
+    out.append(text[last:])
+    return "".join(out)
 
 
 def check_links(brain_path: Path, slug_map: dict) -> list:
@@ -505,6 +669,7 @@ def check_links(brain_path: Path, slug_map: dict) -> list:
         if path.suffix != ".md":
             continue
         rel = path.relative_to(brain_path).as_posix()
+        writable = is_writable(brain_path, path)
         seen = set()
         for target, lineno in iter_wikilinks(path.read_text(errors="replace")):
             if target.lower() in index or target in seen:
@@ -512,13 +677,20 @@ def check_links(brain_path: Path, slug_map: dict) -> list:
             seen.add(target)
             candidates = index.get(tn.slugify(target), set())
             fixed = next(iter(candidates)) if len(candidates) == 1 else None
+            if fixed and not writable:
+                blocked = ("this file is part of the Brain's immutable record "
+                           "and is never rewritten")
+            elif fixed:
+                blocked = None
+            else:
+                blocked = "no single unambiguous note to repoint at"
             findings.append(Finding(
                 "c", "broken-wikilink", f"{rel}:{lineno}",
                 f"[[{target}]] resolves to no note in the Brain",
-                fixable=fixed is not None,
-                fix_desc=f"repoint to [[{fixed}]]" if fixed else None,
-                blocked_reason=None if fixed else "no single unambiguous note to repoint at",
-                fix_args={"old": target, "new": fixed, "line": lineno} if fixed else None,
+                fixable=blocked is None,
+                fix_desc=f"repoint to [[{fixed}]]" if blocked is None else None,
+                blocked_reason=blocked,
+                fix_args={"old": target, "new": fixed, "line": lineno} if blocked is None else None,
             ))
 
     for path in ticket_files(brain_path):
@@ -536,24 +708,28 @@ def check_links(brain_path: Path, slug_map: dict) -> list:
     return findings
 
 
-def rewrite_wikilink_targets(brain_path: Path, mapping: dict) -> int:
-    """Repoint `[[old]]` -> `[[new]]` across every note, preserving any
-    `#heading` and `|alias` the link carried. Returns the file count."""
-    lowered = {k.lower(): v for k, v in mapping.items()}
+def rewrite_path_links(brain_path: Path, old_rel: str, new_rel: str) -> int:
+    """Repoint path-form `[[old/dir/note]]` links after a directory rename.
+
+    Only links whose leading path segments *are* the renamed directory are
+    touched. A bare `[[Note]]` is never rewritten here: it names a note
+    filename, which a directory rename does not change.
+    """
+    prefix = old_rel.lower() + "/"
     changed = 0
     for path in brain_notes(brain_path):
-        if path.suffix != ".md":
+        if path.suffix != ".md" or not is_writable(brain_path, path):
             continue
         text = path.read_text(errors="replace")
 
         def _sub(m):
             target = m.group(1).strip()
-            new = lowered.get(target.lower())
-            if new is None:
-                return m.group(0)
-            return f"[[{new}{m.group(2) or ''}{m.group(3) or ''}]]"
+            if not target.lower().startswith(prefix):
+                return None
+            repointed = new_rel + target[len(old_rel):]
+            return f"[[{repointed}{m.group(2) or ''}{m.group(3) or ''}]]"
 
-        new_text = WIKILINK_RE.sub(_sub, text)
+        new_text = rewrite_links_in_text(text, _sub)
         if new_text != text:
             path.write_text(new_text)
             changed += 1
@@ -563,18 +739,25 @@ def rewrite_wikilink_targets(brain_path: Path, mapping: dict) -> int:
 def fix_link_finding(brain_path: Path, finding: Finding) -> bool:
     """Repoint every occurrence of this broken target within the one file
     the finding names — a finding is raised once per (file, target), so
-    repairing only the first line number would leave later repeats broken."""
+    repairing only the first line number would leave later repeats broken.
+
+    Rewrites exactly the links `check_links` looked at, so a `[[…]]` inside
+    a fence, inline code or frontmatter is left alone even when the same
+    spelling was flagged in live prose elsewhere in the file.
+    """
     path = brain_path / finding.path.rsplit(":", 1)[0]
+    if not is_writable(brain_path, path):
+        return False
     old = finding.fix_args["old"]
     new = finding.fix_args["new"]
     text = path.read_text(errors="replace")
 
     def _sub(m):
         if m.group(1).strip().lower() != old.lower():
-            return m.group(0)
+            return None
         return f"[[{new}{m.group(2) or ''}{m.group(3) or ''}]]"
 
-    new_text = WIKILINK_RE.sub(_sub, text)
+    new_text = rewrite_links_in_text(text, _sub)
     if new_text == text:
         return False
     path.write_text(new_text)
@@ -599,12 +782,8 @@ def _git(repo: Path, *args):
                           capture_output=True, text=True)
 
 
-def guard_brain_repo(brain_path: Path, now: dt.datetime) -> str:
-    """Refuse a dirty tree; otherwise lay down the pre-fix marker commit.
-
-    Returns the marker commit's short SHA — the one-command revert point
-    the ticket's safety guard requires (`git reset --hard <sha>`).
-    """
+def guard_brain_repo(brain_path: Path):
+    """Refuse to apply against a non-repo or dirty Brain working tree."""
     probe = _git(brain_path, "rev-parse", "--show-toplevel")
     if probe.returncode != 0:
         raise RuntimeError(
@@ -619,6 +798,11 @@ def guard_brain_repo(brain_path: Path, now: dt.datetime) -> str:
             "clean revert point:\n"
             f"  git -C \"{brain_path}\" status"
         )
+
+
+def marker_commit(brain_path: Path, now: dt.datetime) -> str:
+    """Lay down the pre-fix marker commit and return its short SHA — the
+    one-command revert point the ticket's safety guard requires."""
     message = f"Pre-fix checkpoint — schema enforce {now.strftime('%Y-%m-%d %H:%M')}"
     commit = _git(brain_path, "commit", "--allow-empty", "-m", message)
     if commit.returncode != 0:
@@ -626,37 +810,71 @@ def guard_brain_repo(brain_path: Path, now: dt.datetime) -> str:
     return _git(brain_path, "rev-parse", "--short", "HEAD").stdout.strip()
 
 
+def commit_fixes(brain_path: Path, now: dt.datetime, changes: list):
+    """Commit what this run wrote, so the next `--apply` meets a clean tree.
+
+    Without this the tool's own output is the dirt that makes run 2 abort.
+    """
+    if _git(brain_path, "add", "-A").returncode != 0:
+        return None
+    if not _git(brain_path, "status", "--porcelain").stdout.strip():
+        return None
+    message = (f"Schema enforce — {len(changes)} fix(es) "
+               f"{now.strftime('%Y-%m-%d %H:%M')}")
+    commit = _git(brain_path, "commit", "-m", message)
+    if commit.returncode != 0:
+        raise RuntimeError(f"post-fix commit failed: {commit.stderr.strip()}")
+    return _git(brain_path, "rev-parse", "--short", "HEAD").stdout.strip()
+
+
 def apply_fixes(brain_path: Path, code_root: Path, files_root: Path,
-                findings: list) -> list:
+                findings: list):
     """Apply every fixable finding. Structure renames run first — they move
-    the files the other checks name, so a later pass would go stale.
-    Returns change-log lines, one per file actually changed."""
+    the files the other checks name.
+
+    Because a rename invalidates the display paths of every (a)/(c) finding
+    underneath it, the (a)/(c) half is **re-derived against the mutated tree**
+    once any rename lands: otherwise those findings point at paths that no
+    longer exist (the repair then fails into `blocked_reason` while the run
+    still reports success), and a `ticket-orphan-parent` raised for a
+    directory the same run was about to rename would be a false positive.
+
+    Returns `(changes, findings)` — change-log lines, one per file actually
+    changed, and the finding list the report should show.
+    """
     changes = []
-    ordered = (
-        [f for f in findings if f.check == "b" and f.fixable]
-        + [f for f in findings if f.check == "a" and f.fixable]
-        + [f for f in findings if f.check == "c" and f.fixable]
-    )
-    for finding in ordered:
+    clean_repos = set()
+    structure = [f for f in findings if f.check == "b" and f.fixable]
+    renamed = False
+    for finding in structure:
         try:
-            if finding.check == "b":
-                ok, note = fix_structure_finding(brain_path, code_root, files_root, finding)
-                if ok:
-                    changes.append(f"{finding.path}: {note}")
-                else:
-                    finding.fixable = False
-                    finding.blocked_reason = note
-                continue
-            if finding.check == "a":
-                ok = fix_ticket_finding(brain_path, finding)
+            ok, note = fix_structure_finding(brain_path, code_root, files_root,
+                                             finding, clean_repos)
+            if ok:
+                changes.append(f"{finding.path}: {note}")
+                renamed = True
             else:
-                ok = fix_link_finding(brain_path, finding)
+                finding.fixable = False
+                finding.blocked_reason = note
+        except OSError as exc:
+            finding.fixable = False
+            finding.blocked_reason = f"failed: {exc}"
+
+    if renamed:
+        fresh = scan(brain_path, code_root, files_root)
+        findings = ([f for f in findings if f.check == "b"]
+                    + [f for f in fresh if f.check != "b"])
+
+    for finding in [f for f in findings if f.check in ("a", "c") and f.fixable]:
+        try:
+            ok = (fix_ticket_finding(brain_path, finding) if finding.check == "a"
+                  else fix_link_finding(brain_path, finding))
             if ok:
                 changes.append(f"{finding.path}: {finding.fix_desc}")
         except OSError as exc:
             finding.fixable = False
             finding.blocked_reason = f"failed: {exc}"
-    return changes
+    return changes, findings
 
 
 def write_change_log(log_file: Path, now: dt.datetime, marker: str,
@@ -705,12 +923,21 @@ def run(brain_path: Path, code_root: Path, files_root: Path, apply: bool = False
     if not apply:
         return result
 
-    marker = guard_brain_repo(brain_path, now)
-    changes = apply_fixes(brain_path, code_root, files_root, findings)
+    guard_brain_repo(brain_path)
+    if not any(f.fixable for f in findings):
+        # Nothing to repair: no marker commit, no change log, no Action Log
+        # entry. A nightly `--apply` on a conforming Brain must be a no-op,
+        # not 365 empty commits and 365 log entries a year.
+        return result
+
+    marker = marker_commit(brain_path, now)
+    changes, findings = apply_fixes(brain_path, code_root, files_root, findings)
     unfixable = [f for f in findings if not f.fixable]
     write_change_log(log_file, now, marker, changes, unfixable)
     log_to_action_log(brain_path, now, marker, changes, unfixable, actor, trigger)
-    result.update({"applied": True, "changes": changes, "marker": marker})
+    commit_fixes(brain_path, now, changes)
+    result.update({"applied": True, "changes": changes, "marker": marker,
+                   "findings": findings})
     return result
 
 
@@ -770,7 +997,7 @@ def main(argv=None):
     except RuntimeError as exc:
         sys.exit(str(exc))
 
-    print(format_report(result["findings"], result["applied"]))
+    print(format_report(result["findings"], result["applied"] or args.apply))
     if result["applied"]:
         print(f"\nPre-fix commit {result['marker']} — revert with: "
               f"git -C \"{brain_path}\" reset --hard {result['marker']}")

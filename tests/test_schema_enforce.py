@@ -397,6 +397,184 @@ def test_cli_rejects_apply_with_dry_run(brain, roots, tmp_path):
         se.main(["--brain", str(brain), "--apply", "--dry-run"])
 
 
+# --------------------------------------------------------------------------
+# Regressions — the seven defects found in review of the first pass
+# --------------------------------------------------------------------------
+
+def test_rename_never_repoints_an_already_valid_bare_link(brain, roots, tmp_path):
+    """(1) A directory name and a wikilink target are different namespaces."""
+    code, _files = roots
+    _git_init(code)
+    (code / "projects" / "Goals OS").mkdir(parents=True)
+    _git_commit_all(code)
+
+    _write(brain / "wiki" / "Goals OS.md", "# Goals OS\n\nThe real note.\n")
+    _write(brain / "Dashboard.md", "# Dashboard\n\nSee [[Goals OS]].\n")
+    _git_commit_all(brain)
+
+    _run(brain, roots, tmp_path, apply=True)
+
+    assert (code / "projects" / "goals-os").is_dir()
+    assert "[[Goals OS]]" in (brain / "Dashboard.md").read_text(), \
+        "a link that already resolves must survive an unrelated folder rename"
+    assert (brain / "wiki" / "Goals OS.md").is_file()
+    # And the corruption must not be invisible: a re-scan is still silent.
+    _git_commit_all(brain)
+    assert [f for f in _run(brain, roots, tmp_path)["findings"] if f.check == "c"] == []
+
+
+def test_rename_repoints_the_path_form_links_it_actually_breaks(brain, roots, tmp_path):
+    """(1) Path-form links are the ones a directory rename really breaks."""
+    _write(brain / "tasks" / "projects" / "Epoch Fit MVP" / "t.md", CONFORMING_TICKET)
+    _write(brain / "Dashboard.md",
+           "# Dashboard\n\n[[tasks/projects/Epoch Fit MVP/t|the ticket]]\n")
+    _git_commit_all(brain)
+
+    _run(brain, roots, tmp_path, apply=True)
+    assert "[[tasks/projects/epoch-fit-mvp/t|the ticket]]" in (brain / "Dashboard.md").read_text()
+
+
+def test_fix_pass_honours_fences_inline_code_and_frontmatter(brain, roots, tmp_path):
+    """(2) Repair must touch exactly what detection looked at."""
+    note = brain / "projects" / "goals-os" / "goals-os.md"
+    _write(note,
+           "---\n"
+           "link: \"[[A Conforming Ticket]]\"\n"
+           "---\n"
+           "# goals-os\n\n"
+           "Prose [[A Conforming Ticket]] here.\n"
+           "Inline `[[A Conforming Ticket]]` code.\n"
+           "```\n[[A Conforming Ticket]]\n```\n")
+    _git_commit_all(brain)
+
+    findings = [f for f in _run(brain, roots, tmp_path)["findings"] if f.check == "c"]
+    assert len(findings) == 1, "one live prose occurrence, nothing else"
+
+    _run(brain, roots, tmp_path, apply=True)
+    text = note.read_text()
+    assert "Prose [[a-conforming-ticket]] here." in text
+    assert "link: \"[[A Conforming Ticket]]\"" in text
+    assert "Inline `[[A Conforming Ticket]]` code." in text
+    assert "```\n[[A Conforming Ticket]]\n```" in text
+
+
+def test_archive_is_immune_to_every_write(brain, roots, tmp_path):
+    """(2) `archive/` is the immutable record of what was filed."""
+    archived = brain / "archive" / "inbox" / "email" / "2026-07-25-a-capture.md"
+    original = "# capture\n\nMentions [[A Conforming Ticket]].\n"
+    _write(archived, original)
+    _git_commit_all(brain)
+
+    result = _run(brain, roots, tmp_path, apply=True)
+    finding = next(f for f in result["findings"] if f.check == "c")
+    assert not finding.fixable
+    assert "immutable" in finding.blocked_reason
+    assert archived.read_text() == original
+
+
+def test_two_in_brain_renames_both_land_in_one_run(brain, roots, tmp_path):
+    """(3) Rename #1 dirties the tree; it must not veto rename #2."""
+    _write(brain / "tasks" / "projects" / "Epoch Fit MVP" / "t.md", CONFORMING_TICKET)
+    _write(brain / "tasks" / "areas" / "Work Area" / "t.md", CONFORMING_TICKET)
+    (brain / "areas" / "work-area").mkdir(parents=True)
+    _write(brain / "areas" / "work-area" / "work-area.md", "# work-area\n")
+    _git_commit_all(brain)
+
+    _run(brain, roots, tmp_path, apply=True)
+    assert (brain / "tasks" / "projects" / "epoch-fit-mvp").is_dir()
+    assert (brain / "tasks" / "areas" / "work-area").is_dir()
+    assert not (brain / "tasks" / "projects" / "Epoch Fit MVP").exists()
+
+
+def test_pure_case_only_rename_is_fixable(brain, roots, tmp_path):
+    """(4) `Path.exists()` is not a collision test on a case-insensitive FS."""
+    _write(brain / "tasks" / "areas" / "Work" / "t.md", CONFORMING_TICKET)
+    _git_commit_all(brain)
+
+    mismatch = next(f for f in _run(brain, roots, tmp_path)["findings"]
+                    if f.kind == "naming-mismatch")
+    assert mismatch.fixable, mismatch.blocked_reason
+
+    _run(brain, roots, tmp_path, apply=True)
+    names = [p.name for p in (brain / "tasks" / "areas").iterdir()]
+    assert names == ["work"]
+
+
+def test_findings_are_rederived_after_a_rename(brain, roots, tmp_path):
+    """(5) A rename invalidates the paths every (a)/(c) finding carries."""
+    stub = brain / "tasks" / "projects" / "Epoch Fit MVP" / "stub.md"
+    _write(stub, BASE_BOARD_STUB)
+    _git_commit_all(brain)
+
+    before = _run(brain, roots, tmp_path)["findings"]
+    assert "ticket-orphan-parent" in _kinds(before, "c")
+
+    result = _run(brain, roots, tmp_path, apply=True)
+    moved = brain / "tasks" / "projects" / "epoch-fit-mvp" / "stub.md"
+    assert moved.is_file() and not stub.exists()
+    values = se.parse_frontmatter(moved.read_text())
+    assert all(key in values for key in se.REQUIRED_KEYS), \
+        "the ticket under the renamed folder must still be repaired"
+    assert not [f for f in result["findings"] if f.blocked_reason
+                and f.blocked_reason.startswith("failed:")]
+    assert "ticket-orphan-parent" not in _kinds(result["findings"], "c"), \
+        "no false positive for a path this run just fixed"
+
+
+def test_two_consecutive_apply_runs_succeed(brain, roots, tmp_path):
+    """(6) The tool must commit its own output, not choke on it."""
+    _write(brain / "tasks" / "projects" / "goals-os" / "stub.md", BASE_BOARD_STUB)
+    _git_commit_all(brain)
+
+    first = _run(brain, roots, tmp_path, apply=True)
+    assert first["applied"]
+    status = subprocess.run(["git", "-C", str(brain), "status", "--porcelain"],
+                            capture_output=True, text=True).stdout
+    assert status.strip() == "", "run 1 must leave the tree clean"
+
+    second = _run(brain, roots, tmp_path, apply=True)  # must not raise
+    assert second["changes"] == []
+
+
+def test_apply_with_nothing_fixable_writes_nothing(brain, roots, tmp_path):
+    """(6) A nightly `--apply` on a conforming Brain is a true no-op."""
+    head = subprocess.run(["git", "-C", str(brain), "rev-parse", "HEAD"],
+                          capture_output=True, text=True).stdout.strip()
+
+    result = _run(brain, roots, tmp_path, apply=True)
+    assert result["marker"] is None
+    assert not (tmp_path / "logs").exists()
+    assert not (brain / "log").exists()
+    after = subprocess.run(["git", "-C", str(brain), "rev-parse", "HEAD"],
+                           capture_output=True, text=True).stdout.strip()
+    assert after == head, "no empty marker commit when there is nothing to fix"
+
+
+BLOCK_SEQUENCE_TICKET = CONFORMING_TICKET.replace(
+    "status: backlog", "status:\n  - backlog")
+
+
+def test_block_sequence_frontmatter_value_is_never_rewritten(brain, roots, tmp_path):
+    """(7) A line-based rewrite of a YAML block value produces invalid YAML."""
+    ticket = brain / "tasks" / "projects" / "goals-os" / "blocky.md"
+    _write(ticket, BLOCK_SEQUENCE_TICKET)
+    _git_commit_all(brain)
+
+    findings = [f for f in _run(brain, roots, tmp_path)["findings"] if f.check == "a"]
+    assert _kinds(findings) == ["multiline-status"]
+    assert not findings[0].fixable
+
+    _run(brain, roots, tmp_path, apply=True)
+    assert ticket.read_text() == BLOCK_SEQUENCE_TICKET
+
+
+def test_set_frontmatter_value_refuses_a_block_value():
+    """(7) The primitive itself refuses, whatever the caller believes."""
+    assert se.set_frontmatter_value(BLOCK_SEQUENCE_TICKET, "status", "backlog") \
+        == BLOCK_SEQUENCE_TICKET
+    assert se.block_keys(BLOCK_SEQUENCE_TICKET) == {"status"}
+
+
 def test_slug_map_folds_a_drifted_directory_onto_its_canonical_slug(brain):
     (brain / "projects" / "Goals OS").mkdir()
     slug_map = se.build_slug_map(brain)
