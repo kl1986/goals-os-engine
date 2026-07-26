@@ -30,7 +30,7 @@ v2 enforces specific YAML frontmatter schemas for configuration files.
 - Create `config/routing-rules.md` (for deterministic Pass A rules) and `config/autonomy-policy.md`.
 - Review the `goals-os-brain-template/config/` examples for the exact required schemas.
 
-**Post-Migration Step:** The migration process must include running the `validate-schema` skill across the migrated files to flag any legacy frontmatter and ensure adherence to v2 specs.
+**Post-Migration Step:** The migration process must include running the v2 enforcer, `scripts/schema_enforce.py --brain <brain>`, across the migrated Brain to flag legacy ticket frontmatter, Project/Area slug drift, and broken wikilinks. It reports by default; re-run with `--apply` (clean git tree required) to repair. The v1 `validate-schema` skill it replaces is retired — see [`v1-validator-retirement.md`](./v1-validator-retirement.md).
 
 ## 3. Wiki Migration
 
