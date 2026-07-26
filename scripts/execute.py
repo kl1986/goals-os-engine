@@ -29,6 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import heartbeat  # noqa: E402
 import log_action  # noqa: E402
+import md_sections  # noqa: E402
 
 # The `rule` column (8th, between `confidence` and `approve`) is a
 # breaking schema change from the 7-column Triage Plan shape — a
@@ -171,7 +172,7 @@ def _insert_before_next_heading(text: str, heading: str, entry_line: str) -> str
     heading) — the same mechanic generalized rather than duplicated
     (ticket 09 / protocols/execute.md)."""
     pattern = re.compile(
-        rf"^## {re.escape(heading)}\s*\n(.*?)(?=\n## |\Z)", re.MULTILINE | re.DOTALL
+        md_sections.SECTION_BODY.format(re.escape(heading)), re.MULTILINE | re.DOTALL
     )
     match = pattern.search(text)
     if not match:

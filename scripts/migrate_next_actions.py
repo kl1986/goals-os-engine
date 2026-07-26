@@ -28,8 +28,8 @@ from pathlib import Path
 # Matches from the `## Next action` heading up to (not including) the next
 # `## ` heading or end of string — used both to extract the body (group 1)
 # and, separately, to delete the whole section (heading included).
-NEXT_ACTION_SECTION_RE = re.compile(r"\n## Next action\s*\n(.*?)(?=\n## |\Z)", re.DOTALL)
-NEXT_ACTION_FULL_RE = re.compile(r"\n## Next action\s*\n.*?(?=\n## |\Z)", re.DOTALL)
+NEXT_ACTION_SECTION_RE = re.compile(r"\n## Next action[ \t]*\n(.*?)(?=\n## |\Z)", re.DOTALL)
+NEXT_ACTION_FULL_RE = re.compile(r"\n## Next action[ \t]*\n.*?(?=\n## |\Z)", re.DOTALL)
 CHECKBOX_LINE_RE = re.compile(r"^- \[ \] (.+)$")
 
 BLANK_FIELDS = ("priority", "component", "parent", "assignee", "github", "goal")

@@ -24,6 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import heartbeat  # noqa: E402
 import execute  # noqa: E402
+import md_sections  # noqa: E402
 import rule_diff_review  # noqa: E402
 
 
@@ -89,7 +90,7 @@ def _open_waiting_for(brain_path: Path) -> list:
         name = name_match.group(1).strip() if name_match else path.stem
 
         section_match = re.search(
-            r'^## .*Waiting For\s*\n(.*?)(?=\n## |\Z)', text, re.MULTILINE | re.DOTALL
+            md_sections.SECTION_BODY.format('.*Waiting For'), text, re.MULTILINE | re.DOTALL
         )
         if not section_match:
             continue
