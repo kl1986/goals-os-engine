@@ -1,0 +1,11 @@
+# `awaiting-review` — a sixth ticket status
+
+ADR-0023 made a Build commit autonomously and stop at push, which created a real state ADR-0015's five values could not express: **work committed and verified, but not landed**. Calling it `in-progress` hides a queue that needs a human; calling it `done` claims something shipped that exists only on an unpushed local branch. The status set therefore gains a sixth value, **`awaiting-review`** — named for what it needs from the user, not for the mechanism that produced it. It is not Build-specific: any Ticket whose work is finished pending someone's eyes belongs there. Decided 23/07/2026, amending ADR-0015.
+
+**Consequences — the blast radius is wider than the board.** `tasks/all-tickets.base` hardcodes the five `boardColumns` in **four of its five views** (the fifth, `By Project and Area`, filters `status != done && != deprioritized` and picks the new value up correctly with no change). `docs/agents/issue-tracker.md` and `protocols/daily-note.md` both document the old set.
+
+The sharp edge is **`scripts/daily_note.py:146`** — `if status not in ("prioritised", "in-progress")` — an allowlist that would have silently dropped every `awaiting-review` ticket from the daily note. A Ticket waiting on the user is precisely the one that should be shouting at them, so the filter is widened and the queue additionally surfaces as a Dashboard section alongside the existing Waiting For rollup: ADR-0023's gate is only worth as much as its visibility, and a batch that ran overnight is worthless if its output is invisible until the board is next opened.
+
+**Considered options.** *`done` at commit* — the board tracks agent progress in near-real-time, but "done" would mean code on an unpushed branch, invisible to anyone on another machine. *Stay `in-progress` until pushed* — no schema change and no blast radius at all, but the review queue is then indistinguishable from work still being written. *The Build writes no status* — zero risk of an agent misreporting state, but manual bookkeeping on every ticket and guaranteed drift.
+
+**Note for the next person adding a status:** `daily_note.py`'s allowlist is a latent trap. Any value added after it was written disappears from the daily note with no error.

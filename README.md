@@ -51,6 +51,24 @@ See [`docs/adr/`](./docs/adr/) for the architecture decision records this repo w
 | 0008 | Two-lane self-improvement |
 | 0009 | Voice in core, dialogue as plugin |
 | 0010 | Pure-derivation Wiki |
+| 0011 | Capture `source` encodes routing intent, not input modality |
+| 0012 | Tickets live in the Brain, organised per Project/Area |
+| 0013 | Global Kanban board with synchronised ticket frontmatter |
+| 0014 | Ticket identity uses slug-scoped local numbering |
+| 0015 | Ticket schema has no Epic and descriptive goal linkage |
+| 0016 | Base Board supersedes the board file and sync script |
+| 0017 | Tickets are a Project's sole store of open work |
+| 0018 | Daily notes source tickets and include Areas |
+| 0019 | Ticket normalisation and an unfiled quarantine |
+| 0020 | Ticket filenames use descriptions rather than IDs |
+| 0021 | Build ships as a Library plugin and Charters gain ownership |
+| 0022 | A Project declares its repos; a Ticket does not |
+| 0023 | A Build gates at push, not commit |
+| 0024 | Build vendors its engineering skills |
+| 0025 | `awaiting-review` is a sixth ticket status |
+| 0026 | Build adds a Surveyor and Reviewer execution rights |
+| 0027 | Build SCM conventions |
+| 0028 | Meetings are a fourth content layer structured by an Execute hook |
 | 0030 | Cadence ownership moves from the Engine manifest to the Brain's `config/schedules.md` (lives in the Brain's `docs/adr/`) |
 
 ## Status
