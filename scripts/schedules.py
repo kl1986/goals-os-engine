@@ -125,19 +125,33 @@ def parse_table(text: str, header_must_contain: str = "Label") -> list:
     schema's own header comments — `config/schedules.md` documents itself
     above the data, so "the first table in the file" is not good enough.
     Rows carry a `_line` key so validation errors can name the line.
+
+    **No table is not an empty table.** A file with no recognisable header row
+    (prose only, zero bytes, a renamed column) raises `ScheduleError` rather
+    than returning `[]` — an empty return means "the table is there and has no
+    data rows", which is a legitimate state; an unreadable file is not. Both
+    consumers treat "zero Schedules" as authoritative (Heartbeat: nothing is
+    due; the Scheduler Adapter: remove every Managed job), so the two cases
+    must never collapse into one. Header detection is case-insensitive so a
+    lower-cased column is diagnosed as a bad column, not as a missing table.
     """
     lines = text.splitlines()
     header = None
     header_idx = None
+    want = header_must_contain.strip().lower()
     for i, line in enumerate(lines):
         if not line.strip().startswith("|"):
             continue
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if header_must_contain in cells:
+        if any(c.lower() == want for c in cells):
             header, header_idx = cells, i
             break
     if header is None:
-        return []
+        raise ScheduleError([
+            f"no schedules table found — expected a markdown table with a "
+            f"{header_must_contain!r} header column (columns: {', '.join(REQUIRED_COLUMNS)}). "
+            f"Refusing to treat an unreadable file as an empty schedule."
+        ])
 
     rows = []
     for i in range(header_idx + 2, len(lines)):  # skip header + --- separator

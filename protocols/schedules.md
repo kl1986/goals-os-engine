@@ -44,12 +44,13 @@ Because `|` delimits cells, a Command containing a literal pipe cannot be expres
 
 ## Reconcile
 
-`sync_schedules.py --brain <brain> [--dry-run] [--launch-agents-dir DIR] [--no-load]` converges the LaunchAgents directory to the table, and is safe to re-run:
+`sync_schedules.py --brain <brain> [--dry-run] [--launch-agents-dir DIR] [--no-load] [--allow-removals]` converges the LaunchAgents directory to the table, and is safe to re-run:
 
-1. Parse and validate the **whole** table. One malformed row aborts the run with every problem listed, before any filesystem write.
+1. Parse and validate the **whole** table. One malformed row aborts the run with every problem listed, before any filesystem write. A file with no readable table at all — prose only, zero bytes, a renamed or re-cased `Label` column — is an error, never an empty schedule.
 2. Refuse if any desired Label already exists as a plist without the `GoalsOSManaged` marker.
 3. Plan: create / update / unchanged / remove. "Unchanged" compares the *semantic* plist keys, so the generated-at comment never causes a needless rewrite.
-4. Apply: `launchctl bootout` then `bootstrap` each written Job (falling back to legacy `unload`/`load`); Managed plists no longer in the table are booted out and deleted.
+4. Refuse a **removal-only** plan — one that removes Managed Jobs and creates none. Deleting a row on purpose is still possible with `--allow-removals`.
+5. Apply: `launchctl bootout` then `bootstrap` each written Job (falling back to legacy `unload`/`load`); Managed plists no longer in the table are booted out and deleted.
 
 `--dry-run` prints the plan plus a unified diff per changed file and writes nothing. Run it first, always.
 

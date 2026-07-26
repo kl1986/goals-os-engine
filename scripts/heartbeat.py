@@ -145,13 +145,17 @@ def parse_brain_schedules(brain_path: Path, strict: bool = False) -> list:
     Brain with no `config/schedules.md` has no due-checking. That is a
     condition to report, never to crash a caller (Dashboard) over — hence
     the non-strict default.
+
+    A file that exists but carries no schedules table is as loud as a missing
+    one: `schedules.parse_table` raises rather than returning no rows, so a
+    truncated or stubbed file cannot pass through here as "nothing is due".
     """
     try:
         return schedules_mod.parse_schedules(schedules_mod.schedules_path(brain_path))
     except schedules_mod.ScheduleError as exc:
         message = (
             f"No usable {schedules_mod.schedules_path(brain_path)} — nothing can be "
-            f"due-checked until it exists (ADR-0030).\n{exc}"
+            f"due-checked until it is present and valid (ADR-0030).\n{exc}"
         )
         if strict:
             sys.exit(message)

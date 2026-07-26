@@ -16,7 +16,11 @@ Safety, in order of importance:
    hard refusal — nothing is written, nothing is loaded.
 2. **Whole-table validation before any filesystem write.** A malformed row
    aborts the whole run; the directory is left exactly as it was.
-3. **`--dry-run`** prints the plan (and a unified diff per changed file) and
+3. **A removal-only plan is refused.** A plan that removes jobs and creates
+   none can only ever destroy live state — the shape a truncated, stubbed or
+   mis-titled table produces. Deleting a row on purpose is still possible,
+   with `--allow-removals`.
+4. **`--dry-run`** prints the plan (and a unified diff per changed file) and
    writes nothing.
 
 Out of scope, by ticket: what any job *does*, and firing an unattended Claude
@@ -172,6 +176,25 @@ def build_plan(scheds, agents_dir: Path, brain_path=None, now=None) -> dict:
     return {"create": create, "update": update, "unchanged": unchanged, "remove": remove}
 
 
+def check_removal_only(plan: dict, allow_removals: bool = False):
+    """Refuse a plan that removes Jobs and creates none.
+
+    That plan shape has exactly one meaning — live state goes away and nothing
+    replaces it — and it is what a table that lost its rows produces. A
+    deliberate deletion says so explicitly with `--allow-removals`.
+    """
+    if allow_removals or not plan["remove"] or plan["create"]:
+        return
+    labels = ", ".join(item["label"] for item in plan["remove"])
+    raise RefusedError(
+        f"Refusing to apply a removal-only plan: it would boot out and delete "
+        f"{len(plan['remove'])} Managed job(s) ({labels}) and create none.\n"
+        f"That is what a truncated, stubbed or mis-titled config/schedules.md looks like. "
+        f"Check the table still holds the rows you expect.\n"
+        f"If the deletion is deliberate, re-run with --allow-removals."
+    )
+
+
 def _launchctl(args, verbose=True):
     cmd = ["launchctl"] + args
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -241,11 +264,14 @@ def format_plan(plan: dict, show_diff: bool = False) -> str:
 
 
 def sync(brain_path: Path, agents_dir: Path, dry_run: bool = False,
-         load: bool = True, now: dt.datetime = None, show_diff: bool = True) -> dict:
+         load: bool = True, now: dt.datetime = None, show_diff: bool = True,
+         allow_removals: bool = False) -> dict:
     scheds = schedules_mod.parse_schedules(schedules_mod.schedules_path(brain_path))
     plan = build_plan(scheds, agents_dir, brain_path=brain_path, now=now)
     print(f"Schedules: {len(scheds)} row(s), {sum(1 for s in scheds if s.renders_job)} job(s)")
     print(format_plan(plan, show_diff=show_diff))
+    # After printing, so the refusal always shows the plan it refused.
+    check_removal_only(plan, allow_removals=allow_removals)
     if dry_run:
         print("--dry-run: nothing written.")
         return plan
@@ -263,6 +289,9 @@ def parse_args(argv):
                    help=f"Target directory for Managed plists (default: {DEFAULT_LAUNCH_AGENTS})")
     p.add_argument("--dry-run", action="store_true", help="Print the plan and diffs; write nothing")
     p.add_argument("--no-load", action="store_true", help="Write plists but do not call launchctl")
+    p.add_argument("--allow-removals", action="store_true",
+                   help="Permit a plan that removes Managed jobs and creates none "
+                        "(refused by default — that is what a gutted table looks like)")
     return p.parse_args(argv)
 
 
@@ -274,7 +303,8 @@ def main(argv=None):
     agents_dir = Path(args.launch_agents_dir).expanduser() if args.launch_agents_dir else DEFAULT_LAUNCH_AGENTS
 
     try:
-        sync(brain_path, agents_dir, dry_run=args.dry_run, load=not args.no_load)
+        sync(brain_path, agents_dir, dry_run=args.dry_run, load=not args.no_load,
+             allow_removals=args.allow_removals)
     except (schedules_mod.ScheduleError, RefusedError) as exc:
         sys.exit(str(exc))
 

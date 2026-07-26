@@ -1,3 +1,5 @@
+import contextlib
+import io
 import plistlib
 import sys
 import tempfile
@@ -183,7 +185,7 @@ class TestRemovedRow(ScheduleFixture):
         (self.agents_dir / "com.thirdparty.thing.plist").write_text(UNMANAGED_PLIST)
 
         self.write_table(table(FIXED_ROW))
-        plan = self.sync()
+        plan = self.sync(allow_removals=True)
 
         self.assertEqual([i["label"] for i in plan["remove"]], ["com.test.sweep"])
         self.assertFalse((self.agents_dir / "com.test.sweep.plist").exists())
@@ -194,9 +196,69 @@ class TestRemovedRow(ScheduleFixture):
         self.write_table(table(FIXED_ROW))
         self.sync()
         self.write_table(table(FIXED_ROW.replace("| yes |", "| no |")))
-        plan = self.sync()
+        plan = self.sync(allow_removals=True)
         self.assertEqual([i["label"] for i in plan["remove"]], ["com.test.dashboard"])
         self.assertFalse((self.agents_dir / "com.test.dashboard.plist").exists())
+
+    def test_a_row_removed_alongside_a_new_one_needs_no_flag(self):
+        """A plan that creates as well as removes is a real edit, not a wipe."""
+        self.write_table(table(FIXED_ROW))
+        self.sync()
+        self.write_table(table(POLL_ROW))
+        plan = self.sync()
+        self.assertEqual([i["label"] for i in plan["remove"]], ["com.test.dashboard"])
+        self.assertEqual([i["label"] for i in plan["create"]], ["com.test.sweep"])
+
+
+class TestRemovalOnlyPlanIsRefused(ScheduleFixture):
+    """A plan that removes Jobs and creates none can only destroy live state.
+
+    It is the shape a truncated, stubbed or mis-titled table produces, so it
+    needs an explicit `--allow-removals` even when the deletion is deliberate.
+    """
+
+    def test_single_row_deletion_is_refused_without_the_flag(self):
+        self.write_table(table(FIXED_ROW, POLL_ROW))
+        self.sync()
+        self.write_table(table(FIXED_ROW))
+
+        with self.assertRaises(sync_schedules.RefusedError) as ctx:
+            self.sync()
+
+        self.assertIn("removal-only plan", str(ctx.exception))
+        self.assertIn("com.test.sweep", str(ctx.exception))
+        self.assertIn("--allow-removals", str(ctx.exception))
+        # Nothing booted out, nothing unlinked.
+        self.assertTrue((self.agents_dir / "com.test.sweep.plist").exists())
+        self.assertTrue((self.agents_dir / "com.test.dashboard.plist").exists())
+
+    def test_the_same_deletion_goes_through_with_the_flag(self):
+        self.write_table(table(FIXED_ROW, POLL_ROW))
+        self.sync()
+        self.write_table(table(FIXED_ROW))
+
+        plan = self.sync(allow_removals=True)
+
+        self.assertEqual([i["label"] for i in plan["remove"]], ["com.test.sweep"])
+        self.assertFalse((self.agents_dir / "com.test.sweep.plist").exists())
+        self.assertTrue((self.agents_dir / "com.test.dashboard.plist").exists())
+
+    def test_an_empty_but_well_formed_table_cannot_wipe_every_job(self):
+        self.write_table(table(FIXED_ROW, POLL_ROW))
+        self.sync()
+
+        self.write_table(HEADER)  # header intact, every data row deleted
+        with self.assertRaises(sync_schedules.RefusedError) as ctx:
+            self.sync()
+
+        self.assertIn("--allow-removals", str(ctx.exception))
+        self.assertTrue((self.agents_dir / "com.test.dashboard.plist").exists())
+        self.assertTrue((self.agents_dir / "com.test.sweep.plist").exists())
+
+    def test_a_create_only_plan_needs_no_flag(self):
+        self.write_table(table(FIXED_ROW))
+        plan = self.sync()
+        self.assertEqual([i["label"] for i in plan["create"]], ["com.test.dashboard"])
 
 
 class TestUnmanagedIsUntouchable(ScheduleFixture):
@@ -317,6 +379,71 @@ class TestMalformedRows(ScheduleFixture):
         self.assertIn("does not exist", str(ctx.exception))
 
 
+class TestNoTableIsNotAnEmptyTable(ScheduleFixture):
+    """A file with no readable table must raise, not parse as zero Schedules.
+
+    Zero Schedules is authoritative to both consumers — Heartbeat reports
+    nothing due, the adapter removes every Managed job — so "the table is gone"
+    can never be allowed to look like "the table is empty".
+    """
+
+    def _assert_no_table(self, text):
+        self.write_table(text)
+        with self.assertRaises(schedules.ScheduleError) as ctx:
+            schedules.parse_schedules(schedules.schedules_path(self.brain))
+        self.assertIn("no schedules table found", str(ctx.exception))
+
+    def test_prose_only_file_raises(self):
+        self._assert_no_table(
+            "# Schedules\n\nThe table used to be here. Someone deleted it.\n"
+        )
+
+    def test_zero_byte_file_raises(self):
+        self._assert_no_table("")
+
+    def test_whitespace_only_file_raises(self):
+        self._assert_no_table("\n\n   \n")
+
+    def test_lower_cased_label_column_raises(self):
+        self.write_table(
+            HEADER.replace("| Label |", "| label |") + FIXED_ROW
+        )
+        with self.assertRaises(schedules.ScheduleError) as ctx:
+            schedules.parse_schedules(schedules.schedules_path(self.brain))
+        # Found the table case-insensitively, so the diagnosis names the column.
+        self.assertIn("Label", str(ctx.exception))
+
+    def test_renamed_label_column_raises(self):
+        self._assert_no_table(
+            "| Name | Routine | Command | Kind | Timing | Enabled | Log | Env | Options |\n"
+            "|---|---|---|---|---|---|---|---|---|\n" + FIXED_ROW
+        )
+
+    def test_a_gutted_file_cannot_silently_remove_every_job(self):
+        self.write_table(table(FIXED_ROW, POLL_ROW))
+        self.sync()
+
+        self.write_table("# Schedules\n\nprose only, table gone\n")
+        with self.assertRaises(schedules.ScheduleError):
+            self.sync()
+
+        self.assertTrue((self.agents_dir / "com.test.dashboard.plist").exists())
+        self.assertTrue((self.agents_dir / "com.test.sweep.plist").exists())
+
+    def test_header_with_zero_data_rows_parses_and_does_not_raise(self):
+        """The legitimate empty table: header present, no rows. Not an error."""
+        self.write_table(HEADER)
+        self.assertEqual(schedules.parse_schedules(schedules.schedules_path(self.brain)), [])
+
+    def test_prose_above_the_table_is_still_skipped(self):
+        self.write_table(
+            "# Schedules\n\n| Column | Meaning |\n|---|---|\n| Timing | when it fires |\n\n"
+            + table(FIXED_ROW)
+        )
+        scheds = schedules.parse_schedules(schedules.schedules_path(self.brain))
+        self.assertEqual([s.label for s in scheds], ["com.test.dashboard"])
+
+
 class TestDryRun(ScheduleFixture):
     def test_dry_run_writes_nothing(self):
         self.write_table(table(FIXED_ROW, POLL_ROW))
@@ -385,6 +512,36 @@ class TestHeartbeatReadsCadenceFromSchedules(ScheduleFixture):
     def test_missing_schedules_file_is_reported_not_fatal_for_dashboard(self):
         self._routine_state(Dashboard="never")
         self.assertEqual(heartbeat.overdue_for_brain(self.brain), [])
+
+    def test_gutted_schedules_file_warns_loudly_instead_of_nothing_overdue(self):
+        """The asymmetry the Reviewer found: an absent file was loud, a gutted
+        one silent. Both must now warn."""
+        self.write_table("# Schedules\n\nprose only, table gone\n")
+        self._routine_state(Dashboard="never")
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            self.assertEqual(heartbeat.overdue_for_brain(self.brain), [])
+
+        warning = stderr.getvalue()
+        self.assertIn("No usable", warning)
+        self.assertIn("no schedules table found", warning)
+
+    def test_gutted_schedules_file_is_fatal_in_strict_mode(self):
+        self.write_table("")
+        self._routine_state(Dashboard="never")
+        with self.assertRaises(SystemExit):
+            with contextlib.redirect_stderr(io.StringIO()):
+                heartbeat.overdue_for_brain(self.brain, strict=True)
+
+    def test_empty_but_well_formed_table_still_reports_nothing_overdue_silently(self):
+        self.write_table(HEADER)
+        self._routine_state(Dashboard="never")
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            self.assertEqual(heartbeat.overdue_for_brain(self.brain), [])
+        self.assertEqual(stderr.getvalue(), "")
 
 
 class TestStarterScheduleExample(unittest.TestCase):
