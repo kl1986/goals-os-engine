@@ -101,6 +101,19 @@ class TestApplyBatch(unittest.TestCase):
             "# then: route -> areas/household/_inbox.md\n# confidence: High\n```\n"
         )
         (self.brain_path / "inbox" / "rule-diffs").mkdir(parents=True)
+        (self.brain_path / "log").mkdir()
+        (self.brain_path / "log" / "2026-07-08.md").write_text(
+            "### 14:32 — file-email\n\n- **feedback:** corrected — route to Work\n"
+        )
+        (self.brain_path / "log" / "2026-07-12.md").write_text(
+            "### 09:15 — file-email\n\n- **feedback:** corrected — route to Work\n"
+        )
+        (self.brain_path / "log" / "2026-07-09.md").write_text(
+            "### 08:00 — file-email\n\n- **feedback:** corrected — discard newsletter\n"
+        )
+        (self.brain_path / "log" / "2026-07-10.md").write_text(
+            "### 08:05 — file-email\n\n- **feedback:** corrected — discard newsletter\n"
+        )
         self.batch_path = self.brain_path / "inbox" / "rule-diffs" / "2026-07-15-routing-rules.md"
         self.now = dt.datetime(2026, 7, 15, 21, 0)
 
@@ -172,6 +185,89 @@ class TestApplyBatch(unittest.TestCase):
         self.assertIn("status: pending", text_after)
         self.assertIn("[x] (applied) Approve", text_after)
         self.assertIn("- [ ] Approve\n- [ ] Reject", text_after)  # diff 2 untouched
+
+    def test_bootstrap_raw_capture_evidence_batch_is_appendable_after_approval(self):
+        raw_dir = self.brain_path / "inbox" / "raw" / "email"
+        raw_dir.mkdir(parents=True)
+        for name in ("2026-07-01-a.md", "2026-07-02-b.md", "2026-07-03-a.md", "2026-07-04-b.md"):
+            (raw_dir / name).write_text("# Raw capture\n")
+        text = BATCH_TEXT.replace(
+            "status: pending\n---",
+            "status: pending\nevidence-basis: bootstrap-raw-captures\n---",
+        ).replace(
+            "**Evidence:** [[log/2026-07-08#14:32 — file-email]], [[log/2026-07-12#09:15 — file-email]]",
+            "**Evidence:** [[inbox/raw/email/2026-07-01-a.md]], [[inbox/raw/email/2026-07-02-b.md]]",
+        ).replace(
+            "**Evidence:** [[log/2026-07-09#08:00 — file-email]], [[log/2026-07-10#08:05 — file-email]]",
+            "**Evidence:** [[inbox/raw/email/2026-07-03-a.md]], [[inbox/raw/email/2026-07-04-b.md]]",
+        )
+        self._write_batch(self._approve_diff1_reject_diff2(text))
+
+        result = rule_diff_review.apply_batch(self.brain_path, self.batch_path, now=self.now)
+
+        self.assertEqual(result["applied"], ["1"])
+        self.assertEqual(result["rejected"], ["2"])
+        self.assertIn('contains("sonia")', (self.brain_path / "config" / "routing-rules.md").read_text())
+
+    def test_bootstrap_requires_raw_capture_evidence(self):
+        text = BATCH_TEXT.replace(
+            "status: pending\n---",
+            "status: pending\nevidence-basis: bootstrap-raw-captures\n---",
+        ).replace("- [ ] Approve\n- [ ] Reject", "- [x] Approve\n- [ ] Reject", 1)
+        self._write_batch(text)
+
+        result = rule_diff_review.apply_batch(self.brain_path, self.batch_path, now=self.now)
+
+        self.assertEqual(result["applied"], [])
+        self.assertIn("bootstrap evidence", result["errors"][0])
+
+    def test_bootstrap_requires_empty_routing_rules(self):
+        raw_dir = self.brain_path / "inbox" / "raw" / "email"
+        raw_dir.mkdir(parents=True)
+        for name in ("2026-07-01-a.md", "2026-07-02-b.md"):
+            (raw_dir / name).write_text("# Raw capture\n")
+        (self.brain_path / "config" / "routing-rules.md").write_text(
+            'if: source == "email" and contains("existing")\nthen: route -> areas/work/_inbox.md\n'
+        )
+        text = BATCH_TEXT.replace(
+            "status: pending\n---",
+            "status: pending\nevidence-basis: bootstrap-raw-captures\n---",
+        ).replace(
+            "**Evidence:** [[log/2026-07-08#14:32 — file-email]], [[log/2026-07-12#09:15 — file-email]]",
+            "**Evidence:** [[inbox/raw/email/2026-07-01-a.md]], [[inbox/raw/email/2026-07-02-b.md]]",
+        )
+        self._write_batch(text)
+
+        with self.assertRaisesRegex(rule_diff_review.RuleDiffReviewError, "empty routing-rules"):
+            rule_diff_review.apply_batch(self.brain_path, self.batch_path, now=self.now)
+
+    def test_partially_processed_bootstrap_batch_can_finish_after_first_append(self):
+        raw_dir = self.brain_path / "inbox" / "raw" / "email"
+        raw_dir.mkdir(parents=True)
+        for name in ("2026-07-01-a.md", "2026-07-02-b.md", "2026-07-03-a.md", "2026-07-04-b.md"):
+            (raw_dir / name).write_text("# Raw capture\n")
+        text = BATCH_TEXT.replace(
+            "status: pending\n---",
+            "status: pending\nevidence-basis: bootstrap-raw-captures\n---",
+        ).replace(
+            "**Evidence:** [[log/2026-07-08#14:32 — file-email]], [[log/2026-07-12#09:15 — file-email]]",
+            "**Evidence:** [[inbox/raw/email/2026-07-01-a.md]], [[inbox/raw/email/2026-07-02-b.md]]",
+        ).replace(
+            "**Evidence:** [[log/2026-07-09#08:00 — file-email]], [[log/2026-07-10#08:05 — file-email]]",
+            "**Evidence:** [[inbox/raw/email/2026-07-03-a.md]], [[inbox/raw/email/2026-07-04-b.md]]",
+        ).replace("- [ ] Approve\n- [ ] Reject", "- [x] Approve\n- [ ] Reject", 1)
+        self._write_batch(text)
+
+        first = rule_diff_review.apply_batch(self.brain_path, self.batch_path, now=self.now)
+        self.assertEqual(first["applied"], ["1"])
+        self.assertTrue(self.batch_path.exists())
+
+        text = self.batch_path.read_text().replace("- [ ] Approve\n- [ ] Reject", "- [x] Approve\n- [ ] Reject", 1)
+        self.batch_path.write_text(text)
+        second = rule_diff_review.apply_batch(self.brain_path, self.batch_path, now=self.now)
+
+        self.assertEqual(second["applied"], ["2"])
+        self.assertTrue(second["batch_resolved"])
 
     def test_rerun_after_full_resolution_does_not_duplicate_log_entries(self):
         text = self._approve_diff1_reject_diff2(BATCH_TEXT)

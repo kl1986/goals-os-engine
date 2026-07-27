@@ -34,6 +34,9 @@ CHECKBOX_RE = re.compile(
 )
 FRONTMATTER_STATUS_RE = re.compile(r'^status:\s*\S+\s*$', re.MULTILINE)
 FRONTMATTER_RULESET_RE = re.compile(r'^ruleset:\s*(\S+)\s*$', re.MULTILINE)
+FRONTMATTER_EVIDENCE_BASIS_RE = re.compile(r'^evidence-basis:\s*(\S+)\s*$', re.MULTILINE)
+ROUTING_IF_RE = re.compile(r'^if:\s*source\s*==\s*"[^"]+"', re.IGNORECASE)
+ROUTING_THEN_RE = re.compile(r'^then:\s*route\s*->\s*.+$', re.IGNORECASE)
 
 
 class RuleDiffReviewError(Exception):
@@ -112,7 +115,34 @@ def _is_processed(diff: dict) -> bool:
     return diff["approve_state"] is not None or diff["reject_state"] is not None
 
 
-def _is_malformed(diff: dict) -> str:
+def _has_live_routing_rule(target_path: Path) -> bool:
+    """Return whether a routing-rules file contains an uncommented rule.
+
+    Bootstrap evidence is intentionally only supported for the initial empty
+    routing-rules file. The reader's native DSL is an if/then pair, so this
+    stays narrow rather than trying to infer emptiness for arbitrary rule-set
+    syntaxes.
+    """
+    current_has_if = False
+    for raw_line in target_path.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if ROUTING_IF_RE.match(line):
+            current_has_if = True
+        elif current_has_if and ROUTING_THEN_RE.match(line):
+            return True
+    return False
+
+
+def _wikilink_path(brain_path: Path, link: str) -> Path:
+    """Resolve a Brain-relative wikilink target, accepting omitted `.md`."""
+    path_part = link.split("#", 1)[0]
+    path = brain_path / path_part
+    return path if path.suffix else path.with_suffix(".md")
+
+
+def _is_malformed(diff: dict, evidence_basis: str, brain_path: Path) -> str:
     """Return an error reason string, or "" if the diff is well-formed."""
     if not diff["rule_block"].strip():
         return "missing rule block"
@@ -122,6 +152,25 @@ def _is_malformed(diff: dict) -> str:
         return "fewer than 2 evidence links"
     if diff["approve_ticked"] and diff["reject_ticked"]:
         return "both Approve and Reject ticked"
+    if evidence_basis == "bootstrap-raw-captures":
+        if any(not link.startswith("inbox/raw/") for link in diff["evidence"]):
+            return "bootstrap evidence must link only to inbox/raw/ captures"
+        if any(not _wikilink_path(brain_path, link).is_file() for link in diff["evidence"]):
+            return "bootstrap evidence links a Raw Capture that does not exist"
+    elif evidence_basis == "corrections":
+        if any(not link.startswith("log/") for link in diff["evidence"]):
+            return "normal evidence must link only to Action Log corrections"
+        for link in diff["evidence"]:
+            _, separator, heading = link.partition("#")
+            log_path = _wikilink_path(brain_path, link)
+            if not separator or not heading or not log_path.is_file():
+                return "normal evidence links an Action Log correction that does not exist"
+            entry = log_path.read_text().split(f"### {heading}", 1)
+            if len(entry) != 2:
+                return "normal evidence links an Action Log correction that does not exist"
+            entry_body = entry[1].split("\n### ", 1)[0]
+            if not re.search(r'^- \*\*feedback:\*\* corrected\s+—\s+.+$', entry_body, re.MULTILINE):
+                return "normal evidence must link to an Action Log correction"
     return ""
 
 
@@ -174,8 +223,19 @@ def apply_batch(brain_path: Path, batch_path: Path, now: dt.datetime = None) -> 
         raise RuleDiffReviewError(f"Batch file missing 'ruleset:' frontmatter: {batch_path}")
     ruleset = ruleset_match.group(1)
     target_path = brain_path / "config" / f"{ruleset}.md"
-
+    evidence_basis_match = FRONTMATTER_EVIDENCE_BASIS_RE.search(text)
+    evidence_basis = evidence_basis_match.group(1) if evidence_basis_match else "corrections"
     diffs = parse_batch(text)
+    if evidence_basis not in {"corrections", "bootstrap-raw-captures"}:
+        raise RuleDiffReviewError(f"Unknown evidence basis: {evidence_basis}")
+    if evidence_basis == "bootstrap-raw-captures":
+        if ruleset != "routing-rules":
+            raise RuleDiffReviewError("Bootstrap raw-capture evidence is only supported for routing-rules")
+        if not target_path.exists():
+            raise RuleDiffReviewError(f"Target rule-set file does not exist: {target_path}")
+        if _has_live_routing_rule(target_path) and not any(_is_processed(diff) for diff in diffs):
+            raise RuleDiffReviewError("Bootstrap raw-capture evidence requires an empty routing-rules.md")
+
     applied, rejected, errors = [], [], []
     replacements = []  # (start, end, new_text) — applied back-to-front so offsets stay valid
 
@@ -185,7 +245,7 @@ def apply_batch(brain_path: Path, batch_path: Path, now: dt.datetime = None) -> 
         if not _is_decided(diff):
             continue  # still undecided — leave it for a future run
 
-        reason = _is_malformed(diff)
+        reason = _is_malformed(diff, evidence_basis, brain_path)
         if reason:
             errors.append(f"Diff {diff['n']}: {reason} — refusing to process.")
             continue
