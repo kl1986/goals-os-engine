@@ -29,7 +29,7 @@ WHY_RE = re.compile(r'^\*\*Why:\*\*\s*(.+)$', re.MULTILINE)
 EVIDENCE_LINE_RE = re.compile(r'^\*\*Evidence:\*\*\s*(.+)$', re.MULTILINE)
 EVIDENCE_LINK_RE = re.compile(r'\[\[([^\]]+)\]\]')
 CHECKBOX_RE = re.compile(
-    r'^-\s*\[(?P<mark>[ xX])\]\s*(?:\((?P<state>applied|logged)\)\s*)?(?P<label>Approve|Reject)\s*$',
+    r'^-[ \t]*\[(?P<mark>[ xX])\][ \t]*(?:\((?P<state>applied|logged)\)[ \t]*)?(?P<label>Approve|Reject)[ \t]*$',
     re.MULTILINE,
 )
 FRONTMATTER_STATUS_RE = re.compile(r'^status:\s*\S+\s*$', re.MULTILINE)

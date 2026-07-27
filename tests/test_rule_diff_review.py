@@ -171,6 +171,7 @@ class TestApplyBatch(unittest.TestCase):
         self.assertIn("status: resolved", archived_text)
         self.assertIn("[x] (applied) Approve", archived_text)
         self.assertIn("[x] (logged) Reject", archived_text)
+        self.assertNotIn("Reject###", archived_text)
 
     def test_one_decided_one_undecided_stays_pending_but_processes_the_decided_one(self):
         text = BATCH_TEXT.replace("- [ ] Approve\n- [ ] Reject", "- [x] Approve\n- [ ] Reject", 1)
@@ -185,6 +186,19 @@ class TestApplyBatch(unittest.TestCase):
         self.assertIn("status: pending", text_after)
         self.assertIn("[x] (applied) Approve", text_after)
         self.assertIn("- [ ] Approve\n- [ ] Reject", text_after)  # diff 2 untouched
+
+    def test_reject_marker_preserves_the_following_diff_heading(self):
+        text = BATCH_TEXT.replace("- [ ] Approve\n- [ ] Reject", "- [ ] Approve\n- [x] Reject", 1)
+        next_box = text.find("- [ ] Approve\n- [ ] Reject")
+        text = text[:next_box] + "- [x] Approve\n- [ ] Reject" + text[next_box + len("- [ ] Approve\n- [ ] Reject"):]
+        self._write_batch(text)
+
+        result = rule_diff_review.apply_batch(self.brain_path, self.batch_path, now=self.now)
+
+        self.assertEqual(result["rejected"], ["1"])
+        self.assertEqual(result["applied"], ["2"])
+        archived_text = result["archived_to"].read_text()
+        self.assertIn("- [x] (logged) Reject\n\n### Diff 2", archived_text)
 
     def test_bootstrap_raw_capture_evidence_batch_is_appendable_after_approval(self):
         raw_dir = self.brain_path / "inbox" / "raw" / "email"
