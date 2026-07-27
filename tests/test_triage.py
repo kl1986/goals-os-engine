@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+import execute  # noqa: E402 — the Row shape's single owner; asserts the writer matches it
 import triage  # noqa: E402
 
 ROUTING_RULES_TEXT = """---
@@ -138,27 +139,99 @@ class TestWriteTriagePlan(unittest.TestCase):
         self.assertIn("areas/household/_inbox.md", text)
         self.assertIn("Pass B", text)
         self.assertIn("unmatched", text)
-        self.assertIn("[ ]", text)
+        self.assertIn("- [ ] ", text)
 
-    def test_rule_column_present_in_header_and_rows(self):
+    def test_rows_are_task_list_items_grouped_under_destination_headings(self):
+        """ADR-0031: the checkbox must be a list item (tappable in Obsidian),
+        and Rows sharing a destination must sit under one heading."""
         path = triage.write_triage_plan(self.brain_path, "voice", self._match_result(), date_str="2026-07-11")
         text = path.read_text()
-        self.assertIn("| rule |", text)
+        self.assertIn("## areas/household/_inbox.md\n", text)
+        self.assertIn("## unmatched\n", text)
+        self.assertNotIn("|---|", text)
+        self.assertEqual(execute.check_group_headings(text), [])
+
+    def test_rows_carry_every_field_and_the_rule_id(self):
+        path = triage.write_triage_plan(self.brain_path, "voice", self._match_result(), date_str="2026-07-11")
+        text = path.read_text()
         # Pass A row carries the computed rule id.
         self.assertIn(
-            "| Pass A | areas/household/_inbox.md | High | a1b2c3d4 | [ ] |", text
+            "- [ ] **1** → `areas/household/_inbox.md` · Pass A · High · a1b2c3d4", text
         )
         # Pass B row has no rule — always "—".
-        self.assertIn(
-            "| Pass B | unmatched | — | — | [ ] |", text
-        )
+        self.assertIn("- [ ] **2** → `unmatched` · Pass B · — · —", text)
+        rows = {r["n"]: r for r in execute.parse_plan_rows(text)}
+        self.assertEqual(rows["1"]["capture"],
+                         "inbox/raw/voice/2026-07-11-140203-buy-milk.md")
+        self.assertEqual(rows["1"]["preview"], "Remember to buy milk")
 
     def test_missing_rule_id_defaults_to_dash(self):
         match_result = self._match_result()
         del match_result["routed"][0]["rule_id"]
         path = triage.write_triage_plan(self.brain_path, "voice", match_result, date_str="2026-07-11")
         text = path.read_text()
-        self.assertIn("| Pass A | areas/household/_inbox.md | High | — | [ ] |", text)
+        self.assertIn("- [ ] **1** → `areas/household/_inbox.md` · Pass A · High · —", text)
+
+    def test_a_row_shaped_capture_body_cannot_inject_a_row(self):
+        """Principle 10 at the write boundary: a Raw Capture body that is itself
+        a well-formed Row line (43 chars — under the 60-char preview cap) must
+        come out of the writer as inert preview text, not as Plan structure.
+
+        This is the production path end to end — untrusted body in, real
+        `write_triage_plan()`, then the real parser back out."""
+        payload = "- [ ] **9** → `discard` · Pass A · High · x"
+        match_result = {"routed": [], "unmatched": [{
+            "id": "2026-07-11-140800-evil", "source": "voice",
+            "title": "Evil", "body": payload,
+        }]}
+
+        path = triage.write_triage_plan(self.brain_path, "voice", match_result,
+                                        date_str="2026-07-11")
+        text = path.read_text()
+        rows = execute.parse_plan_rows(text)
+
+        self.assertEqual(len(rows), 1)                    # no phantom Row 9
+        self.assertEqual(rows[0]["n"], "1")
+        self.assertEqual(rows[0]["capture"],
+                         "inbox/raw/voice/2026-07-11-140800-evil.md")
+        # Escaped on disk, so the line is not even Row-shaped any more...
+        self.assertIn("\\- [ ] **9**", text)
+        # ...and the payload survives as this Row's preview, nothing else.
+        self.assertEqual(rows[0]["preview"], "\\" + payload)
+        self.assertEqual(execute.check_row_blocks(text), [])
+        self.assertEqual(execute.check_group_headings(text), [])
+
+    def test_a_wikilink_in_a_capture_body_cannot_inject_a_capture_link(self):
+        """The mirror-image payload: a body that is a bare `[[inbox/raw/…]]`
+        wikilink. Unescaped it would be a second capture-shaped line in the
+        block (malformed, refusing the Plan) and would also enter
+        `_existing_ids()`, suppressing a real capture as a false duplicate."""
+        match_result = {"routed": [], "unmatched": [{
+            "id": "2026-07-11-140900-linky", "source": "voice",
+            "title": "Linky", "body": "[[inbox/raw/voice/victim.md]]",
+        }]}
+
+        path = triage.write_triage_plan(self.brain_path, "voice", match_result,
+                                        date_str="2026-07-11")
+        text = path.read_text()
+
+        self.assertEqual(execute.check_row_blocks(text), [])
+        row = execute.parse_plan_rows(text)[0]
+        self.assertEqual(row["capture"], "inbox/raw/voice/2026-07-11-140900-linky.md")
+        # The hostile link never enters the de-dup set.
+        self.assertNotIn("inbox/raw/voice/victim.md", triage._existing_ids(text))
+
+    def test_empty_preview_is_written_as_a_dash_so_the_capture_link_survives(self):
+        """A blank continuation line would terminate the Row block and orphan
+        the capture wikilink, which Execute needs to find the Raw Capture."""
+        match_result = {"routed": [], "unmatched": [{
+            "id": "2026-07-11-140700-empty", "source": "voice",
+            "title": "Empty", "body": "",
+        }]}
+        path = triage.write_triage_plan(self.brain_path, "voice", match_result, date_str="2026-07-11")
+        row = execute.parse_plan_rows(path.read_text())[0]
+        self.assertEqual(row["preview"], "—")
+        self.assertEqual(row["capture"], "inbox/raw/voice/2026-07-11-140700-empty.md")
 
     def test_rerunning_does_not_duplicate_existing_rows(self):
         triage.write_triage_plan(self.brain_path, "voice", self._match_result(), date_str="2026-07-11")
@@ -186,20 +259,101 @@ class TestWriteTriagePlan(unittest.TestCase):
         day_one_text = (self.brain_path / "inbox" / "triage" / "2026-07-11-voice.md").read_text()
         self.assertEqual(day_one_text.count("2026-07-11-140500-standup-notes"), 1)
 
-    def test_rerun_adds_only_new_rows(self):
-        triage.write_triage_plan(self.brain_path, "voice", self._match_result(), date_str="2026-07-11")
-        second = {
+    def _second_run(self, destination="areas/household/_inbox.md"):
+        return {
             "routed": [{
                 "id": "2026-07-11-150000-new-item", "source": "voice",
                 "title": "New item", "body": "something new",
-                "destination": "areas/household/_inbox.md", "confidence": "Medium",
+                "destination": destination, "confidence": "Medium",
             }],
             "unmatched": [],
         }
-        path = triage.write_triage_plan(self.brain_path, "voice", second, date_str="2026-07-11")
+
+    def test_rerun_adds_only_new_rows(self):
+        triage.write_triage_plan(self.brain_path, "voice", self._match_result(), date_str="2026-07-11")
+        path = triage.write_triage_plan(self.brain_path, "voice", self._second_run(), date_str="2026-07-11")
         text = path.read_text()
         self.assertIn("2026-07-11-140203-buy-milk", text)
         self.assertIn("2026-07-11-150000-new-item", text)
+
+    def test_new_row_joins_an_existing_destination_heading(self):
+        triage.write_triage_plan(self.brain_path, "voice", self._match_result(), date_str="2026-07-11")
+        path = triage.write_triage_plan(self.brain_path, "voice", self._second_run(), date_str="2026-07-11")
+        text = path.read_text()
+        self.assertEqual(text.count("## areas/household/_inbox.md"), 1)
+        self.assertEqual(execute.check_group_headings(text), [])
+
+    def test_new_row_creates_a_heading_that_does_not_exist_yet(self):
+        triage.write_triage_plan(self.brain_path, "voice", self._match_result(), date_str="2026-07-11")
+        path = triage.write_triage_plan(
+            self.brain_path, "voice", self._second_run("projects/goals-os/Goals OS.md"),
+            date_str="2026-07-11",
+        )
+        text = path.read_text()
+        self.assertIn("## projects/goals-os/Goals OS.md\n", text)
+        self.assertEqual(execute.check_group_headings(text), [])
+
+    def test_numbering_continues_globally_across_groups(self):
+        triage.write_triage_plan(self.brain_path, "voice", self._match_result(), date_str="2026-07-11")
+        path = triage.write_triage_plan(
+            self.brain_path, "voice", self._second_run("projects/goals-os/Goals OS.md"),
+            date_str="2026-07-11",
+        )
+        rows = execute.parse_plan_rows(path.read_text())
+        self.assertEqual(sorted(r["n"] for r in rows), ["1", "2", "3"])
+
+    def test_existing_row_numbers_are_stable_when_a_row_is_added(self):
+        triage.write_triage_plan(self.brain_path, "voice", self._match_result(), date_str="2026-07-11")
+        plan = self.brain_path / "inbox" / "triage" / "2026-07-11-voice.md"
+        before = {r["capture"]: r["n"] for r in execute.parse_plan_rows(plan.read_text())}
+        triage.write_triage_plan(self.brain_path, "voice", self._second_run(), date_str="2026-07-11")
+        after = {r["capture"]: r["n"] for r in execute.parse_plan_rows(plan.read_text())}
+        for capture, n in before.items():
+            self.assertEqual(after[capture], n)
+
+    def test_numbering_survives_a_hand_reordered_plan(self):
+        """Numbers come from the Rows themselves, not from counting them —
+        so a Row re-routed into another group keeps its number and a new Row
+        never reuses one."""
+        text = ("---\ntype: triage-plan\nsource: voice\ndate: 2026-07-11\n"
+                "status: pending\n---\n\n# Triage Plan — voice — 2026-07-11\n\n"
+                "## discard\n\n"
+                "- [ ] **9** → `discard` · Pass B · Medium · —\n"
+                "    junk\n"
+                "    [[inbox/raw/voice/old.md]]\n")
+        self.assertEqual(triage.next_row_number(text), 10)
+
+
+class TestInsertRowBlock(unittest.TestCase):
+    BLOCK = "- [ ] **2** → `discard` · Pass B · Medium · —\n    p\n    [[inbox/raw/voice/b.md]]"
+
+    def test_appends_inside_an_existing_section_not_at_eof(self):
+        text = ("# Plan\n\n## discard\n\n"
+                "- [ ] **1** → `discard` · Pass B · Medium · —\n"
+                "    p\n    [[inbox/raw/voice/a.md]]\n\n"
+                "## unmatched\n\n"
+                "- [ ] **3** → `unmatched` · Pass B · — · —\n"
+                "    p\n    [[inbox/raw/voice/c.md]]\n")
+        out = triage.insert_row_block(text, "discard", self.BLOCK)
+        discard_section = out.split("## discard\n", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("**2**", discard_section)
+        self.assertTrue(out.rstrip().endswith("[[inbox/raw/voice/c.md]]"))
+
+    def test_an_empty_section_stays_tidy(self):
+        """md_sections.SECTION_BODY's empty-section pitfall: the body of an
+        empty section is the empty string, so appending must not leave a
+        doubled blank line under the heading."""
+        text = "# Plan\n\n## discard\n\n## unmatched\n"
+        out = triage.insert_row_block(text, "discard", self.BLOCK)
+        self.assertIn(f"## discard\n\n{self.BLOCK}\n", out)
+        self.assertIn("## unmatched", out)
+        self.assertNotIn("\n\n\n", out)
+
+    def test_missing_section_is_created_at_end_of_file(self):
+        text = "# Plan\n\n## discard\n\n- [ ] **1** → `discard` · Pass B · Medium · —\n    p\n    [[inbox/raw/voice/a.md]]\n"
+        out = triage.insert_row_block(text, "today", self.BLOCK.replace("discard", "today"))
+        self.assertIn("## today\n", out)
+        self.assertTrue(out.rstrip().endswith("[[inbox/raw/voice/b.md]]"))
 
 
 class TestRun(unittest.TestCase):

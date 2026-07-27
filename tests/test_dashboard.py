@@ -295,9 +295,11 @@ class TestWriteDashboard(unittest.TestCase):
         (self.brain_path / "inbox" / "triage").mkdir(parents=True)
         (self.brain_path / "inbox" / "triage" / "2026-07-11-voice.md").write_text(
             "---\ntype: triage-plan\nsource: voice\ndate: 2026-07-11\nstatus: pending\n---\n\n"
-            "| # | capture | preview | route | destination | confidence | approve |\n"
-            "|---|---|---|---|---|---|---|\n"
-            "| 1 | [[inbox/raw/voice/x.md]] | preview | Pass A | areas/household/_inbox.md | High | [ ] |\n"
+            "# Triage Plan — voice — 2026-07-11\n\n"
+            "## areas/household/_inbox.md\n\n"
+            "- [ ] **1** → `areas/household/_inbox.md` · Pass A · High · a1b2c3d4\n"
+            "    preview\n"
+            "    [[inbox/raw/voice/x.md]]\n"
         )
         (self.brain_path / "inbox" / "rule-diffs").mkdir(parents=True)
         (self.brain_path / "inbox" / "rule-diffs" / "2026-07-11-routing-rules.md").write_text(
@@ -481,3 +483,36 @@ class TestOpenProposedItems(unittest.TestCase):
         self._write_note("2026-07-25 One.md", "# One\n\n## Proposed\n- [ ] a\n")
         data = dashboard.compute_dashboard_data(self.brain_path)
         self.assertIn("1 proposed item (", dashboard.render_dashboard(data))
+
+
+class TestPendingPlanSummary(unittest.TestCase):
+    """The ticked/pending split the Dashboard shows, read straight off a
+    Plan in the ADR-0031 task-list shape via `execute.parse_plan_rows`."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.plan = Path(self._tmp.name) / "2026-07-27-email.md"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _row(self, n, dest, approve):
+        tick, marker = approve[:3], approve[4:]
+        suffix = f" {marker}" if marker else ""
+        return (f"- {tick} **{n}** → `{dest}` · Pass B · Medium · —{suffix}\n"
+                f"    preview\n"
+                f"    [[inbox/raw/email/cap-{n}.md]]\n\n")
+
+    def test_counts_ticked_and_pending_rows(self):
+        self.plan.write_text(
+            "---\ntype: triage-plan\nsource: email\ndate: 2026-07-27\n"
+            "status: pending\n---\n\n# Triage Plan — email — 2026-07-27\n\n"
+            "## discard\n\n"
+            + self._row(1, "discard", "[ ]")
+            + self._row(2, "discard", "[x]")
+            + self._row(3, "discard", "[x] (done)")
+        )
+        summary = dashboard._pending_plan_summary(self.plan)
+        self.assertEqual(summary["total"], 3)
+        self.assertEqual(summary["ticked"], 2)
+        self.assertEqual(summary["pending"], 1)

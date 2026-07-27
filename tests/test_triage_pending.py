@@ -11,21 +11,23 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import triage_pending as tp  # noqa: E402
 
-HEADER = (
-    "| # | capture | preview | route | destination | confidence | rule | approve |\n"
-    "|---|---|---|---|---|---|---|---|\n"
-)
-
 
 def row(n, dest="unmatched", approve="[ ]", route="Pass B"):
-    return (f"| {n} | [[inbox/raw/email/cap-{n}.md]] | preview… | {route} | "
-            f"{dest} | — | — | {approve} |\n")
+    """A Row in the ADR-0031 task-list shape, with its own heading — the nudge
+    reads Rows line-locally, so the heading is only here to keep the fixture
+    honest about what a real Plan looks like."""
+    tick, marker = approve[:3], approve[4:]
+    suffix = f" {marker}" if marker else ""
+    return (f"## {dest}\n\n"
+            f"- {tick} **{n}** → `{dest}` · {route} · — · —{suffix}\n"
+            f"    preview…\n"
+            f"    [[inbox/raw/email/cap-{n}.md]]\n\n")
 
 
 def plan(rows, status="pending", source="email", date="2026-07-23"):
     return (f"---\ntype: triage-plan\nsource: {source}\ndate: {date}\n"
             f"status: {status}\n---\n\n# Triage Plan — {source} — {date}\n\n"
-            + HEADER + "".join(rows))
+            + "".join(rows))
 
 
 class TriageDirFixture(unittest.TestCase):
@@ -99,7 +101,7 @@ class TestCounting(TriageDirFixture):
 
     def test_a_plan_with_no_status_key_counts_as_open(self):
         text = ("---\ntype: triage-plan\nsource: email\n---\n\n# Triage Plan\n\n"
-                + HEADER + row(1))
+                + row(1))
         self.write("2026-07-23-email.md", text)
         self.assertEqual(self.scan()["awaiting_pass_b"], 1)
 
@@ -146,7 +148,7 @@ class TestSharedParser(TriageDirFixture):
         disagreeing about what a row is — a row execute.py cannot parse must
         not be silently counted as pending here."""
         self.write("2026-07-23-email.md", plan([row(1)]) +
-                   "| 2 | not-a-wikilink | x | Pass B | unmatched | — | — | [ ] |\n")
+                   "- [ ] 2 -> unmatched, Pass B\n    [[inbox/raw/email/cap-2.md]]\n")
         self.assertEqual(self.scan()["awaiting_pass_b"], 1)
 
 

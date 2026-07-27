@@ -19,7 +19,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import execute  # noqa: E402 — reuses ROW_RE so the writer and the parser cannot drift
 import heartbeat  # noqa: E402
+import md_sections  # noqa: E402
 
 IF_RE = re.compile(
     r'^if:\s*source\s*==\s*"([^"]+)"(?:\s+and\s+contains\("([^"]+)"\))?\s*$', re.IGNORECASE
@@ -27,7 +29,25 @@ IF_RE = re.compile(
 THEN_RE = re.compile(r'^then:\s*route\s*->\s*(.+?)\s*$', re.IGNORECASE)
 CONFIDENCE_RE = re.compile(r'^confidence:\s*(High|Medium|Low)\s*$', re.IGNORECASE)
 
-TRIAGE_PLAN_HEADER = ["#", "capture", "preview", "route", "destination", "confidence", "rule", "approve"]
+# Continuation lines of a Row's task line. Four spaces, not the six that would
+# align under the checkbox text: a list item's content column here is 2, so six
+# spaces is exactly the indented-code-block threshold inside the item. CommonMark
+# says indented code cannot interrupt a paragraph, so six would in fact render as
+# text today — but only for as long as the continuation lines stay glued to the
+# task line. One hand-inserted blank line and the capture wikilink would silently
+# become a code block, unclickable, in the very file this change exists to make
+# tappable. Four spaces is unambiguously item content under every reading.
+ROW_INDENT = " " * 4
+
+PLAN_PREAMBLE = (
+    "---\n"
+    "type: triage-plan\n"
+    "source: {source}\n"
+    "date: {date}\n"
+    "status: pending\n"
+    "---\n\n"
+    "# Triage Plan — {source} — {date}\n"
+)
 
 
 def compute_rule_id(rule: dict) -> str:
@@ -143,8 +163,32 @@ def read_captures(brain_path: Path, source: str) -> list:
 
 
 def _sanitize(text: str) -> str:
-    """Keep a table cell on one line and pipe-safe."""
-    return text.replace("\n", " ").replace("|", "/").strip()
+    """Keep a preview on one line, and structurally inert.
+
+    A preview is 60 characters of an *untrusted* capture's own body (PRD
+    Principle 10), written into a Plan as its own line. Two markdown escapes
+    stop that text from becoming Plan structure rather than content:
+
+    - a leading `- ` is escaped, so the line cannot be shaped like a Row. A body
+      of ``- [ ] **9** → `discard` · Pass A · High · x`` fits inside the 60-char
+      cap and is otherwise a well-formed Row line;
+    - `[[` is escaped, so the line cannot be shaped like a capture wikilink, and
+      cannot inject a link into the Plan at all. This also keeps a hostile body
+      out of `_existing_ids()`, which scans the whole Plan for
+      `[[inbox/raw/…]]` — an unescaped one in a preview would suppress a real
+      capture's Row as an apparent duplicate.
+
+    Both render as the literal characters in Obsidian, so the preview reads
+    unchanged. This closes the production path only; `execute._parse_blocks`
+    is what makes the same text inert in a hand-edited or already-written Plan.
+
+    The pipe replacement predates ADR-0031 (previews used to be table cells) and
+    is kept: it costs nothing and a stray pipe in a preview is still noise."""
+    cleaned = text.replace("\n", " ").replace("|", "/").strip()
+    cleaned = cleaned.replace("[[", "\\[\\[")
+    if cleaned.startswith("- "):
+        cleaned = "\\" + cleaned
+    return cleaned
 
 
 def _preview(body: str, length: int = 60) -> str:
@@ -177,11 +221,72 @@ def _row_id(capture: dict) -> str:
     return capture.get("path", f"inbox/raw/{capture['source']}/{capture['id']}.md")
 
 
-def _build_row(n: int, capture: dict, route: str, destination: str, confidence: str, rule: str = "—") -> str:
+def build_row_block(n: int, capture_link: str, preview: str, route: str,
+                    destination: str, confidence: str, rule: str = "—") -> str:
+    """One Row as a markdown task-list item plus its continuation lines.
+
+    Field set and ordering are the contract (ADR-0031): the checkbox and the
+    global row number first, then the destination — the two things being
+    approved — with route/confidence/rule after them, and the long fields
+    (preview, then the capture wikilink) demoted to continuation lines so a
+    phone-width viewport still shows the checkbox and the destination.
+
+    The capture wikilink is always the last line, and there are always exactly
+    two continuation lines: `execute._read_block` requires that arity, which is
+    what makes a Row block unambiguous rather than a positional guess. An empty
+    preview is written as `—` rather than an empty line, both because a blank
+    line would terminate the block and orphan the capture link, and because a
+    one-line block is malformed by that same rule."""
     return (
-        f"| {n} | [[{_row_id(capture)}]] | {_preview(capture.get('body', ''))} "
-        f"| {route} | {destination} | {confidence} | {rule} | [ ] |"
+        f"- [ ] **{n}** → `{destination}` · {route} · {confidence or '—'} · {rule or '—'}\n"
+        f"{ROW_INDENT}{preview or '—'}\n"
+        f"{ROW_INDENT}[[{capture_link}]]"
     )
+
+
+def _build_row(n: int, capture: dict, route: str, destination: str, confidence: str, rule: str = "—") -> str:
+    return build_row_block(
+        n, _row_id(capture), _preview(capture.get("body", "")),
+        route, destination, confidence, rule,
+    )
+
+
+def next_row_number(text: str) -> int:
+    """One past the highest row number already in the Plan.
+
+    Derived from the row numbers themselves, not from counting rows: numbering
+    is global across the destination groups and must stay stable, so a Row
+    keeps its number when it is re-routed into a different group and a new Row
+    never reuses a number just because the groups are unevenly filled."""
+    numbers = [
+        int(m.group("n"))
+        for m in (execute.ROW_RE.match(line) for line in text.splitlines())
+        if m
+    ]
+    return max(numbers, default=0) + 1
+
+
+def insert_row_block(text: str, destination: str, block: str) -> str:
+    """Insert `block` at the end of the `## {destination}` section, creating
+    that heading at end-of-file when it does not exist yet.
+
+    Reuses `md_sections.SECTION_BODY` rather than re-deriving the pattern —
+    read its docstring: the body of an *empty* section is the empty string, and
+    appending to it needs the blank-line handling below rather than a
+    `rstrip` + `\\n\\n` that would leave a doubled blank line under the
+    heading."""
+    pattern = re.compile(
+        md_sections.SECTION_BODY.format(re.escape(destination)), re.MULTILINE | re.DOTALL
+    )
+    match = pattern.search(text)
+    if not match:
+        return f"{text.rstrip(chr(10))}\n\n## {destination}\n\n{block}\n"
+    body = match.group(1)
+    if not body.strip():
+        new_body = f"\n{block}\n"
+    else:
+        new_body = f"{body.rstrip(chr(10))}\n\n{block}\n"
+    return text[:match.start(1)] + new_body + text[match.end(1):]
 
 
 def write_triage_plan(brain_path: Path, source: str, match_result: dict, date_str: str = None) -> Path:
@@ -191,7 +296,10 @@ def write_triage_plan(brain_path: Path, source: str, match_result: dict, date_st
     this source (by Raw Capture path) is left untouched — its row,
     tick-state, and any Pass-B edits survive a re-run, and it never gets
     a second row just because Triage runs again on a later day while it's
-    still un-executed. Only genuinely new captures get appended.
+    still un-executed. Only genuinely new captures get added.
+
+    A new Row is inserted under its own `## <destination>` heading (created if
+    absent), not appended at end-of-file — see ADR-0031 and `insert_row_block`.
     """
     date_str = date_str or dt.datetime.now().strftime("%Y-%m-%d")
     triage_dir = brain_path / "inbox" / "triage"
@@ -199,48 +307,35 @@ def write_triage_plan(brain_path: Path, source: str, match_result: dict, date_st
     plan_path = triage_dir / f"{date_str}-{source}.md"
 
     already_present = _already_triaged(triage_dir, source)
-    existing_text = plan_path.read_text() if plan_path.exists() else ""
+    plan_exists = plan_path.exists()
+    text = plan_path.read_text() if plan_exists else PLAN_PREAMBLE.format(
+        source=source, date=date_str
+    )
 
-    new_rows = []
-    if plan_path.exists():
-        row_count = len(re.findall(r'^\|\s*\d+\s*\|', existing_text, re.MULTILINE))
-    else:
-        row_count = 0
+    n = next_row_number(text)
+    added = 0
+    pending = [
+        (c, "Pass A", c["destination"], c["confidence"], c.get("rule_id", "—"))
+        for c in match_result.get("routed", [])
+    ] + [
+        (c, "Pass B", "unmatched", "—", "—")
+        for c in match_result.get("unmatched", [])
+    ]
 
-    for capture in match_result.get("routed", []):
+    for capture, route, destination, confidence, rule in pending:
         if _row_id(capture) in already_present:
             continue
-        row_count += 1
-        new_rows.append(_build_row(
-            row_count, capture, "Pass A", capture["destination"], capture["confidence"],
-            capture.get("rule_id", "—"),
-        ))
-
-    for capture in match_result.get("unmatched", []):
-        if _row_id(capture) in already_present:
-            continue
-        row_count += 1
-        new_rows.append(_build_row(row_count, capture, "Pass B", "unmatched", "—", "—"))
-
-    if not plan_path.exists():
-        if not new_rows:
-            return plan_path  # nothing new (already tracked elsewhere) — don't create an empty stub
-        header = (
-            "---\n"
-            "type: triage-plan\n"
-            f"source: {source}\n"
-            f"date: {date_str}\n"
-            "status: pending\n"
-            "---\n\n"
-            f"# Triage Plan — {source} — {date_str}\n\n"
-            f"| {' | '.join(TRIAGE_PLAN_HEADER)} |\n"
-            f"|{'---|' * len(TRIAGE_PLAN_HEADER)}\n"
+        text = insert_row_block(
+            text, destination,
+            _build_row(n, capture, route, destination, confidence, rule),
         )
-        plan_path.write_text(header + "\n".join(new_rows) + "\n")
-    elif new_rows:
-        with plan_path.open("a") as f:
-            f.write("\n".join(new_rows) + "\n")
+        n += 1
+        added += 1
 
+    if not added:
+        return plan_path  # nothing new — never create an empty stub, never rewrite
+
+    plan_path.write_text(text)
     return plan_path
 
 

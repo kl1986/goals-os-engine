@@ -1,3 +1,4 @@
+import copy
 import datetime as dt
 import sys
 import tempfile
@@ -7,21 +8,58 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 import execute  # noqa: E402
 
-PLAN_TEXT = """---
-type: triage-plan
-source: voice
-date: 2026-07-11
-status: pending
----
 
-# Triage Plan — voice — 2026-07-11
+def row_block(n, capture, preview, route, destination, confidence,
+              rule="—", approve="[ ]"):
+    """One Row in the ADR-0031 shape: task line + preview + capture wikilink."""
+    tick, marker = approve[:3], approve[4:]  # "[x] (done)" -> "[x]", "(done)"
+    suffix = f" {marker}" if marker else ""
+    return (
+        f"- {tick} **{n}** → `{destination}` · {route} · {confidence} · {rule}{suffix}\n"
+        f"    {preview}\n"
+        f"    [[{capture}]]"
+    )
 
-| # | capture | preview | route | destination | confidence | rule | approve |
-|---|---|---|---|---|---|---|---|
-| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | areas/household/_inbox.md | High | a1b2c3d4 | [x] |
-| 2 | [[inbox/raw/voice/2026-07-11-140500-junk.md]] | not worth keeping | Pass B | discard | Medium | — | [x] |
-| 3 | [[inbox/raw/voice/2026-07-11-140600-later.md]] | deal with this later | Pass B | areas/household/_inbox.md | Medium | — | [ ] |
-"""
+
+def plan_text(rows, source, date, status="pending"):
+    """A whole Plan: Rows grouped under `## <destination>` headings, in the
+    order each destination first appears."""
+    grouped = {}
+    for r in rows:
+        grouped.setdefault(r["destination"], []).append(r)
+    body = "\n".join(
+        f"## {destination}\n\n" + "\n\n".join(row_block(**r) for r in group) + "\n"
+        for destination, group in grouped.items()
+    )
+    return (
+        f"---\ntype: triage-plan\nsource: {source}\ndate: {date}\n"
+        f"status: {status}\n---\n\n"
+        f"# Triage Plan — {source} — {date}\n\n" + body
+    )
+
+
+def with_row(rows, n, **changes):
+    """A copy of `rows` with row `n`'s fields overridden."""
+    updated = copy.deepcopy(rows)
+    for r in updated:
+        if r["n"] == n:
+            r.update(changes)
+    return updated
+
+
+PLAN_ROWS = [
+    dict(n=1, capture="inbox/raw/voice/2026-07-11-140203-buy-milk.md",
+         preview="Remember to buy milk", route="Pass A",
+         destination="areas/household/_inbox.md", confidence="High",
+         rule="a1b2c3d4", approve="[x]"),
+    dict(n=2, capture="inbox/raw/voice/2026-07-11-140500-junk.md",
+         preview="not worth keeping", route="Pass B", destination="discard",
+         confidence="Medium", approve="[x]"),
+    dict(n=3, capture="inbox/raw/voice/2026-07-11-140600-later.md",
+         preview="deal with this later", route="Pass B",
+         destination="areas/household/_inbox.md", confidence="Medium"),
+]
+PLAN_TEXT = plan_text(PLAN_ROWS, "voice", "2026-07-11")
 
 
 class TestActionTypeFor(unittest.TestCase):
@@ -69,25 +107,154 @@ class TestSplitDestination(unittest.TestCase):
 
 
 class TestParsePlanRows(unittest.TestCase):
+    def _by_number(self, text):
+        return {r["n"]: r for r in execute.parse_plan_rows(text)}
+
     def test_parses_all_three_rows(self):
-        rows = execute.parse_plan_rows(PLAN_TEXT)
+        rows = self._by_number(PLAN_TEXT)
         self.assertEqual(len(rows), 3)
-        self.assertEqual(rows[0]["approve"], "[x]")
-        self.assertEqual(rows[2]["approve"], "[ ]")
+        self.assertEqual(rows["1"]["approve"], "[x]")
+        self.assertEqual(rows["3"]["approve"], "[ ]")
 
     def test_parses_dispatched_and_done_rows(self):
-        text = "| 1 | [[inbox/raw/x.md]] | p | Pass A | d | High | a1b2c3d4 | [x] (dispatched) |\n"
-        text += "| 2 | [[inbox/raw/y.md]] | p | Pass A | d | High | — | [x] (done) |\n"
+        text = (
+            row_block(1, "inbox/raw/voice/x.md", "p", "Pass A", "d", "High",
+                      "a1b2c3d4", approve="[x] (dispatched)") + "\n\n"
+            + row_block(2, "inbox/raw/voice/y.md", "p", "Pass A", "d", "High",
+                        approve="[x] (done)") + "\n"
+        )
         rows = execute.parse_plan_rows(text)
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0]["approve"], "[x] (dispatched)")
         self.assertEqual(rows[1]["approve"], "[x] (done)")
 
-    def test_parses_rule_column(self):
-        rows = execute.parse_plan_rows(PLAN_TEXT)
-        self.assertEqual(rows[0]["rule"], "a1b2c3d4")
-        self.assertEqual(rows[1]["rule"], "—")
-        self.assertEqual(rows[2]["rule"], "—")
+    def test_parses_rule_field(self):
+        rows = self._by_number(PLAN_TEXT)
+        self.assertEqual(rows["1"]["rule"], "a1b2c3d4")
+        self.assertEqual(rows["2"]["rule"], "—")
+        self.assertEqual(rows["3"]["rule"], "—")
+
+    def test_recovers_capture_and_preview_from_continuation_lines(self):
+        rows = self._by_number(PLAN_TEXT)
+        self.assertEqual(rows["1"]["capture"],
+                         "inbox/raw/voice/2026-07-11-140203-buy-milk.md")
+        self.assertEqual(rows["1"]["preview"], "Remember to buy milk")
+
+    def test_row_line_is_parseable_on_its_own(self):
+        """Line-locality (ADR-0031): approve/destination/route/confidence/rule
+        come off one line, with no heading and no preceding document state —
+        that is what lets the nudge and the Dashboard share this parser."""
+        line = "- [ ] **7** → `discard` · Pass B · — · —\n"
+        rows = execute.parse_plan_rows(line)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["destination"], "discard")
+        self.assertEqual(rows[0]["approve"], "[ ]")
+        self.assertEqual(rows[0]["route"], "Pass B")
+
+    def test_heading_does_not_feed_the_parse(self):
+        """A Row under a contradicting heading still parses as its own
+        destination — the Row line wins; Execute's refusal is a separate,
+        deliberate check, not a parse-time correction."""
+        text = ("## areas/household/_inbox.md\n\n"
+                + row_block(1, "inbox/raw/voice/x.md", "p", "Pass B", "discard", "Medium"))
+        self.assertEqual(execute.parse_plan_rows(text)[0]["destination"], "discard")
+
+    def test_an_indented_row_still_parses(self):
+        """Obsidian on mobile auto-indents inside a list, so a Row can pick up
+        leading whitespace from an ordinary destination edit. An anchored
+        `^- ` would hide it from Execute, the nudge and the Dashboard at once."""
+        text = ("## discard\n\n"
+                + "  " + row_block(1, "inbox/raw/voice/x.md", "p", "Pass B", "discard", "Medium")
+                .replace("\n    ", "\n      ") + "\n")
+        rows = execute.parse_plan_rows(text)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["capture"], "inbox/raw/voice/x.md")
+        self.assertEqual(rows[0]["preview"], "p")
+
+    def test_an_indented_row_does_not_swallow_the_row_above_it(self):
+        text = (row_block(1, "inbox/raw/voice/a.md", "first", "Pass B", "discard", "Medium")
+                + "\n"
+                + "  " + row_block(2, "inbox/raw/voice/b.md", "second", "Pass B", "discard", "Medium")
+                .replace("\n    ", "\n      ") + "\n")
+        rows = execute.parse_plan_rows(text)
+        self.assertEqual([r["n"] for r in rows], ["1", "2"])
+        self.assertEqual(rows[0]["capture"], "inbox/raw/voice/a.md")
+        self.assertEqual(rows[0]["preview"], "first")
+        self.assertEqual(rows[1]["capture"], "inbox/raw/voice/b.md")
+
+    def test_preview_containing_a_wikilink_is_not_mistaken_for_the_capture(self):
+        text = row_block(1, "inbox/raw/voice/x.md", "[[inbox/raw/voice/other.md]] said",
+                         "Pass B", "discard", "Medium")
+        row = execute.parse_plan_rows(text)[0]
+        self.assertEqual(row["capture"], "inbox/raw/voice/x.md")
+
+    def test_a_row_shaped_preview_is_not_parsed_as_an_injected_row(self):
+        """Principle 10: capture-derived text is content, never Plan structure.
+
+        A preview is 60 chars of an untrusted capture body, and ROW_RE tolerates
+        indentation, so an email sender can write a body that is itself a
+        well-formed Row line. Continuation lines are consumed with their Row and
+        never revisited as Row starts, so the payload stays inert text."""
+        payload = "- [ ] **9** → `discard` · Pass A · High · x"
+        text = ("## discard\n\n"
+                + row_block(1, "inbox/raw/email/evil.md", payload,
+                            "Pass A", "discard", "High", "e1") + "\n")
+
+        rows = execute.parse_plan_rows(text)
+
+        self.assertEqual(len(rows), 1)                       # no phantom Row 9
+        self.assertEqual(rows[0]["n"], "1")
+        self.assertEqual(rows[0]["capture"], "inbox/raw/email/evil.md")  # not stolen
+        self.assertEqual(rows[0]["preview"], payload)        # payload is just text
+        self.assertEqual(execute.check_row_blocks(text), [])
+        self.assertEqual(execute.check_group_headings(text), [])
+
+    def test_a_block_with_two_capture_links_is_malformed_not_guessed(self):
+        """The mirror-image hazard: a Row whose real capture line survives but
+        whose preview is *itself* a bare wikilink. Neither reading may be
+        guessed at — the block is malformed and Execute refuses."""
+        text = ("- [ ] **1** → `discard` · Pass B · Medium · —\n"
+                "    [[inbox/raw/email/other.md]]\n"
+                "    [[inbox/raw/email/real.md]]\n")
+        self.assertEqual(execute.parse_plan_rows(text)[0]["capture"], "")
+        problems = execute.check_row_blocks(text)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("Row 1", problems[0])
+
+    def test_a_block_with_a_single_line_is_malformed(self):
+        """A well-formed Row always has two continuation lines — the writer
+        emits `—` for an empty preview precisely so this arity holds. One line
+        cannot be told apart from a preview whose capture line was deleted."""
+        text = ("- [ ] **1** → `discard` · Pass B · Medium · —\n"
+                "    [[inbox/raw/email/other.md]]\n")
+        self.assertEqual(execute.parse_plan_rows(text)[0]["capture"], "")
+        self.assertEqual(len(execute.check_row_blocks(text)), 1)
+
+    def test_a_well_formed_block_reports_no_problem(self):
+        self.assertEqual(execute.check_row_blocks(PLAN_TEXT), [])
+
+
+class TestCheckGroupHeadings(unittest.TestCase):
+    def test_matching_heading_and_destination_is_clean(self):
+        self.assertEqual(execute.check_group_headings(PLAN_TEXT), [])
+
+    def test_mismatch_is_reported_with_the_row_number(self):
+        text = ("## discard\n\n"
+                + row_block(7, "inbox/raw/voice/x.md", "p", "Pass B",
+                            "areas/household/_inbox.md", "Medium"))
+        errors = execute.check_group_headings(text)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("Row 7", errors[0])
+        self.assertIn("discard", errors[0])
+
+    def test_row_under_no_heading_is_not_a_mismatch(self):
+        text = row_block(1, "inbox/raw/voice/x.md", "p", "Pass B", "discard", "Medium")
+        self.assertEqual(execute.check_group_headings(text), [])
+
+    def test_case_difference_alone_is_not_a_mismatch(self):
+        text = "## discard\n\n" + row_block(
+            1, "inbox/raw/voice/x.md", "p", "Pass B", "Discard", "Medium")
+        self.assertEqual(execute.check_group_headings(text), [])
 
 
 class TestExecutePlan(unittest.TestCase):
@@ -149,11 +316,9 @@ class TestExecutePlan(unittest.TestCase):
     def test_pass_a_row_without_a_rule_id_keeps_bare_trigger(self):
         # Defensive case: a Pass A row whose rule cell is "—" (e.g. a
         # hand-edited plan) must not produce a malformed trigger.
-        text = PLAN_TEXT.replace(
-            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | areas/household/_inbox.md | High | a1b2c3d4 | [x] |",
-            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | areas/household/_inbox.md | High | — | [x] |",
+        self.plan_path.write_text(
+            plan_text(with_row(PLAN_ROWS, 1, rule="—"), "voice", "2026-07-11")
         )
-        self.plan_path.write_text(text)
         execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
         log_text = (self.brain_path / "log" / "2026-07-11.md").read_text()
         entries = log_text.split("### ")
@@ -166,15 +331,72 @@ class TestExecutePlan(unittest.TestCase):
         self.assertTrue(self.plan_path.exists())
         text = self.plan_path.read_text()
         self.assertIn("status: pending", text)
-        self.assertIn("[x] (done)", text)
-        self.assertIn("| [ ] |", text)  # row 3 still untouched
+        self.assertIn(" (done)", text)
+        self.assertIn("- [ ] **3**", text)  # row 3 still untouched
+
+    def test_marker_is_a_suffix_on_the_task_line_not_a_rewritten_cell(self):
+        execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
+        text = self.plan_path.read_text()
+        self.assertIn(
+            "- [x] **1** → `areas/household/_inbox.md` · Pass A · High · a1b2c3d4 (done)",
+            text,
+        )
+        # The Row's own continuation lines are untouched by the stamp.
+        self.assertIn("    [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]]", text)
+
+    def test_rerun_does_not_re_execute_a_done_row(self):
+        execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
+        inbox_before = (self.brain_path / "areas" / "household" / "_inbox.md").read_text()
+
+        result = execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
+
+        self.assertEqual(result["filed"], [])
+        self.assertEqual(result["discarded"], [])
+        self.assertEqual(
+            (self.brain_path / "areas" / "household" / "_inbox.md").read_text(),
+            inbox_before,
+        )
+        self.assertEqual(self.plan_path.read_text().count("(done)"), 2)
+
+    def test_executes_an_indented_row_and_stamps_it_in_place(self):
+        # Row 2 (the ticked discard) picks up a leading indent, as a mobile
+        # edit would leave it. It must still execute, and the stamp must land
+        # on that line without disturbing its indent.
+        text = PLAN_TEXT.replace(
+            "- [x] **2** →", "  - [x] **2** →",
+        ).replace("\n    not worth keeping\n    [[", "\n      not worth keeping\n      [[")
+        self.plan_path.write_text(text)
+
+        result = execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
+
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(result["discarded"], ["inbox/raw/voice/2026-07-11-140500-junk.md"])
+        self.assertIn("  - [x] **2** → `discard` · Pass B · Medium · — (done)",
+                      self.plan_path.read_text())
+
+    def test_refuses_whole_plan_when_a_row_disagrees_with_its_heading(self):
+        # Row 1 is ticked and sits under `## areas/household/_inbox.md`, but
+        # claims `discard`. Nothing at all may happen — not even row 2, which
+        # is ticked and perfectly consistent.
+        text = PLAN_TEXT.replace(
+            "- [x] **1** → `areas/household/_inbox.md`",
+            "- [x] **1** → `discard`",
+        )
+        self.plan_path.write_text(text)
+
+        with self.assertRaises(execute.ExecuteError) as ctx:
+            execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
+
+        self.assertIn("Row 1", str(ctx.exception))
+        self.assertFalse((self.brain_path / "areas" / "household" / "_inbox.md").exists())
+        self.assertFalse((self.brain_path / "archive").exists())
+        self.assertFalse((self.brain_path / "log").exists())
+        self.assertEqual(self.plan_path.read_text(), text)
 
     def test_second_run_after_ticking_last_row_archives_plan(self):
         execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
-        text = self.plan_path.read_text()
-        text = text.replace(
-            "| 3 | [[inbox/raw/voice/2026-07-11-140600-later.md]] | deal with this later | Pass B | areas/household/_inbox.md | Medium | — | [ ] |",
-            "| 3 | [[inbox/raw/voice/2026-07-11-140600-later.md]] | deal with this later | Pass B | areas/household/_inbox.md | Medium | — | [x] |",
+        text = self.plan_path.read_text().replace(
+            "- [ ] **3**", "- [x] **3**",
         )
         self.plan_path.write_text(text)
 
@@ -191,11 +413,9 @@ class TestExecutePlan(unittest.TestCase):
         self.assertIn("not found", result["errors"][0])
 
     def test_unmatched_destination_on_ticked_row_reports_error(self):
-        text = PLAN_TEXT.replace(
-            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | areas/household/_inbox.md | High | a1b2c3d4 | [x] |",
-            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass B | unmatched | — | — | [x] |",
-        )
-        self.plan_path.write_text(text)
+        rows = with_row(PLAN_ROWS, 1, route="Pass B", destination="unmatched",
+                        confidence="—", rule="—", approve="[x]")
+        self.plan_path.write_text(plan_text(rows, "voice", "2026-07-11"))
         result = execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
         self.assertEqual(len(result["errors"]), 1)
         self.assertIn("unmatched", result["errors"][0])
@@ -210,11 +430,10 @@ class TestExecutePlan(unittest.TestCase):
         self.assertIn("| Execute | 2026-07-11 15:00 |", routine_state.read_text())
 
     def test_agent_dispatched_leaves_raw_capture_and_returns_log_id(self):
-        text = PLAN_TEXT.replace(
-            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | areas/household/_inbox.md | High | a1b2c3d4 | [x] |",
-            "| 1 | [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]] | Remember to buy milk | Pass A | agent: Reviewer | High | a1b2c3d4 | [x] |",
-        )
-        self.plan_path.write_text(text)
+        self.plan_path.write_text(plan_text(
+            with_row(PLAN_ROWS, 1, destination="agent: Reviewer"),
+            "voice", "2026-07-11",
+        ))
         result = execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
         
         self.assertEqual(len(result["agent_dispatched"]), 1)
@@ -225,25 +444,20 @@ class TestExecutePlan(unittest.TestCase):
         self.assertTrue((self.brain_path / "inbox" / "raw" / "voice" / "2026-07-11-140203-buy-milk.md").exists())
         self.assertFalse((self.brain_path / "archive" / "inbox" / "voice" / "2026-07-11-140203-buy-milk.md").exists())
         
-        # Plan should be updated to [x] (dispatched)
-        plan_text = self.plan_path.read_text()
-        self.assertIn("[x] (dispatched)", plan_text)
+        # Plan should be updated with a trailing (dispatched) marker
+        text = self.plan_path.read_text()
+        self.assertIn("- [x] **1** → `agent: Reviewer` · Pass A · High · a1b2c3d4 (dispatched)", text)
 
 
-TODAY_PLAN_TEXT = """---
-type: triage-plan
-source: voice
-date: 2026-07-13
-status: pending
----
-
-# Triage Plan — voice — 2026-07-13
-
-| # | capture | preview | route | destination | confidence | rule | approve |
-|---|---|---|---|---|---|---|---|
-| 1 | [[inbox/raw/voice/2026-07-13-090000-call-plumber.md]] | Call the plumber | Pass A | today | High | e5f6a7b8 | [x] |
-| 2 | [[inbox/raw/voice/2026-07-13-091000-later.md]] | deal with this later | Pass B | areas/household/_inbox.md | Medium | — | [ ] |
-"""
+TODAY_PLAN_ROWS = [
+    dict(n=1, capture="inbox/raw/voice/2026-07-13-090000-call-plumber.md",
+         preview="Call the plumber", route="Pass A", destination="today",
+         confidence="High", rule="e5f6a7b8", approve="[x]"),
+    dict(n=2, capture="inbox/raw/voice/2026-07-13-091000-later.md",
+         preview="deal with this later", route="Pass B",
+         destination="areas/household/_inbox.md", confidence="Medium"),
+]
+TODAY_PLAN_TEXT = plan_text(TODAY_PLAN_ROWS, "voice", "2026-07-13")
 
 
 class TestFileCaptureToday(unittest.TestCase):
@@ -298,8 +512,8 @@ class TestFileCaptureToday(unittest.TestCase):
         self.assertTrue(
             (self.brain_path / "archive" / "inbox" / "voice" / "2026-07-13-090000-call-plumber.md").exists()
         )
-        plan_text = self.plan_path.read_text()
-        self.assertIn("[x] (done)", plan_text)
+        text = self.plan_path.read_text()
+        self.assertIn(" (done)", text)
 
         log_text = (self.brain_path / "log" / "2026-07-13.md").read_text()
         self.assertIn("file-capture-today", log_text)
@@ -315,8 +529,8 @@ class TestFileCaptureToday(unittest.TestCase):
         self.assertEqual(result["filed"], [])
 
         # Row left untouched (still [x], not [x] (done)) and capture not moved.
-        plan_text = self.plan_path.read_text()
-        self.assertIn("| Call the plumber | Pass A | today | High | e5f6a7b8 | [x] |", plan_text)
+        text = self.plan_path.read_text()
+        self.assertIn("- [x] **1** → `today` · Pass A · High · e5f6a7b8\n", text)
         self.assertTrue(
             (self.brain_path / "inbox" / "raw" / "voice" / "2026-07-13-090000-call-plumber.md").exists()
         )
@@ -327,11 +541,9 @@ class TestFileCaptureToday(unittest.TestCase):
     def test_missing_todays_note_does_not_block_other_rows(self):
         # Tick the second row too, and give it a real destination — it
         # should still get filed even though row 1 errors out.
-        text = self.plan_path.read_text().replace(
-            "| 2 | [[inbox/raw/voice/2026-07-13-091000-later.md]] | deal with this later | Pass B | areas/household/_inbox.md | Medium | — | [ ] |",
-            "| 2 | [[inbox/raw/voice/2026-07-13-091000-later.md]] | deal with this later | Pass B | areas/household/_inbox.md | Medium | — | [x] |",
-        )
-        self.plan_path.write_text(text)
+        self.plan_path.write_text(plan_text(
+            with_row(TODAY_PLAN_ROWS, 2, approve="[x]"), "voice", "2026-07-13",
+        ))
         (self.brain_path / "areas" / "household").mkdir(parents=True)
 
         result = execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
@@ -344,20 +556,15 @@ class TestFileCaptureToday(unittest.TestCase):
         )
 
 
-PERSON_PLAN_TEXT = """---
-type: triage-plan
-source: text
-date: 2026-07-16
-status: pending
----
-
-# Triage Plan — text — 2026-07-16
-
-| # | capture | preview | route | destination | confidence | rule | approve |
-|---|---|---|---|---|---|---|---|
-| 1 | [[inbox/raw/text/2026-07-16-090000-ask-example-person.md]] | Ask Example Person about the mortgage | Pass B | people/Example Person.md#🗣️ To Discuss | Medium | — | [x] |
-| 2 | [[inbox/raw/text/2026-07-16-091000-waiting-example-person.md]] | Waiting on Example Person for the invoice | Pass B | people/Example Person.md#⏳ Waiting For | Medium | — | [ ] |
-"""
+PERSON_PLAN_TEXT = plan_text([
+    dict(n=1, capture="inbox/raw/text/2026-07-16-090000-ask-example-person.md",
+         preview="Ask Example Person about the mortgage", route="Pass B",
+         destination="people/Example Person.md#🗣️ To Discuss",
+         confidence="Medium", approve="[x]"),
+    dict(n=2, capture="inbox/raw/text/2026-07-16-091000-waiting-example-person.md",
+         preview="Waiting on Example Person for the invoice", route="Pass B",
+         destination="people/Example Person.md#⏳ Waiting For", confidence="Medium"),
+], "text", "2026-07-16")
 
 
 class TestFileCaptureHeading(unittest.TestCase):
@@ -414,8 +621,8 @@ class TestFileCaptureHeading(unittest.TestCase):
         self.assertTrue(
             (self.brain_path / "archive" / "inbox" / "text" / "2026-07-16-090000-ask-example-person.md").exists()
         )
-        plan_text = self.plan_path.read_text()
-        self.assertIn("[x] (done)", plan_text)
+        text = self.plan_path.read_text()
+        self.assertIn(" (done)", text)
 
     def test_missing_heading_reports_error_leaves_row_untouched(self):
         # Hub exists but has no "To Discuss" heading at all.
@@ -439,6 +646,123 @@ class TestFileCaptureHeading(unittest.TestCase):
         self.assertTrue(
             (self.brain_path / "inbox" / "raw" / "text" / "2026-07-16-090000-ask-example-person.md").exists()
         )
+
+
+class TestRefusalHasNoSideEffects(unittest.TestCase):
+    """A refusal must happen before *anything* — no destination write, no
+    capture archived, no Action Log entry, no per-source hook, no heartbeat
+    bump, no rewrite of the Plan itself. A half-executed Plan whose remaining
+    Rows are ambiguous is strictly worse than an untouched one, so the checks
+    run against the raw text before the execute loop is entered at all.
+
+    Asserted by diffing the whole Brain tree byte-for-byte, rather than by
+    listing the side effects one at a time and hoping the list is complete."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.brain_path = Path(self._tmp.name) / "brain"
+        (self.brain_path / "areas" / "household").mkdir(parents=True)
+        (self.brain_path / "inbox" / "raw" / "fakesource").mkdir(parents=True)
+        (self.brain_path / "inbox" / "triage").mkdir(parents=True)
+        (self.brain_path / "config").mkdir()
+        # A routine-state row, so a heartbeat bump would show up in the diff.
+        (self.brain_path / "config" / "routine-state.md").write_text(
+            "| Routine | Last run |\n|---|---|\n| Execute | never |\n"
+        )
+        for name in ("good.md", "other.md", "real.md"):
+            (self.brain_path / "inbox" / "raw" / "fakesource" / name).write_text(
+                "---\nraw: true\n---\nbody\n"
+            )
+        # A hook that would leave a file behind if it ever ran.
+        self.library_path = Path(self._tmp.name) / "library"
+        hook_dir = self.library_path / "plugins" / "claude-code" / "skills" / "fakesource"
+        hook_dir.mkdir(parents=True)
+        self.hook_marker = self.brain_path / "hook-fired.txt"
+        (hook_dir / "execute_hook.py").write_text(
+            f"open({str(self.hook_marker)!r}, 'a').write('fired\\n')\n"
+        )
+        self.plan_path = self.brain_path / "inbox" / "triage" / "2026-07-21-fakesource.md"
+        self.now = dt.datetime(2026, 7, 21, 15, 0)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _snapshot(self):
+        return {
+            str(p.relative_to(self.brain_path)): p.read_bytes()
+            for p in sorted(self.brain_path.rglob("*")) if p.is_file()
+        }
+
+    def _write_plan(self, body):
+        self.plan_path.write_text(
+            "---\ntype: triage-plan\nsource: fakesource\ndate: 2026-07-21\n"
+            "status: pending\n---\n\n"
+            "# Triage Plan — fakesource — 2026-07-21\n\n" + body
+        )
+
+    def _assert_refused_untouched(self, expected_in_message):
+        before = self._snapshot()
+
+        with self.assertRaises(execute.ExecuteError) as ctx:
+            execute.execute_plan(
+                self.brain_path, self.plan_path, now=self.now,
+                library_path=self.library_path,
+            )
+
+        self.assertIn(expected_in_message, str(ctx.exception))
+        self.assertEqual(self._snapshot(), before)   # nothing written or removed
+        self.assertFalse(self.hook_marker.exists())  # no hook fired
+        self.assertIn("| Execute | never |",         # no heartbeat bump
+                      (self.brain_path / "config" / "routine-state.md").read_text())
+
+    def test_malformed_block_refuses_before_any_side_effect(self):
+        # Row 1 is ticked, valid, and would file if the run got that far.
+        # Row 2 is ticked and its block carries two capture links.
+        self._write_plan(
+            "## areas/household/_inbox.md\n\n"
+            + row_block(1, "inbox/raw/fakesource/good.md", "a filed item",
+                        "Pass B", "areas/household/_inbox.md", "Medium",
+                        approve="[x]") + "\n\n"
+            "## discard\n\n"
+            "- [x] **2** → `discard` · Pass B · Medium · —\n"
+            "    [[inbox/raw/fakesource/other.md]]\n"
+            "    [[inbox/raw/fakesource/real.md]]\n"
+        )
+        self._assert_refused_untouched("Row 2")
+        # Specifically: the *valid* ticked row did not slip through.
+        self.assertFalse((self.brain_path / "areas" / "household" / "_inbox.md").exists())
+
+    def test_heading_mismatch_refuses_before_any_side_effect(self):
+        self._write_plan(
+            "## areas/household/_inbox.md\n\n"
+            + row_block(1, "inbox/raw/fakesource/good.md", "a filed item",
+                        "Pass B", "areas/household/_inbox.md", "Medium",
+                        approve="[x]") + "\n\n"
+            + row_block(2, "inbox/raw/fakesource/real.md", "mis-grouped",
+                        "Pass B", "discard", "Medium", approve="[x]") + "\n"
+        )
+        self._assert_refused_untouched("Row 2")
+        self.assertFalse((self.brain_path / "areas" / "household" / "_inbox.md").exists())
+
+    def test_a_clean_plan_in_the_same_fixture_does_execute(self):
+        """Guards the test itself: the fixture must be capable of executing,
+        so the assertions above are proving the refusal and not a broken setup."""
+        self._write_plan(
+            "## areas/household/_inbox.md\n\n"
+            + row_block(1, "inbox/raw/fakesource/good.md", "a filed item",
+                        "Pass B", "areas/household/_inbox.md", "Medium",
+                        approve="[x]") + "\n"
+        )
+        result = execute.execute_plan(
+            self.brain_path, self.plan_path, now=self.now,
+            library_path=self.library_path,
+        )
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(len(result["filed"]), 1)
+        self.assertTrue((self.brain_path / "areas" / "household" / "_inbox.md").exists())
+        self.assertTrue(self.hook_marker.exists())
+        self.assertIn("| Execute | 2026-07-21 15:00 |",
+                      (self.brain_path / "config" / "routine-state.md").read_text())
 
 
 class TestResolveLibraryPath(unittest.TestCase):
@@ -469,20 +793,14 @@ class TestResolveLibraryPath(unittest.TestCase):
         del __import__("os").environ["GOALS_OS_LIBRARY_PATH"]
 
 
-HOOK_PLAN_TEXT = """---
-type: triage-plan
-source: fakesource
-date: 2026-07-21
-status: pending
----
-
-# Triage Plan — fakesource — 2026-07-21
-
-| # | capture | preview | route | destination | confidence | rule | approve |
-|---|---|---|---|---|---|---|---|
-| 1 | [[inbox/raw/fakesource/2026-07-21-090000-filed.md]] | A filed item | Pass B | areas/household/_inbox.md | Medium | — | [x] |
-| 2 | [[inbox/raw/fakesource/2026-07-21-091000-discarded.md]] | not worth keeping | Pass B | discard | Medium | — | [x] |
-"""
+HOOK_PLAN_TEXT = plan_text([
+    dict(n=1, capture="inbox/raw/fakesource/2026-07-21-090000-filed.md",
+         preview="A filed item", route="Pass B",
+         destination="areas/household/_inbox.md", confidence="Medium", approve="[x]"),
+    dict(n=2, capture="inbox/raw/fakesource/2026-07-21-091000-discarded.md",
+         preview="not worth keeping", route="Pass B", destination="discard",
+         confidence="Medium", approve="[x]"),
+], "fakesource", "2026-07-21")
 
 
 class TestSourceExecuteHook(unittest.TestCase):
@@ -627,24 +945,18 @@ class TestSourceExecuteHookDestination(unittest.TestCase):
 
     def _run_plan(self, rows):
         """Execute a plan whose ticked rows are `(capture-stem, destination)`."""
-        row_lines = []
+        plan_rows = []
         for n, (stem, destination) in enumerate(rows, start=1):
             (self.brain_path / "inbox" / "raw" / "fakesource" / f"{stem}.md").write_text(
                 "---\nraw: true\n---\nbody\n"
             )
-            row_lines.append(
-                f"| {n} | [[inbox/raw/fakesource/{stem}.md]] | preview {n} "
-                f"| Pass B | {destination} | Medium | — | [x] |"
-            )
+            plan_rows.append(dict(
+                n=n, capture=f"inbox/raw/fakesource/{stem}.md", preview=f"preview {n}",
+                route="Pass B", destination=destination, confidence="Medium",
+                approve="[x]",
+            ))
         plan_path = self.brain_path / "inbox" / "triage" / "2026-07-21-fakesource.md"
-        plan_path.write_text(
-            "---\ntype: triage-plan\nsource: fakesource\ndate: 2026-07-21\n"
-            "status: pending\n---\n\n"
-            "# Triage Plan — fakesource — 2026-07-21\n\n"
-            "| # | capture | preview | route | destination | confidence | rule | approve |\n"
-            "|---|---|---|---|---|---|---|---|\n"
-            + "\n".join(row_lines) + "\n"
-        )
+        plan_path.write_text(plan_text(plan_rows, "fakesource", "2026-07-21"))
         return execute.execute_plan(
             self.brain_path, plan_path, now=self.now,
             config_dir=self.config_dir, library_path=self.library_path,

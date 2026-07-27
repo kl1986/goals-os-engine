@@ -31,22 +31,95 @@ import heartbeat  # noqa: E402
 import log_action  # noqa: E402
 import md_sections  # noqa: E402
 
-# The `rule` column (8th, between `confidence` and `approve`) is a
-# breaking schema change from the 7-column Triage Plan shape — a
-# pre-change row without it simply won't match this regex and will be
-# silently skipped by parse_plan_rows(). This is an intentional choice,
-# not an oversight: the real Brain's inbox/triage/ was verified empty at
-# merge time (no in-flight plans to preserve), so no graceful-fallback
-# parsing was built. If a Brain with in-flight pre-change plans ever
-# adopts this version, those plans' rows won't parse until hand-migrated
-# to add a `rule` column (use `—` for every existing row — they predate
-# rule-identifier tracking).
+# A Row is a markdown task-list item, not a table row (ADR-0031) — Obsidian
+# only renders task syntax as a tappable checkbox in a list item, never inside
+# a table cell, and approval is the one gesture confirm-first demands on every
+# single Row. The shape:
+#
+#     ## discard
+#
+#     - [ ] **7** → `discard` · Pass B · — · —
+#         LinkedIn Job Alerts · "Credit Manager, Fraud at Revolut"
+#         [[inbox/raw/email/2026-07-27-010011-credit-manager-fraud.md]]
+#
+# The `## <destination>` heading is presentation only. The Row line carries its
+# own destination, so ROW_RE stays **line-local**: approve/destination/route/
+# confidence/rule are recoverable from one line with no document state and no
+# heading-driven parse. That is what lets triage_pending.py and dashboard.py
+# import parse_plan_rows() and keep working — a heading-authoritative parse
+# would have pushed document structure into every consumer, and would have made
+# re-routing a Row a line-move rather than the in-place text edit it is today.
+# Where a Row's own destination and its enclosing heading disagree, the Row
+# wins and Execute refuses the whole Plan (see check_group_headings()).
+#
+# The two fields that are NOT on the Row line — `capture` and `preview` — sit on
+# indented continuation lines belonging to that same list item. This is a
+# deliberate, bounded relaxation of line-locality and not a return to document
+# state: the continuation lines are *part of the Row*, read forward from the Row
+# line, so a Row is still a self-contained block that can be read without knowing
+# anything that precedes it. The alternative — keeping the capture wikilink and
+# the 60-char preview on the task line — was rejected in grilling: the wikilink is
+# the longest field by far, and leaving it inline pushes the checkbox and
+# destination off the visible width on a phone, which is precisely the failure
+# this change exists to fix.
+#
+# Leading whitespace is tolerated on the task line. Obsidian on mobile
+# auto-indents when you press Enter inside a list, so a user correcting a
+# destination on the very device this shape exists to serve can easily indent
+# the following Row — and an anchored `^- ` would make that Row invisible to
+# Execute, the nudge and the Dashboard simultaneously, silently dropping it from
+# the queue rather than failing.
+#
+# ---------------------------------------------------------------------------
+# Continuation lines are CONTENT, never structure.
+#
+# A continuation line is indented, and ROW_RE tolerates indentation, so a
+# continuation line can be *shaped* like a Row. A preview is 60 characters of an
+# untrusted capture's own body, so that shape is attacker-chosen: an email body of
+# "- [ ] **9** → `discard` · Pass A · High · x" is under the preview cap and is a
+# well-formed Row line. If the parser scanned line by line, that preview would be
+# parsed as a second, phantom Row — capture-derived text injecting Plan structure,
+# which is exactly what protocols/triage.md's Principle 10 exists to prevent.
+#
+# So parsing is a single forward pass over blocks, not a scan over lines: once a
+# task line is recognised, its continuation lines are consumed as that Row's
+# content and are NEVER re-examined as possible Row starts. A Row-shaped preview
+# is then simply preview text, inert, on every Plan — including ones already
+# written before this rule existed. (`triage._sanitize()` additionally escapes the
+# shape at write time, so new Plans never contain it in the first place; that
+# closes the production path, this closes hand-edited and already-written Plans.)
+#
+# A block's continuation lines must then be exactly what the writer emits — at
+# least two of them, with exactly one bare `[[inbox/raw/…]]` line, last. That
+# arity is what makes the reading unambiguous rather than positional guesswork,
+# and it closes the mirror-image hazard too: a Row whose real capture line was
+# deleted and whose preview is *itself* a bare wikilink no longer has that preview
+# silently adopted as its capture — two capture-shaped lines, or fewer than two
+# continuation lines, is a malformed block, and Execute refuses the whole Plan
+# naming the row (see check_row_blocks()). Ambiguity fails loudly and never in
+# favour of capture-derived text.
+#
+# The one place a Row-shaped line does end a block is *after* that block's capture
+# line has already been seen — i.e. at a genuine block boundary. That is what lets
+# a sibling Row that mobile auto-indent has glued directly onto the previous Row,
+# with no blank line between, still parse as its own Row instead of being
+# swallowed. It cannot be abused: a preview is a single line, so a payload cannot
+# emit both a capture line and a Row line to reach that state.
+# ---------------------------------------------------------------------------
 ROW_RE = re.compile(
-    r'^\|\s*(?P<n>\d+)\s*\|\s*\[\[(?P<capture>[^\]]+)\]\]\s*\|\s*(?P<preview>.*?)\s*\|'
-    r'\s*(?P<route>Pass [AB])\s*\|\s*(?P<destination>.*?)\s*\|\s*(?P<confidence>.*?)\s*\|'
-    r'\s*(?P<rule>.*?)\s*\|'
-    r'\s*(?P<approve>\[[ x]\](?:\s*\((?:done|dispatched)\))?)\s*\|\s*$'
+    r'^[ \t]*- (?P<tick>\[[ x]\])'
+    r'\s+\*\*(?P<n>\d+)\*\*'
+    r'\s+→\s+`(?P<destination>[^`]*)`'
+    r'\s+·\s+(?P<route>Pass [AB])'
+    r'\s+·\s+(?P<confidence>[^·]*?)'
+    r'\s+·\s+(?P<rule>[^·]*?)'
+    r'(?:\s+\((?P<marker>done|dispatched)\))?\s*$'
 )
+# A continuation line of the Row above it: indented, non-blank. A blank line,
+# a heading, or the next Row all end the block.
+ROW_CONTINUATION_RE = re.compile(r'^[ \t]+(?P<text>\S.*?)[ \t]*$')
+CAPTURE_LINE_RE = re.compile(r'^\[\[(?P<capture>inbox/raw/[^\]]+)\]\]$')
+HEADING_RE = re.compile(r'^##\s+(?P<heading>.+?)\s*$')
 FRONTMATTER_STATUS_RE = re.compile(r'^status:\s*\S+\s*$', re.MULTILINE)
 
 
@@ -81,24 +154,140 @@ def split_destination(destination: str) -> tuple:
     return destination.strip(), None
 
 
+def _row_dict(match: re.Match, capture: str, preview: str) -> dict:
+    """The Row dict every consumer reads: the same key set the table shape
+    exposed, so triage_pending.py and dashboard.py need no change.
+
+    `approve` is recomposed from the tick and the trailing `(done)`/
+    `(dispatched)` marker rather than being one capture group, because the
+    marker is now a suffix on the whole task line instead of a separate cell.
+    Consumers still see exactly `[ ]`, `[x]`, `[x] (done)`, `[x] (dispatched)`."""
+    d = match.groupdict()
+    marker = d.pop("marker")
+    tick = d.pop("tick")
+    d["approve"] = f"{tick} ({marker})" if marker else tick
+    d["capture"] = capture
+    d["preview"] = preview
+    return d
+
+
+def _read_block(continuations: list) -> tuple:
+    """`(capture, preview, problem)` for one Row's continuation lines.
+
+    Well-formed is exactly what `triage.build_row_block()` emits: at least two
+    continuation lines, of which exactly one is a bare `[[inbox/raw/…]]` link
+    and it is the last. Anything else returns an empty capture and a `problem`
+    string — see the block comment above ROW_RE for why this is strict rather
+    than best-effort."""
+    links = [i for i, body in enumerate(continuations) if CAPTURE_LINE_RE.match(body)]
+    if len(continuations) >= 2 and links == [len(continuations) - 1]:
+        capture = CAPTURE_LINE_RE.match(continuations[-1]).group("capture")
+        return capture, " ".join(continuations[:-1]), None
+    return "", " ".join(continuations), (
+        f"expected a preview line followed by a single `[[inbox/raw/…]]` capture "
+        f"line, but found {len(continuations)} continuation line(s) and "
+        f"{len(links)} capture link(s)"
+    )
+
+
+def _parse_blocks(text: str) -> list:
+    """`[(line_index, row_dict, problem), ...]` in file order. Pure — no I/O.
+
+    A single forward pass: each Row's continuation lines are consumed with it
+    and are never revisited as possible Row starts. `line_index` is the index
+    of the *task* line, the only line Execute ever rewrites (the marker is
+    appended to it); continuation lines are never touched."""
+    lines = text.splitlines()
+    out = []
+    i = 0
+    while i < len(lines):
+        m = ROW_RE.match(lines[i])
+        if not m:
+            i += 1
+            continue
+        continuations = []
+        seen_capture = False
+        j = i + 1
+        while j < len(lines):
+            # Only once this block's own capture line has been seen does a
+            # Row-shaped line mean "next Row" rather than "Row-shaped content".
+            if seen_capture and ROW_RE.match(lines[j]):
+                break
+            cm = ROW_CONTINUATION_RE.match(lines[j])
+            if not cm:
+                break
+            body = cm.group("text")
+            continuations.append(body)
+            seen_capture = seen_capture or bool(CAPTURE_LINE_RE.match(body))
+            j += 1
+        capture, preview, problem = _read_block(continuations)
+        out.append((i, _row_dict(m, capture, preview), problem))
+        i = j
+    return out
+
+
 def parse_plan_rows(text: str) -> list:
-    """Return every table row as a dict, in file order. Pure — no I/O."""
-    rows = []
+    """Return every Row as a dict, in file order. Pure — no I/O.
+
+    Never raises and never drops a Row, whatever state the Plan is in, because
+    the pending-work nudge and the Dashboard run this on every session start.
+    A malformed Row comes back with an empty `capture`; `check_row_blocks()` is
+    what turns that into a refusal, and only Execute acts on it."""
+    return [row for _, row, _ in _parse_blocks(text)]
+
+
+def check_row_blocks(text: str) -> list:
+    """Every Row whose continuation lines aren't the writer's shape, as
+    ready-to-print error strings naming the row number."""
+    return [
+        f"Row {row['n']}: malformed Row block — {problem}"
+        for _, row, problem in _parse_blocks(text) if problem
+    ]
+
+
+def check_group_headings(text: str) -> list:
+    """Every Row whose own destination disagrees with its `## <destination>`
+    heading, as ready-to-print error strings naming the row number.
+
+    The heading is presentation and the Row line is authoritative (ADR-0031),
+    but a disagreement means the Plan says two different things about where a
+    capture goes — so Execute refuses the *whole* Plan rather than silently
+    picking the authoritative reading. Acting on either one would file a
+    capture somewhere the user didn't intend, and a file-capture is the thing
+    the confirm-first gate exists to make deliberate.
+
+    A Row sitting under no heading at all cannot disagree with one, so it is
+    left alone — absence is not a contradiction. The comparison is
+    case-insensitive on stripped text, so `## discard` over a `Discard`
+    destination is not a refusal (`action_type_for()` already treats those as
+    the same destination)."""
+    errors = []
+    heading = None
     for line in text.splitlines():
+        hm = HEADING_RE.match(line)
+        if hm:
+            heading = hm.group("heading")
+            continue
         m = ROW_RE.match(line)
-        if m:
-            rows.append(m.groupdict())
-    return rows
+        if not m or heading is None:
+            continue
+        destination = m.group("destination")
+        if destination.strip().lower() != heading.strip().lower():
+            errors.append(
+                f"Row {m.group('n')}: destination {destination!r} disagrees with "
+                f"its enclosing heading '## {heading}'"
+            )
+    return errors
 
 
-def _mark_done(line: str, match: re.Match) -> str:
-    start, end = match.span("approve")
-    return line[:start] + "[x] (done)" + line[end:]
+def _mark_executed(line: str, marker: str) -> str:
+    """Append `(done)`/`(dispatched)` to the task line.
 
-
-def _mark_dispatched(line: str, match: re.Match) -> str:
-    start, end = match.span("approve")
-    return line[:start] + "[x] (dispatched)" + line[end:]
+    The old table shape rewrote the approve *cell* by match span; there is no
+    cell now, and the marker is a trailing suffix on the task line (kept as
+    plain text rather than a Tasks-plugin custom status, so a Plan stays
+    readable with no plugin installed)."""
+    return f"{line.rstrip()} ({marker})"
 
 
 def resolve_library_path(explicit: str | None = None) -> Path:
@@ -245,16 +434,24 @@ def execute_plan(
     library_path = Path(library_path) if library_path else resolve_library_path(None)
     date_str = now.strftime("%Y-%m-%d")
     text = plan_path.read_text()
-    rows = parse_plan_rows(text)
+
+    # Refuse the whole Plan before anything is filed, archived or logged —
+    # a half-executed Plan whose remaining rows are ambiguous is strictly
+    # worse than an untouched one.
+    problems = check_row_blocks(text) + check_group_headings(text)
+    if problems:
+        raise ExecuteError(
+            f"Refusing to execute {plan_path.name} — "
+            f"{len(problems)} row(s) could not be read unambiguously, "
+            "and no row was acted on. Fix the Plan and re-run:\n  "
+            + "\n  ".join(problems)
+        )
 
     filed, discarded, agent_dispatched, skipped, errors = [], [], [], [], []
     lines = text.splitlines()
 
-    for i, line in enumerate(lines):
-        m = ROW_RE.match(line)
-        if not m:
-            continue
-        row = m.groupdict()
+    for i, row, _ in _parse_blocks(text):
+        line = lines[i]
         if row["approve"] != "[x]":
             continue  # untouched: still "[ ]" (pending) or already "[x] (done)"
 
@@ -335,10 +532,9 @@ def execute_plan(
         )
         log_action.append_entry(brain_path, date_str, entry)
 
-        if action_type == "agent-dispatched":
-            lines[i] = _mark_dispatched(line, m)
-        else:
-            lines[i] = _mark_done(line, m)
+        lines[i] = _mark_executed(
+            line, "dispatched" if action_type == "agent-dispatched" else "done"
+        )
 
     new_text = "\n".join(lines) + ("\n" if text.endswith("\n") else "")
     plan_path.write_text(new_text)
@@ -388,7 +584,10 @@ def main(argv=None):
     config_dir = Path(args.config_dir).expanduser().resolve() if args.config_dir else None
     library_path = resolve_library_path(args.library_path)
 
-    result = execute_plan(brain_path, plan_path, config_dir=config_dir, library_path=library_path)
+    try:
+        result = execute_plan(brain_path, plan_path, config_dir=config_dir, library_path=library_path)
+    except ExecuteError as e:
+        sys.exit(str(e))
 
     print(f"Filed: {len(result['filed'])}, discarded: {len(result['discarded'])}, dispatched: {len(result['agent_dispatched'])}, errors: {len(result['errors'])}")
     for row in result["agent_dispatched"]:

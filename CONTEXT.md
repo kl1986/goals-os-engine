@@ -86,6 +86,17 @@ _Avoid_: Auto-execute (v1 term)
 **Raw Capture**:
 An un-synthesised input (voice transcript, email, web clip, note) stamped with frontmatter and stored immutably as markdown. The ground truth everything else derives from.
 
+**Triage Plan**:
+The inert, per-source proposal listing each un-triaged Raw Capture and where Triage thinks it should go. Inert is the point: it is a set of proposals awaiting a human, so nothing captured can trigger an action merely by being classified. Lives in `inbox/triage/` until every Row is executed, then moves to `archive/triage/`.
+_Avoid_: Triage queue, inbox (a Plan is a proposal about captures, not the captures themselves)
+
+**Row**:
+One Raw Capture's proposed routing within a Triage Plan — its destination, how that destination was arrived at (Pass A rule match or Pass B model classification), and its approval state. The unit the user reviews and Execute acts on. A Row carries its own destination; where a Plan groups Rows for readability, the grouping is presentation and the Row remains authoritative (ADR-0031).
+
+**Approve**:
+The user's explicit per-Row consent for Execute to act on it. Required on every Row regardless of confidence — confidence never substitutes for approval, since acting on confidence alone is graduation (ADR-0006), a separate mechanism. Approving is distinct from *correcting*, which is editing a Row's destination before approving it.
+_Avoid_: Confirm (that's the general confirm-first stance), tick (that's the gesture, not the act)
+
 **Wiki**:
 The machine-compiled, concept-organised knowledge layer. A pure function of Raw sources plus validated feedback — never directly human-edited.
 _Avoid_: Knowledge base (that's the content layer as a whole — Wiki + curated layer; say Wiki specifically)

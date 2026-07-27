@@ -85,8 +85,8 @@ if [ -z "$PLAN_FILE" ]; then
 fi
 
 echo "Ticking the plan so it executes..."
-# Replace '| [ ] |' with '| [x] |'
-python3 -c "import sys; p=sys.argv[1]; text=open(p).read(); open(p, 'w').write(text.replace('| [ ] |', '| [x] |'))" "$PLAN_FILE"
+# Tick every task-list Row: '- [ ] ' -> '- [x] ' (ADR-0031)
+python3 -c "import sys; p=sys.argv[1]; text=open(p).read(); open(p, 'w').write(text.replace('- [ ] ', '- [x] '))" "$PLAN_FILE"
 
 echo "Running execute.py..."
 PYTHONPATH=. python3 scripts/execute.py --brain "$CLONED_BRAIN" --plan "$PLAN_FILE"

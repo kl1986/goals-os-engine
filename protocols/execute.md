@@ -1,6 +1,6 @@
-# Protocol: Execute (v1.3)
+# Protocol: Execute (v1.4)
 
-Reads an approved Triage Plan and performs actions per ticked row. Supports generic, internal/reversible actions (`file-capture` or `discard-capture`) and `agent-dispatched` actions. For agent-dispatched actions, the output is QA'd by the Reviewer gate before surfacing. v1.1 (16/07/2026, `capture-source-plugins` map, ticket 09/15) generalizes `file-capture-today`'s insert-before-next-heading mechanic to any file — a `file#heading` destination (e.g. `people/Example Person.md#🗣️ To Discuss`) files section-targeted, not just to today's daily note. No new action type — see the `file-capture` row below. v1.2 (21/07/2026, ticket 14) adds an optional per-source post-action hook — see "Per-source hooks" below — with zero new action types; Execute itself stays fully generic. v1.3 (25/07/2026, `meeting-processing` component, ADR-0028) passes the ticked row's destination to that hook as `--destination`, so a hook honours the answer the user already gave by ticking rather than re-deriving it — see "Per-source hooks". Still zero new action types and still no source-specific knowledge: Execute forwards a string it already parsed.
+Reads an approved Triage Plan and performs actions per ticked row. Supports generic, internal/reversible actions (`file-capture` or `discard-capture`) and `agent-dispatched` actions. For agent-dispatched actions, the output is QA'd by the Reviewer gate before surfacing. v1.1 (16/07/2026, `capture-source-plugins` map, ticket 09/15) generalizes `file-capture-today`'s insert-before-next-heading mechanic to any file — a `file#heading` destination (e.g. `people/Example Person.md#🗣️ To Discuss`) files section-targeted, not just to today's daily note. No new action type — see the `file-capture` row below. v1.2 (21/07/2026, ticket 14) adds an optional per-source post-action hook — see "Per-source hooks" below — with zero new action types; Execute itself stays fully generic. v1.3 (25/07/2026, `meeting-processing` component, ADR-0028) passes the ticked row's destination to that hook as `--destination`, so a hook honours the answer the user already gave by ticking rather than re-deriving it — see "Per-source hooks". Still zero new action types and still no source-specific knowledge: Execute forwards a string it already parsed. v1.4 (27/07/2026, ADR-0031) reads the new task-list Row shape and adds two whole-Plan refusals — see "Row state machine" and "Refusals" below.
 
 ## Out of scope, explicitly
 
@@ -11,7 +11,7 @@ Reads an approved Triage Plan and performs actions per ticked row. Supports gene
 
 Registered in `config/action-types.md` (materialised at onboarding), all currently `internal & reversible` / `confirm-first`:
 
-| Destination cell | Action type | What happens |
+| Destination | Action type | What happens |
 |---|---|---|
 | a real path, e.g. `areas/household/_inbox.md` | `file-capture` | Appends a dated bullet — a link back to the Raw Capture plus its preview — into that **existing** file. Never creates a new area or project; the destination's parent directory must already exist. |
 | a real path with a heading anchor, e.g. `people/Example Person.md#🗣️ To Discuss` | `file-capture` (same action type — a destination sub-form, not a new one) | Inserts the same dated bullet as the last line of the named `## heading` section — before the next heading, never a blind end-of-file append. Reuses `file-capture-today`'s existing insert-before-next-heading mechanic against *any* file and *any* heading, generalized rather than reinvented (ticket 09). The target **file** must already exist — a `file#heading` destination never creates it, same "never creates the destination" rule as plain `file-capture`'s directory requirement. The named heading must also already exist in that file. |
@@ -21,17 +21,31 @@ Registered in `config/action-types.md` (materialised at onboarding), all current
 
 For `file-capture-today` cases: if today's note doesn't exist yet, this is an error exactly like the existing "destination directory doesn't exist" case for `file-capture` — reported, the row left untouched, doesn't block other rows in the same run, and doesn't count as done. Also note that `file-capture-today` rows DO get archived to `archive/inbox/<source>/` and marked `[x] (done)`, same as `file-capture` (only `agent-dispatched` skips those steps).
 
-Execute also reads the Triage Plan's `rule` column (`triage.md`): for a `Pass A` row whose `rule` cell isn't `—`, the Action Log entry's `trigger` field becomes `Execute (Routine) — rule <rule_id>` instead of the bare `Execute (Routine)`, so a rule-driven action is traceable back to the specific rule that fired.
+Execute also reads the Triage Plan's `rule` field (`triage.md`): for a `Pass A` row whose `rule` isn't `—`, the Action Log entry's `trigger` field becomes `Execute (Routine) — rule <rule_id>` instead of the bare `Execute (Routine)`, so a rule-driven action is traceable back to the specific rule that fired.
 
 For `file-capture` and `discard-capture` cases: move the Raw Capture from `inbox/raw/<source>/` to `archive/inbox/<source>/` (collision-safe). `agent-dispatched` cases leave the Raw Capture in place for the Reviewer gate. For all cases, append an Action Log entry (`log_action.build_entry`/`append_entry`, dogfooding `action-log-schema.md`). Every run — whether or not any row was ticked — also bumps Execute's own row in `config/routine-state.md` (`heartbeat.bump`), so its Last-run state is accurate even though Execute is event-triggered and outside Heartbeat's overdue-checking (`routines.md`).
 
 ## Row state machine
 
-A Triage Plan row's `approve` cell has three states:
+A Triage Plan Row is a markdown task-list item (`triage.md`, ADR-0031), and its approve box has three states:
 
 - `[ ]` — pending human review. Execute never touches it, ever.
 - `[x]` — approved, ready to execute. Execute processes it this run.
-- `[x] (done)` — already executed. Left alone on any future run (idempotent — re-running Execute against a partially-worked plan never re-files or re-archives an already-done row).
+- `[x] … (done)` — already executed. Left alone on any future run (idempotent — re-running Execute against a partially-worked plan never re-files or re-archives an already-done Row).
+
+The `(done)` / `(dispatched)` marker is a **trailing suffix on the task line**, appended when the Row is executed — plain text, deliberately not a Tasks-plugin custom status, so a Plan stays readable in any markdown viewer with no plugin installed. Everything else on the line is left byte-for-byte alone, as are the Row's continuation lines (its preview and capture wikilink).
+
+`scripts/execute.py`'s `ROW_RE` and `parse_plan_rows()` are the single owner of the Row shape; the pending-work nudge (`triage_pending.py`) and the Dashboard (`dashboard.py`) import them rather than re-deriving it, which is what keeps the three from drifting.
+
+## Refusals
+
+Execute refuses a Plan **whole** — with an error naming the offending row number, before filing, archiving, logging, running a hook or bumping its own Last-run — in two cases. A half-executed Plan whose remaining Rows are ambiguous is strictly worse than an untouched one, so both checks run against the Plan text before any Row is processed.
+
+**Heading disagreement.** A Plan groups its Rows under `## <destination>` headings for readability. The heading is presentation; the Row line's own destination is authoritative (ADR-0031). Where the two disagree, the Plan is saying two different things about where a capture goes, so Execute refuses rather than silently acting on the authoritative reading. A Row sitting under no heading at all cannot disagree with one and is left alone; the comparison ignores case, so `## discard` above a `Discard` destination is not a refusal.
+
+**Malformed Row block.** A Row's continuation lines must be exactly what Triage writes: at least two of them, of which exactly one is a bare `[[inbox/raw/…]]` capture link, and it is the last. Anything else — no capture link, two capture links, a lone line — cannot be read unambiguously, so Execute refuses instead of guessing which line is the capture.
+
+That strictness exists because a preview is 60 characters of an *untrusted* capture body (Principle 10, `triage.md`), written into the Plan as its own line. Parsing therefore treats continuation lines as **content, never structure**: each Row's continuation lines are consumed with it in one forward pass and are never re-examined as possible Row starts, so a capture body shaped like a Row line is inert preview text rather than an injected Row. The arity rule closes the mirror image — a preview that is itself a bare wikilink can never be silently adopted as the Row's capture. Where the two readings are genuinely ambiguous, Execute fails loudly and never in favour of capture-derived text. Triage additionally escapes both shapes at write time, so a Plan written after ADR-0031 never contains them; the parser rule is what protects Plans that were hand-edited or written earlier.
 
 ## Plan completion
 

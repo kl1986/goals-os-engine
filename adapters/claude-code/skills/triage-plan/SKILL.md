@@ -25,10 +25,21 @@ python3 <path-to-goals-os-engine>/scripts/triage.py --brain "<path-to-brain>" --
 
 This writes/updates `inbox/triage/{date}-{source}.md`. It reports how many captures were routed (Pass A) vs left `unmatched` (Pass B pending).
 
-3. If any rows are `Pass B | unmatched`, open the plan file and classify each one yourself, in-session: read the capture (follow its `[[inbox/raw/...]]` link if the preview isn't enough), decide a `destination` and a `confidence`, and edit that row's `destination` and `confidence` cells directly. **Never tick the `approve` box yourself** — that's the user's call, not this skill's.
+3. If any Rows are `unmatched`, open the plan file and classify each one yourself, in-session: read the capture (follow its `[[inbox/raw/...]]` link if the preview isn't enough), decide a `destination` and a `confidence`, and edit that Row's destination and confidence directly. **Never tick the approve box yourself** — that's the user's call, not this skill's.
+   - A Row is a task-list item under a `## <destination>` heading (ADR-0031), e.g.:
+
+     ```markdown
+     ## unmatched
+
+     - [ ] **7** → `unmatched` · Pass B · — · —
+         LinkedIn Job Alerts · "Credit Manager, Fraud at Revolut"
+         [[inbox/raw/email/2026-07-27-010011-credit-manager-fraud.md]]
+     ```
+
+   - **Re-routing a Row means two edits, not one:** change the destination on the Row line *and* move the whole Row — task line plus both continuation lines — under the `## <destination>` heading that matches, creating that heading at the end of the file if it doesn't exist yet. Leaving a Row under a heading it disagrees with makes Execute refuse the entire Plan. Leave the Row's number alone: numbering is global and stable, so a re-routed Row keeps the number it had.
    - Destination is normally an existing file under `areas/` or `projects/` — never invent a new area/project — or the literal word `discard` if it isn't worth keeping.
-   - Also check whether the capture is **person-specific** (raising something with someone, or waiting on them for something) — read `people/_aliases.md` and the `people/` folder listing as context, same as you'd check `areas/`/`projects/`. If so, propose a section-targeted destination instead: `people/<Full Name>.md#🗣️ To Discuss` for outbound framing ("ask Example Person about X", "raise Y with Example Person") or `people/<Full Name>.md#⏳ Waiting For` for inbound framing ("waiting on Example Person for Y", "Example Person owes me X"). If the name is ambiguous or you're unsure of the match, make your best guess — the user's tick is the confirm-first gate; a wrong guess just gets corrected by them editing the `destination` cell before ticking.
-4. Report back: how many rows are Pass A vs Pass B, and ask the user to review and tick the ones they approve before running `execute-triage`.
+   - Also check whether the capture is **person-specific** (raising something with someone, or waiting on them for something) — read `people/_aliases.md` and the `people/` folder listing as context, same as you'd check `areas/`/`projects/`. If so, propose a section-targeted destination instead: `people/<Full Name>.md#🗣️ To Discuss` for outbound framing ("ask Example Person about X", "raise Y with Example Person") or `people/<Full Name>.md#⏳ Waiting For` for inbound framing ("waiting on Example Person for Y", "Example Person owes me X"). If the name is ambiguous or you're unsure of the match, make your best guess — the user's tick is the confirm-first gate; a wrong guess just gets corrected by them re-routing the Row before ticking.
+4. Report back: how many Rows are Pass A vs Pass B, and ask the user to review and tick the ones they approve before running `execute-triage`. Ticking is a tap on the checkbox in Obsidian — Rows sharing a destination sit together under one heading so a run of them can be approved in one pass.
 
 ## Contract this Adapter fulfils (ADR-0002)
 

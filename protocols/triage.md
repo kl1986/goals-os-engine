@@ -1,10 +1,10 @@
-# Protocol: Triage (v0.1)
+# Protocol: Triage (v0.2)
 
-Classifies Raw Captures against structured routing rules and writes a Triage Plan — the confirm-first review gate between Capture and Execute. Introduces `inbox/triage/` as the Brain's first new layout convention since Phase 1. v0.1 (16/07/2026, `capture-source-plugins` map, ticket 09/15) extends Pass B's classification scope to also consider `people/` as a valid destination — see "Pass B and Person Hubs" below.
+Classifies Raw Captures against structured routing rules and writes a Triage Plan — the confirm-first review gate between Capture and Execute. Introduces `inbox/triage/` as the Brain's first new layout convention since Phase 1. v0.1 (16/07/2026, `capture-source-plugins` map, ticket 09/15) extends Pass B's classification scope to also consider `people/` as a valid destination — see "Pass B and Person Hubs" below. v0.2 (27/07/2026, ADR-0031) changes the Row shape: a Plan is now task-list items grouped under `## <destination>` headings rather than a markdown table, so the approve checkbox is tappable in Obsidian.
 
 ## Principle 10 — classify-only
 
-This Protocol can write **nothing capture-derived but a Triage Plan file.** That's structural, not a policy choice: Raw Captures are untrusted input (PRD Principle 10), and a Triage Plan is inert — a table of proposed routes awaiting a human tick — so nothing captured can itself trigger an action just by being classified. Execution only ever happens from an approved plan, in `execute.md`.
+This Protocol can write **nothing capture-derived but a Triage Plan file.** That's structural, not a policy choice: Raw Captures are untrusted input (PRD Principle 10), and a Triage Plan is inert — a list of proposed routes awaiting a human tick — so nothing captured can itself trigger an action just by being classified. Execution only ever happens from an approved plan, in `execute.md`.
 
 The one exception is bookkeeping: each run also bumps its own `Triage` row in `config/routine-state.md` (`heartbeat.update_last_run`), so Heartbeat's due-check reflects that Triage actually ran. This write is fixed — a routine name and a timestamp, never anything read from a capture — so nothing an attacker controls can influence it; it doesn't reopen the surface Principle 10 closes.
 
@@ -21,7 +21,7 @@ When Pass B judges a capture person-specific, it proposes a **section-targeted**
 
 Which section is also ordinary Pass B judgment, not a dedicated classifier: outbound framing ("raise X with Example Person", "ask Example Person about Y") routes to `## 🗣️ To Discuss`; inbound framing ("waiting on Example Person for Y", "Example Person owes me X") routes to `## ⏳ Waiting For`. Unlike `routing-rules.md`'s deterministic `if`/`then` DSL (built for a non-linguistic signal like sender address — see ticket 03's `route.py` precedent), outbound-vs-inbound framing is a natural-language judgment call squarely inside what Pass B already does — no dedicated classifier script is warranted here.
 
-Name resolution is also Pass B's own in-session judgment, reading the alias table and hub listing as context — not a ported script. A wrong guess (typo, ambiguous name) just gets corrected by the user editing the `destination` cell before ticking, the same as any other Pass B misclassification.
+Name resolution is also Pass B's own in-session judgment, reading the alias table and hub listing as context — not a ported script. A wrong guess (typo, ambiguous name) just gets corrected by the user editing the Row's destination before ticking, the same as any other Pass B misclassification. A re-routed Row also moves under the correct heading, so the two never disagree.
 
 ## Routing rules (`config/routing-rules.md`)
 
@@ -49,21 +49,38 @@ status: pending
 
 # Triage Plan — text — 2026-07-11
 
-| # | capture | preview | route | destination | confidence | rule | approve |
-|---|---|---|---|---|---|---|---|
-| 1 | [[inbox/raw/text/2026-07-11-140203-buy-milk]] | Remember to buy milk on the way home. | Pass A | areas/household/_inbox.md | High | a1b2c3d4 | [ ] |
-| 2 | [[inbox/raw/text/2026-07-11-140500-standup-notes]] | discussed the roadmap | Pass B | areas/work/_inbox.md | Medium | — | [ ] |
+## areas/household/_inbox.md
+
+- [ ] **1** → `areas/household/_inbox.md` · Pass A · High · a1b2c3d4
+    Remember to buy milk on the way home.
+    [[inbox/raw/text/2026-07-11-140203-buy-milk]]
+
+## areas/work/_inbox.md
+
+- [ ] **2** → `areas/work/_inbox.md` · Pass B · Medium · —
+    discussed the roadmap
+    [[inbox/raw/text/2026-07-11-140500-standup-notes]]
 ```
 
-`status` is `pending` until every row is executed, then flips to `executed` and the file moves to `archive/triage/` (see `execute.md`). Every row needs an explicit `[x]` tick before Execute will act on it — regardless of confidence; auto-execution on confidence is graduation, Phase 5.
+Each Row is a markdown **task-list item** — never a table row: Obsidian only renders task syntax as an interactive checkbox in a list item, so a table made approval, the one gesture required on every Row, a raw-text edit (ADR-0031). The task line carries, in order, the approve box, the global row number, the destination, the route, the confidence and the rule identifier; the preview and the capture wikilink sit on indented continuation lines, with the wikilink always last.
 
-The `rule` column records which `config/routing-rules.md` rule fired for a Pass A row — its first 8 hex characters of a SHA-1 hash over that rule's normalized `if:`/`then:`/`confidence:` text (`scripts/triage.py`'s `compute_rule_id()`). Pass B rows (no rule fired) always carry `—`. Execute reads this column to record which specific rule produced an action, on the Action Log's `trigger` field (`action-log-schema.md`).
+That arity is a contract, not a layout preference: a Row block always has both continuation lines (an empty preview is written as `—`), exactly one of which is the bare capture wikilink, last. It is what lets Execute read a block unambiguously — see `execute.md`'s "Refusals". Because a preview is 60 characters of an untrusted capture's own body, Triage escapes a leading `- ` and any `[[` in it, so preview text can never be shaped like a Row line or a capture link (Principle 10 at the write boundary; `scripts/triage.py`'s `_sanitize()`).
+
+The `## <destination>` heading is **presentation only** — it groups Rows sharing a destination so they can be approved as a run. The Row line's own destination is authoritative: parsing stays line-local (`scripts/execute.py`'s `ROW_RE`, the single owner of the Row shape), and where a Row and its heading disagree, Execute refuses the whole Plan rather than guessing (see `execute.md`).
+
+Row numbers are **global across groups and stable** — a Row keeps its number when it is re-routed into another group, and a new Row's number is derived from the highest number already in the Plan, never from counting Rows.
+
+`status` is `pending` until every Row is executed, then flips to `executed` and the file moves to `archive/triage/` (see `execute.md`). Every Row needs an explicit `[x]` tick before Execute will act on it — regardless of confidence; auto-execution on confidence is graduation, Phase 5.
+
+The `rule` field records which `config/routing-rules.md` rule fired for a Pass A Row — its first 8 hex characters of a SHA-1 hash over that rule's normalized `if:`/`then:`/`confidence:` text (`scripts/triage.py`'s `compute_rule_id()`). Pass B Rows (no rule fired) always carry `—`. Execute reads this field to record which specific rule produced an action, on the Action Log's `trigger` field (`action-log-schema.md`).
+
+A Brain still holding Plans in the pre-ADR-0031 markdown table converts them with the one-time script `scripts/migrate_triage_plan_rows.py --brain <brain>` (add `--dry-run` first to see what it would do). It rewrites every open Plan in `inbox/triage/` into this shape, preserving each Row's number, destination, route, confidence, rule identifier, preview, capture link and approval/executed state, and is a no-op on a Plan already converted. It deliberately does not touch `archive/triage/` — an archived Plan is a record of what was executed, not something anyone will tick again. If a Plan holds a table line the script cannot parse (a hand-typed `[X]`, a dropped cell), it **refuses that file untouched and names the line** rather than converting the rest, because the rewrite would delete that line and the approval state with it. There is no dual-shape parsing: `ROW_RE` reads the task-list shape only, so a Plan must be converted before Execute, the nudge or the Dashboard will see its Rows.
 
 A destination of literal `discard` (rather than a real path) tells Execute to archive the Raw Capture with nothing filed — the right call when Pass B decides an item isn't worth keeping. Pass A never writes `discard`; only in-session Pass B classification does.
 
 ## Idempotency
 
-Re-running Triage never duplicates a row, even across a day boundary: `write_triage_plan()` checks the `capture` column of *every still-open* plan for that source (`inbox/triage/*-{source}.md`, any date — executed plans have already moved to `archive/triage/`) and only appends genuinely new captures. A capture that's still un-executed the next day doesn't get a second row in tomorrow's plan just because Triage ran again. Existing rows — including any Pass-B edits or ticks already made — are left untouched.
+Re-running Triage never duplicates a Row, even across a day boundary: `write_triage_plan()` checks the capture wikilink of *every still-open* plan for that source (`inbox/triage/*-{source}.md`, any date — executed plans have already moved to `archive/triage/`) and only adds genuinely new captures. That check matches on the `[[inbox/raw/...]]` wikilink and is format-agnostic, so it held across the ADR-0031 conversion. A capture that's still un-executed the next day doesn't get a second Row in tomorrow's plan just because Triage ran again. Existing Rows — including any Pass-B edits or ticks already made — are left untouched. A new Row is inserted under its own `## <destination>` heading, which is created if it does not exist yet, rather than appended at end-of-file.
 
 ## Adapter binding
 
