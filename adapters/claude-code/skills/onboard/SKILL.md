@@ -1,6 +1,6 @@
 ---
 name: onboard
-description: Run the Onboarding Protocol against a freshly cloned Brain — interviews the user for one Area, then materialises config/ and that Area. Safe to re-run per additional area. Use when a user has just cloned goals-os-brain-template and wants it turned into a working Brain.
+description: Run the Onboarding Protocol against a freshly cloned Brain — interviews the user for one Area, then materialises config/ and that Area. Safe to re-run per additional area. Use when a user has just cloned the Brain Template and wants it turned into a working Brain.
 allowed-tools:
   - Bash
   - AskUserQuestion
@@ -15,7 +15,7 @@ The Claude Code binding for `protocols/onboarding.md`. This skill runs the inter
 
 ## What to do
 
-1. Confirm the Brain path (the cloned `goals-os-brain-template` currently in use — ask if ambiguous).
+1. Confirm the Brain path (the cloned Brain Template currently in use — ask if ambiguous).
 2. Ask the user, one area at a time:
    - Which life area to set up first (e.g. "Work", "Health")?
    - What name they want for that area's Area agent (can just reuse the area name)?

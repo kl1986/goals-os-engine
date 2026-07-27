@@ -16,8 +16,13 @@ trap 'rm -rf "$TEMP_DIR"' EXIT
 
 # Paths
 ENGINE_DIR="$(cd "$(dirname "$0")" && pwd)"
-TEMPLATE_DIR="$(dirname "$ENGINE_DIR")/goals-os-brain-template"
+TEMPLATE_DIR=$(find "$(dirname "$ENGINE_DIR")" -maxdepth 1 -type d -name '*brain-template' -print -quit)
 CLONED_BRAIN="$TEMP_DIR/brain"
+
+if [ -z "$TEMPLATE_DIR" ]; then
+    echo "Error: Brain Template checkout not found next to the Engine."
+    exit 1
+fi
 
 echo "Engine directory: $ENGINE_DIR"
 echo "Template directory: $TEMPLATE_DIR"

@@ -123,7 +123,7 @@ class TestTicketNormalization(unittest.TestCase):
 
     def test_long_title_truncated_at_word_boundary_around_60_chars(self):
         long_title = (
-            "Kelvin: decide on the parity-before-release gate, still open "
+            "the user: decide on the parity-before-release gate, still open "
             "though the personal migration decision partially pre-empts it"
         )
         self._write(

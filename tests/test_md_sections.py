@@ -66,11 +66,11 @@ class TestExecuteInsertBeforeNextHeading(unittest.TestCase):
     def test_file_capture_into_empty_section_does_not_touch_the_next(self):
         with tempfile.TemporaryDirectory() as tmp:
             brain = Path(tmp)
-            (brain / "areas" / "home").mkdir(parents=True)
-            dest = brain / "areas" / "home" / "_inbox.md"
+            (brain / "areas" / "household").mkdir(parents=True)
+            dest = brain / "areas" / "household" / "_inbox.md"
             dest.write_text("# Home inbox\n\n## Inbox\n\n## Notes\n- keep me\n")
 
-            execute._file_capture(brain, "areas/home/_inbox.md#Inbox", "- buy milk")
+            execute._file_capture(brain, "areas/household/_inbox.md#Inbox", "- buy milk")
 
             after = dest.read_text()
             self.assertIn("- keep me", after)

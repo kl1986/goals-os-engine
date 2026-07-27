@@ -14,8 +14,8 @@ type: project
 status: Active | Simmering | Incubating | Complete
 goal: <one-line outcome>
 due-date: YYYY-MM-DD | blank
-area: <a goals-os-brain Area slug — must match a folder under areas/>
-lead: Kelvin | <agent or teammate name>
+area: <a Brain Area slug — must match a folder under areas/>
+lead: <the user, an agent, or teammate name>
 repos:
   - <relative path from code_root, e.g. goals-os-engine>
   - <or list omitted if non-code project>
@@ -36,9 +36,9 @@ tags:
 
 ```
 
-`area:` is the Area **slug**, not a human-readable name — this is what lets an Area agent filter its own Projects programmatically during a Planning session. `lead:` carries who's actually driving the work (Kelvin, or a named teammate) — there is no separate folder split for this; everyone's Project notes live flat under `projects/<slug>/`.
+`area:` is the Area **slug**, not a human-readable name — this is what lets an Area agent filter its own Projects programmatically during a Planning session. `lead:` carries who's actually driving the work (the user, an agent, or a named teammate) — there is no separate folder split for this; everyone's Project notes live flat under `projects/<slug>/`.
 
-`repos:` (optional, ADR-0022) is a list of relative paths from the Brain's `code_root` setting representing the codebase(s) this Project's Tickets build into (e.g. `goals-os-engine`, `goals-os-library`, `goals-os-brain`).
+`repos:` (optional, ADR-0022) is a list of relative paths from the Brain's `code_root` setting representing the codebase(s) this Project's Tickets build into (e.g. `engine-repository`, `library-repository`, `brain-repository`).
 - **Absence is meaningful**: If `repos:` is omitted or empty, the Project has no codebase. A code execution pipeline (such as `/build`) encountering a Project without `repos:` will fail closed as a Readiness quarantine, ensuring non-code projects are not executed against.
 - **Multiple repos & resolution**: A Project may declare more than one repository (e.g., Goals OS declares Engine, Library, and Brain repos). Resolution to a specific repo is per-Ticket, decided at run time by the Foreman at Phase 0 and confirmed before spending — never guessed.
 - **No ticket-level repo field**: Ticket frontmatter schema explicitly does NOT include a `repo:` or `repos:` field (per ADR-0022). A Ticket's owning folder (`tasks/projects/<slug>/`) links it to its Project, which is sufficient for Project-level declaration.
@@ -48,7 +48,7 @@ tags:
 v1's Project template also had `Agent Tasks` and `Files` sections; this schema deliberately drops both:
 
 - **Agent Tasks** — v1's table addressed named sub-agent personas (alex/jamie/dave/grace) that don't exist in Goals OS's Capability-agent model (Researcher/Analyst/Writer/Reviewer/Coder, commissioned via `commission.md`, not persistent per-project directs). Any genuinely open work item from a pre-cutover Agent Tasks table becomes a ticket under `tasks/projects/<slug>/` instead (per ADR-0017 below — not a note section at all).
-- **Files** — a Project's folder (`projects/<slug>/`) already holds whatever's attached to it directly; nothing indexes those files by name elsewhere in `goals-os-brain` (Areas and People don't have a Files section either), so a separate list would just duplicate what `ls` already shows.
+- **Files** — a Project's folder (`projects/<slug>/`) already holds whatever's attached to it directly; nothing indexes those files by name elsewhere in the Brain (Areas and People don't have a Files section either), so a separate list would just duplicate what `ls` already shows.
 
 `Notes & progress` **is kept** in the schema (unlike the two above) — a migrated Project's historical entries don't carry over (current-state-only, per ticket 04's resolution), but the section itself stays, empty, for whoever updates the note next. This mirrors `people-tracking.md`'s `Log` section: migration drops history, not the place to write new history.
 
@@ -60,7 +60,7 @@ A one-time migration script (`scripts/migrate_next_actions.py`) moved every exis
 
 ## How a Project note gets created or updated
 
-No script. Whichever Adapter (or Kelvin directly) is creating or updating a Project note writes the file following this schema, then logs the change via the already-existing generic `log-action` skill (`action-log-schema.md`) — `action type` is `project-update` (or `project-create` for a new one), `input link` is the Project note's path. `actor` follows `action-log-schema.md`'s closed taxonomy: `EA` when no more specific Area/Capability agent is directing the change (the common case for a direct migration or ad hoc update), or the addressing Area agent's name when a Planning session is what triggered the update. Never a Protocol's own name — a Protocol isn't an agent and can't be the executor.
+No script. Whichever Adapter (or the user directly) is creating or updating a Project note writes the file following this schema, then logs the change via the already-existing generic `log-action` skill (`action-log-schema.md`) — `action type` is `project-update` (or `project-create` for a new one), `input link` is the Project note's path. `actor` follows `action-log-schema.md`'s closed taxonomy: `EA` when no more specific Area/Capability agent is directing the change (the common case for a direct migration or ad hoc update), or the addressing Area agent's name when a Planning session is what triggered the update. Never a Protocol's own name — a Protocol isn't an agent and can't be the executor.
 
 ## Non-goals (v1)
 

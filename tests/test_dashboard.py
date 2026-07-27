@@ -211,10 +211,10 @@ class TestDropzoneCounts(unittest.TestCase):
         )
 
     def test_non_recursive_ignores_nested_files(self):
-        # Homework/ has real-world sub-subfolders (Kara/Khloe/Both) — the
+        # Homework/ has real-world sub-subfolders (Student One/Student Two/Both) — the
         # spec is explicit this section is top-level-only, so files nested
         # a level deeper don't count.
-        self._touch("Homework", "Kara", "spelling.jpg")
+        self._touch("Homework", "Student One", "spelling.jpg")
         self._touch("Homework", "top-level.jpg")
 
         counts = dashboard._dropzone_counts(self.brain_path)
@@ -297,7 +297,7 @@ class TestWriteDashboard(unittest.TestCase):
             "---\ntype: triage-plan\nsource: voice\ndate: 2026-07-11\nstatus: pending\n---\n\n"
             "| # | capture | preview | route | destination | confidence | approve |\n"
             "|---|---|---|---|---|---|---|\n"
-            "| 1 | [[inbox/raw/voice/x.md]] | preview | Pass A | areas/home/_inbox.md | High | [ ] |\n"
+            "| 1 | [[inbox/raw/voice/x.md]] | preview | Pass A | areas/household/_inbox.md | High | [ ] |\n"
         )
         (self.brain_path / "inbox" / "rule-diffs").mkdir(parents=True)
         (self.brain_path / "inbox" / "rule-diffs" / "2026-07-11-routing-rules.md").write_text(

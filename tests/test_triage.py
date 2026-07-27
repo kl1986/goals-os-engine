@@ -16,7 +16,7 @@ config: routing-rules
 
 ```
 if: source == "voice" and contains("milk")
-then: route -> areas/home/_inbox.md
+then: route -> areas/household/_inbox.md
 confidence: High
 
 # if: source == "email" and contains("invoice")
@@ -36,7 +36,7 @@ class TestParseRoutingRules(unittest.TestCase):
         self.assertEqual(len(rules), 2)
         self.assertEqual(rules[0], {
             "source": "voice", "contains": "milk",
-            "destination": "areas/home/_inbox.md", "confidence": "High",
+            "destination": "areas/household/_inbox.md", "confidence": "High",
         })
         self.assertEqual(rules[1]["source"], "web")
         self.assertIsNone(rules[1]["contains"])
@@ -53,7 +53,7 @@ class TestMatchCaptures(unittest.TestCase):
         captures = [{"id": "1", "source": "voice", "title": "Buy milk", "body": "get milk"}]
         result = triage.match_captures(captures, self.rules)
         self.assertEqual(len(result["routed"]), 1)
-        self.assertEqual(result["routed"][0]["destination"], "areas/home/_inbox.md")
+        self.assertEqual(result["routed"][0]["destination"], "areas/household/_inbox.md")
         self.assertEqual(result["routed"][0]["confidence"], "High")
         self.assertEqual(result["unmatched"], [])
 
@@ -84,7 +84,7 @@ class TestMatchCaptures(unittest.TestCase):
 
 class TestComputeRuleId(unittest.TestCase):
     def test_produces_8_hex_chars(self):
-        rule = {"source": "voice", "contains": "milk", "destination": "areas/home/_inbox.md", "confidence": "High"}
+        rule = {"source": "voice", "contains": "milk", "destination": "areas/household/_inbox.md", "confidence": "High"}
         rule_id = triage.compute_rule_id(rule)
         self.assertEqual(len(rule_id), 8)
         int(rule_id, 16)  # raises ValueError if not valid hex
@@ -94,13 +94,13 @@ class TestComputeRuleId(unittest.TestCase):
         self.assertEqual(triage.compute_rule_id(rule), triage.compute_rule_id(rule))
 
     def test_different_rules_produce_different_ids(self):
-        rule_a = {"source": "voice", "contains": "milk", "destination": "areas/home/_inbox.md", "confidence": "High"}
-        rule_b = {"source": "voice", "contains": "eggs", "destination": "areas/home/_inbox.md", "confidence": "High"}
+        rule_a = {"source": "voice", "contains": "milk", "destination": "areas/household/_inbox.md", "confidence": "High"}
+        rule_b = {"source": "voice", "contains": "eggs", "destination": "areas/household/_inbox.md", "confidence": "High"}
         self.assertNotEqual(triage.compute_rule_id(rule_a), triage.compute_rule_id(rule_b))
 
     def test_stable_across_whitespace_only_edits_to_rule_source_text(self):
-        text_a = 'if: source == "voice" and contains("milk")\nthen: route -> areas/home/_inbox.md\nconfidence: High\n'
-        text_b = 'if:   source ==   "voice"   and contains("milk")\nthen:   route  ->   areas/home/_inbox.md\nconfidence:   High\n'
+        text_a = 'if: source == "voice" and contains("milk")\nthen: route -> areas/household/_inbox.md\nconfidence: High\n'
+        text_b = 'if:   source ==   "voice"   and contains("milk")\nthen:   route  ->   areas/household/_inbox.md\nconfidence:   High\n'
         rule_a = triage.parse_routing_rules(text_a)[0]
         rule_b = triage.parse_routing_rules(text_b)[0]
         self.assertEqual(triage.compute_rule_id(rule_a), triage.compute_rule_id(rule_b))
@@ -119,7 +119,7 @@ class TestWriteTriagePlan(unittest.TestCase):
             "routed": [{
                 "id": "2026-07-11-140203-buy-milk", "source": "voice",
                 "title": "Buy milk", "body": "Remember to buy milk",
-                "destination": "areas/home/_inbox.md", "confidence": "High",
+                "destination": "areas/household/_inbox.md", "confidence": "High",
                 "rule_id": "a1b2c3d4",
             }],
             "unmatched": [{
@@ -135,7 +135,7 @@ class TestWriteTriagePlan(unittest.TestCase):
         self.assertIn("type: triage-plan", text)
         self.assertIn("status: pending", text)
         self.assertIn("Pass A", text)
-        self.assertIn("areas/home/_inbox.md", text)
+        self.assertIn("areas/household/_inbox.md", text)
         self.assertIn("Pass B", text)
         self.assertIn("unmatched", text)
         self.assertIn("[ ]", text)
@@ -146,7 +146,7 @@ class TestWriteTriagePlan(unittest.TestCase):
         self.assertIn("| rule |", text)
         # Pass A row carries the computed rule id.
         self.assertIn(
-            "| Pass A | areas/home/_inbox.md | High | a1b2c3d4 | [ ] |", text
+            "| Pass A | areas/household/_inbox.md | High | a1b2c3d4 | [ ] |", text
         )
         # Pass B row has no rule — always "—".
         self.assertIn(
@@ -158,7 +158,7 @@ class TestWriteTriagePlan(unittest.TestCase):
         del match_result["routed"][0]["rule_id"]
         path = triage.write_triage_plan(self.brain_path, "voice", match_result, date_str="2026-07-11")
         text = path.read_text()
-        self.assertIn("| Pass A | areas/home/_inbox.md | High | — | [ ] |", text)
+        self.assertIn("| Pass A | areas/household/_inbox.md | High | — | [ ] |", text)
 
     def test_rerunning_does_not_duplicate_existing_rows(self):
         triage.write_triage_plan(self.brain_path, "voice", self._match_result(), date_str="2026-07-11")
@@ -192,7 +192,7 @@ class TestWriteTriagePlan(unittest.TestCase):
             "routed": [{
                 "id": "2026-07-11-150000-new-item", "source": "voice",
                 "title": "New item", "body": "something new",
-                "destination": "areas/home/_inbox.md", "confidence": "Medium",
+                "destination": "areas/household/_inbox.md", "confidence": "Medium",
             }],
             "unmatched": [],
         }

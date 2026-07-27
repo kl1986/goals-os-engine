@@ -2,7 +2,7 @@
 
 The distributable core of **Goals OS** — a protocol-first, multi-agent personal operating system whose purpose is getting the user to their goals with an increasing share of the work done away from keyboard.
 
-The Engine contains **zero user data**. It ships protocols, schemas, core routines, and runtime adapters — the part of the system every user shares and every upgrade touches. Nothing personal ever lives here; that all lives in a user's private **Brain** (cloned from a [Brain Template](https://github.com/kl1986/goals-os-brain-template)), so upgrading the Engine never clobbers a user's learnings.
+The Engine contains **zero user data**. It ships protocols, schemas, core routines, and runtime adapters — the part of the system every user shares and every upgrade touches. Nothing personal ever lives here; that all lives in a user's private **Brain** (cloned from the Brain Template), so upgrading the Engine never clobbers a user's learnings.
 
 ## Language
 
@@ -41,6 +41,18 @@ python3 scripts/sync_schedules.py --brain /path/to/brain --dry-run
 ```
 
 It schedules a *trigger* — it is not a session runner, so a consumer wanting an unattended agent session supplies that runner itself as the row's Command.
+
+## Personal-data check
+
+`scripts/personal_data_check.py` reports generic personal-data shapes in a
+publishable repository. Point `--brain` (or `GOALS_OS_BRAIN_PATH`) at a private
+Brain to add its identity terms; the report never prints those values. The
+checker refuses to scan a Brain itself. The public CI runs its generic checks
+in strict mode; use a private Brain locally to add identity checks:
+
+```
+python3 scripts/personal_data_check.py --root . --brain /path/to/brain
+```
 
 ## Decisions
 

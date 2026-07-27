@@ -29,7 +29,7 @@ ENTRY_SONIA_1 = (
     "- **action type:** file-email\n"
     "- **action:** Filed under Home > Finances.\n"
     "- **confidence:** Medium\n"
-    "- **outcome:** Filed to areas/home/_inbox/\n"
+    "- **outcome:** Filed to areas/household/_inbox/\n"
     "- **parent reference:** —\n"
     "- **feedback:** corrected — should have gone to Work, this is a SONIA curve email\n"
 )
@@ -43,7 +43,7 @@ ENTRY_SONIA_2 = (
     "- **action type:** file-email\n"
     "- **action:** Filed under Home > Finances.\n"
     "- **confidence:** Medium\n"
-    "- **outcome:** Filed to areas/home/_inbox/\n"
+    "- **outcome:** Filed to areas/household/_inbox/\n"
     "- **parent reference:** —\n"
     "- **feedback:** corrected — SONIA swaps email, should route to Work not Home\n"
 )
@@ -57,7 +57,7 @@ ENTRY_UNRELATED_VALIDATED = (
     "- **action type:** file-capture\n"
     "- **action:** Filed under Home.\n"
     "- **confidence:** High\n"
-    "- **outcome:** Filed to areas/home/_inbox/\n"
+    "- **outcome:** Filed to areas/household/_inbox/\n"
     "- **parent reference:** —\n"
     "- **feedback:** validated\n"
 )
@@ -149,7 +149,7 @@ class TestProposeGroup(unittest.TestCase):
             "---\ntype: config\nconfig: routing-rules\n---\n\n"
             "# Routing rules\n\n"
             "```\n# if: source == \"text\" and contains(\"milk\")\n"
-            "# then: route -> areas/home/_inbox.md\n# confidence: High\n```\n"
+            "# then: route -> areas/household/_inbox.md\n# confidence: High\n```\n"
         )
         self.now = dt.datetime(2026, 7, 15, 10, 0)
         self.rule_block = (

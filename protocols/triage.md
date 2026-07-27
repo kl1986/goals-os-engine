@@ -15,13 +15,13 @@ The one exception is bookkeeping: each run also bumps its own `Triage` row in `c
 
 ## Pass B and Person Hubs
 
-Pass B considers `people/` a valid destination folder, same standing as `areas/` and `projects/` — it reads `people/_aliases.md` and the `people/` folder listing as context (the same cheap-first-index pattern `wiki/_index.md` already establishes for the Wiki) before deciding whether a capture is person-specific. This is ordinary Pass B judgment, not a new capability or a dedicated resolver script — no `people.py`-style fuzzy-matching/graduated-trust logic is ported from v1; Triage's structural confirm-first-always model (every row needs an explicit tick regardless of confidence) already gives Kelvin the same safety net a wrong guess needs, for free.
+Pass B considers `people/` a valid destination folder, same standing as `areas/` and `projects/` — it reads `people/_aliases.md` and the `people/` folder listing as context (the same cheap-first-index pattern `wiki/_index.md` already establishes for the Wiki) before deciding whether a capture is person-specific. This is ordinary Pass B judgment, not a new capability or a dedicated resolver script — no `people.py`-style fuzzy-matching/graduated-trust logic is ported from v1; Triage's structural confirm-first-always model (every row needs an explicit tick regardless of confidence) already gives the user the same safety net a wrong guess needs, for free.
 
 When Pass B judges a capture person-specific, it proposes a **section-targeted** destination — `people/<Full Name>.md#<heading>` (see `people-tracking.md`'s schema for the four sections) — rather than a bare file path, since a Person Hub has real markdown sections and a blind end-of-file append would land content in the wrong place. `execute.md`'s `file-capture` action type implements the `file#heading` destination form.
 
-Which section is also ordinary Pass B judgment, not a dedicated classifier: outbound framing ("raise X with Kat", "ask Kat about Y") routes to `## 🗣️ To Discuss`; inbound framing ("waiting on Kat for Y", "Kat owes me X") routes to `## ⏳ Waiting For`. Unlike `routing-rules.md`'s deterministic `if`/`then` DSL (built for a non-linguistic signal like sender address — see ticket 03's `route.py` precedent), outbound-vs-inbound framing is a natural-language judgment call squarely inside what Pass B already does — no dedicated classifier script is warranted here.
+Which section is also ordinary Pass B judgment, not a dedicated classifier: outbound framing ("raise X with Example Person", "ask Example Person about Y") routes to `## 🗣️ To Discuss`; inbound framing ("waiting on Example Person for Y", "Example Person owes me X") routes to `## ⏳ Waiting For`. Unlike `routing-rules.md`'s deterministic `if`/`then` DSL (built for a non-linguistic signal like sender address — see ticket 03's `route.py` precedent), outbound-vs-inbound framing is a natural-language judgment call squarely inside what Pass B already does — no dedicated classifier script is warranted here.
 
-Name resolution is also Pass B's own in-session judgment, reading the alias table and hub listing as context — not a ported script. A wrong guess (typo, ambiguous name) just gets corrected by Kelvin editing the `destination` cell before ticking, the same as any other Pass B misclassification.
+Name resolution is also Pass B's own in-session judgment, reading the alias table and hub listing as context — not a ported script. A wrong guess (typo, ambiguous name) just gets corrected by the user editing the `destination` cell before ticking, the same as any other Pass B misclassification.
 
 ## Routing rules (`config/routing-rules.md`)
 
@@ -29,7 +29,7 @@ A hand-written `if`/`then` DSL, not YAML — deliberately, since the Engine carr
 
 ```
 if: source == "text" and contains("milk")
-then: route -> areas/home/_inbox.md
+then: route -> areas/household/_inbox.md
 confidence: High
 ```
 
@@ -51,7 +51,7 @@ status: pending
 
 | # | capture | preview | route | destination | confidence | rule | approve |
 |---|---|---|---|---|---|---|---|
-| 1 | [[inbox/raw/text/2026-07-11-140203-buy-milk]] | Remember to buy milk on the way home. | Pass A | areas/home/_inbox.md | High | a1b2c3d4 | [ ] |
+| 1 | [[inbox/raw/text/2026-07-11-140203-buy-milk]] | Remember to buy milk on the way home. | Pass A | areas/household/_inbox.md | High | a1b2c3d4 | [ ] |
 | 2 | [[inbox/raw/text/2026-07-11-140500-standup-notes]] | discussed the roadmap | Pass B | areas/work/_inbox.md | Medium | — | [ ] |
 ```
 

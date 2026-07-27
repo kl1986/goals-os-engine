@@ -98,7 +98,7 @@ class TestApplyBatch(unittest.TestCase):
             "---\ntype: config\nconfig: routing-rules\n---\n\n"
             "# Routing rules\n\n"
             "```\n# if: source == \"text\" and contains(\"milk\")\n"
-            "# then: route -> areas/home/_inbox.md\n# confidence: High\n```\n"
+            "# then: route -> areas/household/_inbox.md\n# confidence: High\n```\n"
         )
         (self.brain_path / "inbox" / "rule-diffs").mkdir(parents=True)
         self.batch_path = self.brain_path / "inbox" / "rule-diffs" / "2026-07-15-routing-rules.md"

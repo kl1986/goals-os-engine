@@ -70,7 +70,7 @@ def split_destination(destination: str) -> tuple:
 
     `heading` is `None` for a plain file destination — existing behavior,
     a blind end-of-file append. A `file#heading` destination (e.g.
-    `people/Kat.md#🗣️ To Discuss`) targets a specific `## heading`
+    `people/Example Person.md#🗣️ To Discuss`) targets a specific `## heading`
     section: content is inserted before the next heading, never appended
     blindly at EOF (protocols/execute.md, ticket 09's generalization of
     `file-capture-today`'s existing insert-before-heading mechanic to any
