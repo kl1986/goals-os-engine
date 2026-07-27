@@ -710,3 +710,28 @@ def test_the_report_names_the_caveat_check(brain, roots, tmp_path):
     _caveat_brain(brain, "**Caveat** — don't write that value yet.\n")
     report = se.format_report(_run(brain, roots, tmp_path)["findings"], False)
     assert "(d) CLAUDE.md caveat expiry" in report
+
+
+def test_a_caveat_token_inside_inline_code_is_ignored(brain, roots, tmp_path):
+    """Same reasoning as the fence skip, one line down: a `**Caveat**` in
+    backticks is being *discussed*, not declared. Found by running the check
+    against the live Brain, where the sentence documenting the convention
+    flagged itself."""
+    _caveat_brain(
+        brain,
+        "Mark it with the literal token `**Caveat**` plus a `[[wikilink]]` "
+        "to the clearing ticket.\n",
+    )
+    assert _kinds(_run(brain, roots, tmp_path)["findings"], "d") == []
+
+
+def test_a_real_caveat_is_still_found_on_a_line_containing_inline_code(brain, roots, tmp_path):
+    """Masking must not swallow the caveat itself — a caveat about a code
+    symbol is the normal case."""
+    _caveat_brain(
+        brain,
+        "**Caveat** — don't write `status: awaiting-review` until "
+        "[[a-finished-ticket]] lands.\n",
+        ticket=DONE_TICKET,
+    )
+    assert _kinds(_run(brain, roots, tmp_path)["findings"], "d") == ["caveat-expired"]

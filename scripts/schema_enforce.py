@@ -828,18 +828,25 @@ def iter_caveats(text: str):
 
     The marker is the whole mechanism: caveats are only greppable if they are
     *marked*, and sniffing for "not yet"/"wait for" prose would misfire on
-    every sentence that merely describes one. Fenced blocks are skipped so
-    documenting the convention does not trip it.
+    every sentence that merely describes one.
+
+    Fenced blocks are skipped, and inline code is masked before the line is
+    read, so a marker that is being *discussed* rather than *declared* does not
+    trip the check — `**Caveat**` in backticks is documentation. (The live Brain
+    caught this the moment the convention was written down: the sentence
+    explaining the token flagged itself.) Masking preserves offsets, so a
+    genuine caveat about a code symbol is still found on the same line.
     """
     in_fence = False
-    for lineno, line in enumerate(text.splitlines(), start=1):
-        if FENCE_RE.match(line.strip()):
+    for lineno, raw in enumerate(text.splitlines(), start=1):
+        if FENCE_RE.match(raw.strip()):
             in_fence = not in_fence
             continue
+        line = _mask_inline_code(raw)
         if in_fence or CAVEAT_MARKER not in line:
             continue
         targets = [m.group(1).strip() for m in WIKILINK_RE.finditer(line)]
-        yield line, lineno, targets
+        yield raw, lineno, targets
 
 
 def _ticket_status(brain_path: Path, target: str):
