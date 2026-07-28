@@ -149,7 +149,6 @@ class TestWriteTriagePlan(unittest.TestCase):
         self.assertIn("## areas/household/_inbox.md\n", text)
         self.assertIn("## unmatched\n", text)
         self.assertNotIn("|---|", text)
-        self.assertEqual(execute.check_group_headings(text), [])
 
     def test_rows_carry_every_field_and_the_rule_id(self):
         path = triage.write_triage_plan(self.brain_path, "voice", self._match_result(), date_str="2026-07-11")
@@ -199,7 +198,6 @@ class TestWriteTriagePlan(unittest.TestCase):
         # ...and the payload survives as this Row's preview, nothing else.
         self.assertEqual(rows[0]["preview"], "\\" + payload)
         self.assertEqual(execute.check_row_blocks(text), [])
-        self.assertEqual(execute.check_group_headings(text), [])
 
     def test_a_wikilink_in_a_capture_body_cannot_inject_a_capture_link(self):
         """The mirror-image payload: a body that is a bare `[[inbox/raw/…]]`
@@ -281,7 +279,6 @@ class TestWriteTriagePlan(unittest.TestCase):
         path = triage.write_triage_plan(self.brain_path, "voice", self._second_run(), date_str="2026-07-11")
         text = path.read_text()
         self.assertEqual(text.count("## areas/household/_inbox.md"), 1)
-        self.assertEqual(execute.check_group_headings(text), [])
 
     def test_new_row_creates_a_heading_that_does_not_exist_yet(self):
         triage.write_triage_plan(self.brain_path, "voice", self._match_result(), date_str="2026-07-11")
@@ -291,7 +288,48 @@ class TestWriteTriagePlan(unittest.TestCase):
         )
         text = path.read_text()
         self.assertIn("## projects/goals-os/Goals OS.md\n", text)
-        self.assertEqual(execute.check_group_headings(text), [])
+
+    def test_a_hand_rerouted_row_converges_on_the_next_write(self):
+        """Pass B re-routing is a single in-place edit of the Row line
+        (ADR-0031). The heading is never compared, so the misplaced Row is not
+        an error — the next write regroups it rather than leaving the Plan to
+        accumulate Rows under stale headings."""
+        path = triage.write_triage_plan(self.brain_path, "voice", self._match_result(),
+                                        date_str="2026-07-11")
+        path.write_text(path.read_text().replace(
+            "→ `unmatched`", "→ `areas/household/_inbox.md`"))
+
+        triage.write_triage_plan(self.brain_path, "voice", self._second_run(),
+                                 date_str="2026-07-11")
+
+        text = path.read_text()
+        self.assertNotIn("## unmatched", text)
+        rows_under_household = text.split("## areas/household/_inbox.md\n", 1)[1]
+        self.assertEqual(len(execute.parse_plan_rows(rows_under_household)), 3)
+        self.assertEqual(execute.regroup_plan(text), text)
+
+    def test_a_blank_destination_row_does_not_grow_the_plan_on_each_write(self):
+        """Triage's write path re-groups but never refuses, so `regroup_plan`
+        has to be safe on its own here: a Row whose destination a mid-edit save
+        left blank must not accumulate `## ` lines every time a new capture
+        arrives."""
+        path = triage.write_triage_plan(self.brain_path, "voice", self._match_result(),
+                                        date_str="2026-07-11")
+        path.write_text(path.read_text().replace("→ `unmatched`", "→ ``"))
+
+        sizes = []
+        for i in range(3):
+            triage.write_triage_plan(self.brain_path, "voice", {
+                "routed": [], "unmatched": [{
+                    "id": f"2026-07-11-16000{i}-later", "source": "voice",
+                    "title": f"Later {i}", "body": "something else",
+                }],
+            }, date_str="2026-07-11")
+            text = path.read_text()
+            sizes.append(len(text.splitlines()) - 4 * (i + 1))  # minus each new Row
+
+        self.assertEqual(len(set(sizes)), 1, f"plan grew beyond its Rows: {sizes}")
+        self.assertNotIn("## \n", path.read_text())
 
     def test_numbering_continues_globally_across_groups(self):
         triage.write_triage_plan(self.brain_path, "voice", self._match_result(), date_str="2026-07-11")

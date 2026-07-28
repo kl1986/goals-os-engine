@@ -21,7 +21,7 @@ When Pass B judges a capture person-specific, it proposes a **section-targeted**
 
 Which section is also ordinary Pass B judgment, not a dedicated classifier: outbound framing ("raise X with Example Person", "ask Example Person about Y") routes to `## 🗣️ To Discuss`; inbound framing ("waiting on Example Person for Y", "Example Person owes me X") routes to `## ⏳ Waiting For`. Unlike `routing-rules.md`'s deterministic `if`/`then` DSL (built for a non-linguistic signal like sender address — see ticket 03's `route.py` precedent), outbound-vs-inbound framing is a natural-language judgment call squarely inside what Pass B already does — no dedicated classifier script is warranted here.
 
-Name resolution is also Pass B's own in-session judgment, reading the alias table and hub listing as context — not a ported script. A wrong guess (typo, ambiguous name) just gets corrected by the user editing the Row's destination before ticking, the same as any other Pass B misclassification. A re-routed Row also moves under the correct heading, so the two never disagree.
+Name resolution is also Pass B's own in-session judgment, reading the alias table and hub listing as context — not a ported script. A wrong guess (typo, ambiguous name) just gets corrected by the user editing the Row's destination before ticking, the same as any other Pass B misclassification — one edit, in place; the heading is regenerated on the next write.
 
 ## Routing rules (`config/routing-rules.md`)
 
@@ -66,7 +66,9 @@ Each Row is a markdown **task-list item** — never a table row: Obsidian only r
 
 That arity is a contract, not a layout preference: a Row block always has both continuation lines (an empty preview is written as `—`), exactly one of which is the bare capture wikilink, last. It is what lets Execute read a block unambiguously — see `execute.md`'s "Refusals". Because a preview is 60 characters of an untrusted capture's own body, Triage escapes a leading `- ` and any `[[` in it, so preview text can never be shaped like a Row line or a capture link (Principle 10 at the write boundary; `scripts/triage.py`'s `_sanitize()`).
 
-The `## <destination>` heading is **presentation only** — it groups Rows sharing a destination so they can be approved as a run. The Row line's own destination is authoritative: parsing stays line-local (`scripts/execute.py`'s `ROW_RE`, the single owner of the Row shape), and where a Row and its heading disagree, Execute refuses the whole Plan rather than guessing (see `execute.md`).
+The `## <destination>` heading is **presentation only** — it groups Rows sharing a destination so they can be approved as a run. It is *regenerated output*, never read for comparison (ADR-0031): the Row line's own destination is authoritative, parsing stays line-local (`scripts/execute.py`'s `ROW_RE`, the single owner of the Row shape), and both write paths — Triage's own and Execute's — pass the whole Plan through `execute.regroup_plan()`, which moves each Row block under the heading its destination names, creating headings that are needed and dropping ones left empty.
+
+**Re-routing a Row is therefore a single in-place edit**: change the destination on the Row line and stop. The Row executes to its edited destination wherever it currently sits, and the next write regroups it. Leave the Row's number alone — numbering is global and stable, so a re-routed Row keeps its number. The converse also holds: editing a *heading* achieves nothing and is reverted on the next write, because the heading has no authority.
 
 Row numbers are **global across groups and stable** — a Row keeps its number when it is re-routed into another group, and a new Row's number is derived from the highest number already in the Plan, never from counting Rows.
 
@@ -80,7 +82,7 @@ A destination of literal `discard` (rather than a real path) tells Execute to ar
 
 ## Idempotency
 
-Re-running Triage never duplicates a Row, even across a day boundary: `write_triage_plan()` checks the capture wikilink of *every still-open* plan for that source (`inbox/triage/*-{source}.md`, any date — executed plans have already moved to `archive/triage/`) and only adds genuinely new captures. That check matches on the `[[inbox/raw/...]]` wikilink and is format-agnostic, so it held across the ADR-0031 conversion. A capture that's still un-executed the next day doesn't get a second Row in tomorrow's plan just because Triage ran again. Existing Rows — including any Pass-B edits or ticks already made — are left untouched. A new Row is inserted under its own `## <destination>` heading, which is created if it does not exist yet, rather than appended at end-of-file.
+Re-running Triage never duplicates a Row, even across a day boundary: `write_triage_plan()` checks the capture wikilink of *every still-open* plan for that source (`inbox/triage/*-{source}.md`, any date — executed plans have already moved to `archive/triage/`) and only adds genuinely new captures. That check matches on the `[[inbox/raw/...]]` wikilink and is format-agnostic, so it held across the ADR-0031 conversion. A capture that's still un-executed the next day doesn't get a second Row in tomorrow's plan just because Triage ran again. Existing Rows — including any Pass-B edits or ticks already made — are left untouched. A new Row is inserted under its own `## <destination>` heading, which is created if it does not exist yet, rather than appended at end-of-file, and the whole Plan is re-grouped before it is written, so a Plan whose Rows were re-routed by hand converges instead of accumulating Rows under stale headings.
 
 ## Adapter binding
 

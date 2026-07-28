@@ -91,7 +91,7 @@ The inert, per-source proposal listing each un-triaged Raw Capture and where Tri
 _Avoid_: Triage queue, inbox (a Plan is a proposal about captures, not the captures themselves)
 
 **Row**:
-One Raw Capture's proposed routing within a Triage Plan — its destination, how that destination was arrived at (Pass A rule match or Pass B model classification), and its approval state. The unit the user reviews and Execute acts on. A Row carries its own destination; where a Plan groups Rows for readability, the grouping is presentation and the Row remains authoritative (ADR-0031).
+One Raw Capture's proposed routing within a Triage Plan — its destination, how that destination was arrived at (Pass A rule match or Pass B model classification), and its approval state. The unit the user reviews and Execute acts on. A Row carries its own destination and is authoritative; where a Plan groups Rows for readability, the grouping is regenerated from those destinations and is never read back (ADR-0031), so correcting a Row is one in-place edit.
 
 **Approve**:
 The user's explicit per-Row consent for Execute to act on it. Required on every Row regardless of confidence — confidence never substitutes for approval, since acting on confidence alone is graduation (ADR-0006), a separate mechanism. Approving is distinct from *correcting*, which is editing a Row's destination before approving it.

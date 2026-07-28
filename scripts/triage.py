@@ -19,7 +19,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-import execute  # noqa: E402 — reuses ROW_RE so the writer and the parser cannot drift
+# Reuses ROW_RE (so the writer and the parser cannot drift) and regroup_plan
+# (so the Row shape's owner also owns where a Row sits). One-directional:
+# execute imports heartbeat/log_action/md_sections and nothing here, so there
+# is no cycle.
+import execute  # noqa: E402
 import heartbeat  # noqa: E402
 import md_sections  # noqa: E402
 
@@ -300,6 +304,18 @@ def write_triage_plan(brain_path: Path, source: str, match_result: dict, date_st
 
     A new Row is inserted under its own `## <destination>` heading (created if
     absent), not appended at end-of-file — see ADR-0031 and `insert_row_block`.
+    When there is something new to add, the whole Plan is re-grouped through
+    `execute.regroup_plan()` before it is written, so a Plan whose Rows were
+    re-routed by hand converges instead of accumulating Rows under stale
+    headings. Headings are regenerated output, never compared to anything
+    (ADR-0031).
+
+    Note the ordering: a run that adds nothing returns early and does **not**
+    re-group. That is deliberate — grouping is cosmetic, so it is not worth
+    rewriting a file the user may have open to fix only its appearance, and the
+    early return is what keeps a no-op Triage run a genuine no-op. A hand
+    re-routed Row therefore settles on the next run that has a new capture to
+    add, or on the next Execute, whichever comes first.
     """
     date_str = date_str or dt.datetime.now().strftime("%Y-%m-%d")
     triage_dir = brain_path / "inbox" / "triage"
@@ -335,7 +351,7 @@ def write_triage_plan(brain_path: Path, source: str, match_result: dict, date_st
     if not added:
         return plan_path  # nothing new — never create an empty stub, never rewrite
 
-    plan_path.write_text(text)
+    plan_path.write_text(execute.regroup_plan(text))
     return plan_path
 
 

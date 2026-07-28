@@ -48,6 +48,9 @@ Every plan row needs your explicit `[x]` tick before it can be executed,
 regardless of its confidence. Rows are task-list items grouped under a
 `## <destination>` heading, so ticking one is a tap on its checkbox in
 Obsidian and a run of rows sharing a destination can be approved together.
+Correcting a row is one edit: change the destination on the row line itself.
+The heading is regenerated from the rows beneath it, so a corrected row sits
+under the right one again after the next run — you never move it by hand.
 Review or correct the proposed destination in the plan, then tick only the
 rows you want processed. A literal `discard` destination is a deliberate,
 reviewable decision to retain only the archived source record. Details and
@@ -60,8 +63,10 @@ dated link to the existing destination or discards the item, moves the Raw
 Capture to `archive/inbox/<source>/`, marks the row done with a trailing
 `(done)`, and appends a schema-valid entry to `log/YYYY-MM-DD.md`. Unticked
 and failed rows remain open; re-running Execute does not repeat completed
-rows. If any row's destination disagrees with the heading it sits under,
-Execute refuses the whole plan and acts on nothing until you fix it.
+rows. It also regroups the plan under its destination headings on the way
+out. If a row can't be read as an actionable row — its capture wikilink
+missing or duplicated, or its destination left blank mid-edit — Execute
+refuses the whole plan and acts on nothing until you fix it.
 
 The standard destinations are an existing Area or Project inbox, a
 section-targeted Person Hub, `today` for the daily note, or `discard`.

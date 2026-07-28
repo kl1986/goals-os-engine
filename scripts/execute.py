@@ -42,15 +42,19 @@ import md_sections  # noqa: E402
 #         LinkedIn Job Alerts · "Credit Manager, Fraud at Revolut"
 #         [[inbox/raw/email/2026-07-27-010011-credit-manager-fraud.md]]
 #
-# The `## <destination>` heading is presentation only. The Row line carries its
-# own destination, so ROW_RE stays **line-local**: approve/destination/route/
-# confidence/rule are recoverable from one line with no document state and no
-# heading-driven parse. That is what lets triage_pending.py and dashboard.py
-# import parse_plan_rows() and keep working — a heading-authoritative parse
-# would have pushed document structure into every consumer, and would have made
-# re-routing a Row a line-move rather than the in-place text edit it is today.
-# Where a Row's own destination and its enclosing heading disagree, the Row
-# wins and Execute refuses the whole Plan (see check_group_headings()).
+# The `## <destination>` heading is presentation only, in the strong sense: it is
+# **regenerated output and is never read for comparison** (ADR-0031). The Row
+# line carries its own destination, so ROW_RE stays **line-local**:
+# approve/destination/route/confidence/rule are recoverable from one line with no
+# document state and no heading-driven parse. That is what lets triage_pending.py
+# and dashboard.py import parse_plan_rows() and keep working — a heading-
+# authoritative parse would have pushed document structure into every consumer.
+#
+# Because the heading is never an input, a Row sitting under the "wrong" heading
+# is not an error and cannot be one: it executes to its own destination, and
+# `regroup_plan()` moves it under the right heading as part of the same write.
+# Re-routing a capture is therefore a single in-place edit of the Row line —
+# the whole point of keeping the destination on the line.
 #
 # The two fields that are NOT on the Row line — `capture` and `preview` — sit on
 # indented continuation lines belonging to that same list item. This is a
@@ -190,13 +194,15 @@ def _read_block(continuations: list) -> tuple:
     )
 
 
-def _parse_blocks(text: str) -> list:
-    """`[(line_index, row_dict, problem), ...]` in file order. Pure — no I/O.
+def _scan_blocks(text: str) -> list:
+    """`[(start, end, row_dict, problem), ...]` in file order. Pure — no I/O.
 
     A single forward pass: each Row's continuation lines are consumed with it
-    and are never revisited as possible Row starts. `line_index` is the index
-    of the *task* line, the only line Execute ever rewrites (the marker is
-    appended to it); continuation lines are never touched."""
+    and are never revisited as possible Row starts. `start` is the index of the
+    *task* line, the only line Execute ever rewrites (the marker is appended to
+    it); continuation lines are never touched. `end` is one past the block's
+    last continuation line, so `lines[start:end]` is the whole Row — which is
+    what `regroup_plan()` moves around verbatim."""
     lines = text.splitlines()
     out = []
     i = 0
@@ -221,9 +227,15 @@ def _parse_blocks(text: str) -> list:
             seen_capture = seen_capture or bool(CAPTURE_LINE_RE.match(body))
             j += 1
         capture, preview, problem = _read_block(continuations)
-        out.append((i, _row_dict(m, capture, preview), problem))
+        out.append((i, j, _row_dict(m, capture, preview), problem))
         i = j
     return out
+
+
+def _parse_blocks(text: str) -> list:
+    """`[(line_index, row_dict, problem), ...]` in file order — `_scan_blocks`
+    without the block end, which only the re-grouper needs."""
+    return [(start, row, problem) for start, _, row, problem in _scan_blocks(text)]
 
 
 def parse_plan_rows(text: str) -> list:
@@ -237,47 +249,140 @@ def parse_plan_rows(text: str) -> list:
 
 
 def check_row_blocks(text: str) -> list:
-    """Every Row whose continuation lines aren't the writer's shape, as
-    ready-to-print error strings naming the row number."""
-    return [
-        f"Row {row['n']}: malformed Row block — {problem}"
-        for _, row, problem in _parse_blocks(text) if problem
-    ]
+    """Every Row that cannot be read as an actionable Row, as ready-to-print
+    error strings naming the row number. Two kinds, one refusal:
 
-
-def check_group_headings(text: str) -> list:
-    """Every Row whose own destination disagrees with its `## <destination>`
-    heading, as ready-to-print error strings naming the row number.
-
-    The heading is presentation and the Row line is authoritative (ADR-0031),
-    but a disagreement means the Plan says two different things about where a
-    capture goes — so Execute refuses the *whole* Plan rather than silently
-    picking the authoritative reading. Acting on either one would file a
-    capture somewhere the user didn't intend, and a file-capture is the thing
-    the confirm-first gate exists to make deliberate.
-
-    A Row sitting under no heading at all cannot disagree with one, so it is
-    left alone — absence is not a contradiction. The comparison is
-    case-insensitive on stripped text, so `## discard` over a `Discard`
-    destination is not a refusal (`action_type_for()` already treats those as
-    the same destination)."""
+    - **continuation lines that aren't the writer's shape** — the capture is
+      genuinely unrecoverable, so guessing is worse than stopping;
+    - **a blank destination** — `→ `` ` says nothing about where the capture
+      goes, and every reader of a Row would have to invent an answer.
+      `_file_capture` would resolve it to the Brain root and raise an uncaught
+      `IsADirectoryError` mid-run, after earlier Rows had already been filed,
+      archived and logged but before the Plan was rewritten to stamp them; and
+      `regroup_plan` cannot name a group after it. Refusing before any side
+      effect is the only reading that leaves the Plan and the Action Log
+      consistent. Same philosophy as the `unmatched` guard in `execute_plan` —
+      not actionable, so refuse rather than act — raised to a whole-Plan
+      refusal because, unlike `unmatched`, a blank destination also breaks the
+      Rows around it."""
     errors = []
-    heading = None
-    for line in text.splitlines():
-        hm = HEADING_RE.match(line)
-        if hm:
-            heading = hm.group("heading")
-            continue
-        m = ROW_RE.match(line)
-        if not m or heading is None:
-            continue
-        destination = m.group("destination")
-        if destination.strip().lower() != heading.strip().lower():
+    for _, row, problem in _parse_blocks(text):
+        if problem:
+            errors.append(f"Row {row['n']}: malformed Row block — {problem}")
+        if not row["destination"].strip():
             errors.append(
-                f"Row {m.group('n')}: destination {destination!r} disagrees with "
-                f"its enclosing heading '## {heading}'"
+                f"Row {row['n']}: blank destination — a Row must name where its "
+                "capture goes (a path, `today`, `agent: <name>`, or `discard`)."
             )
     return errors
+
+
+def regroup_plan(text: str) -> str:
+    """Rewrite a Plan so every Row block sits under a `## <destination>`
+    heading derived from **that Row's own destination** (ADR-0031).
+
+    The heading is regenerated output, never an input: it is never compared to
+    anything, so it cannot contradict anything. An in-place edit of a Row's
+    destination is therefore a complete re-routing — the Row executes to its
+    edited destination, and the next write moves it under the matching heading,
+    creating that heading if it is absent and dropping any heading left with
+    nothing under it. The accepted trade is that a hand-edit to a *heading* is
+    silently ineffective and reverted on the next write.
+
+    Ordering, chosen so the result is stable and idempotent:
+
+    - **Groups** keep the order of the existing `## ` headings that still
+      receive at least one Row, then any destination with no heading yet, in
+      the order its first Row appears. A destination edit therefore never
+      reshuffles the groups around it.
+    - **Rows within a group** keep their document order. Numbering is global
+      and untouched, so a re-routed Row keeps its number wherever it lands.
+
+    A Row whose destination is **blank** gets no heading at all: `## ` is not a
+    heading any reader would parse back (`HEADING_RE` needs text after the
+    `##`), so emitting one would be read as prose on the next pass and a fresh
+    `## ` emitted below it — the file growing by two lines every run, in a Plan
+    the user is actively editing. Blank-destination Rows are therefore held
+    ungrouped, immediately after the preamble, which is a fixed point. Execute
+    refuses such a Plan outright (`check_row_blocks`); this is what keeps the
+    *other* write path — Triage's, which has no refusal — from degrading a Plan
+    that a mid-edit save or a `route ->  ` rule left with a blank destination.
+
+    Everything that is not a heading and not part of a Row block is preserved:
+    frontmatter, the H1 and any prose above the first heading/Row stay as the
+    preamble; prose inside a section stays with that section (and keeps that
+    heading alive even with no Rows left under it); prose under no heading at
+    all is hoisted into the preamble, which is where free prose lives and the
+    only position for it that survives a second pass. Row blocks move verbatim
+    — tick state, executed marker, indentation and continuation lines all
+    byte-identical.
+
+    Purely textual and driven only by the destination field of Row lines the
+    parser already recognises. A capture's preview is content, never structure
+    (see `_scan_blocks`), so capture-derived text cannot create, name or
+    populate a group."""
+    lines = text.splitlines()
+    spans = {start: (end, row) for start, end, row, _ in _scan_blocks(text)}
+    first_heading = next(
+        (i for i, line in enumerate(lines) if HEADING_RE.match(line)), None
+    )
+    starts = [i for i in (first_heading, min(spans) if spans else None) if i is not None]
+    if not starts:
+        return text  # no Rows and no headings — nothing to group
+
+    preamble = lines[:min(starts)]
+    heading_order, section_prose = [], {}
+    group_order, groups = [], {}
+    headless_prose, ungrouped = [], []
+
+    heading = None
+    i = min(starts)
+    while i < len(lines):
+        if i in spans:
+            end, row = spans[i]
+            block = "\n".join(lines[i:end])
+            destination = row["destination"].strip()
+            if not destination:
+                ungrouped.append(block)  # no nameable heading — see the docstring
+            else:
+                if destination not in groups:
+                    groups[destination] = []
+                    group_order.append(destination)
+                groups[destination].append(block)
+            i = end
+            continue
+        hm = HEADING_RE.match(lines[i])
+        if hm:
+            heading = hm.group("heading").strip()
+            if heading not in section_prose:
+                section_prose[heading] = []
+                heading_order.append(heading)
+        elif lines[i].strip():
+            (section_prose[heading] if heading is not None else headless_prose).append(
+                lines[i]
+            )
+        i += 1
+
+    # Preamble, then anything that cannot carry a heading, then the groups.
+    # Everything before the first group is where the next pass's preamble ends,
+    # which is what makes this arrangement a fixed point.
+    out = "\n".join(preamble).rstrip("\n")
+    if headless_prose:
+        out = out.rstrip("\n") + "\n\n" + "\n".join(headless_prose) + "\n"
+    for block in ungrouped:
+        out = out.rstrip("\n") + "\n\n" + block + "\n"
+    for destination in heading_order + [d for d in group_order if d not in section_prose]:
+        prose = section_prose.get(destination, [])
+        blocks = groups.get(destination, [])
+        if not prose and not blocks:
+            continue  # heading emptied by a re-route — dropped, not preserved
+        out = out.rstrip("\n") + f"\n\n## {destination}\n"
+        if prose:
+            out += "\n" + "\n".join(prose) + "\n"
+        for block in blocks:
+            out += "\n" + block + "\n"
+    out = out.lstrip("\n")
+    return out if out.endswith("\n") else out + "\n"
 
 
 def _mark_executed(line: str, marker: str) -> str:
@@ -438,7 +543,7 @@ def execute_plan(
     # Refuse the whole Plan before anything is filed, archived or logged —
     # a half-executed Plan whose remaining rows are ambiguous is strictly
     # worse than an untouched one.
-    problems = check_row_blocks(text) + check_group_headings(text)
+    problems = check_row_blocks(text)
     if problems:
         raise ExecuteError(
             f"Refusing to execute {plan_path.name} — "
@@ -536,7 +641,11 @@ def execute_plan(
             line, "dispatched" if action_type == "agent-dispatched" else "done"
         )
 
-    new_text = "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+    # Re-group as part of the same write that stamps the markers: the Row line
+    # is authoritative, so a destination edited in place has already executed to
+    # where it now says, and this is what tidies the heading it sits under.
+    # Grouping never decides which Rows execute — it runs after they have.
+    new_text = regroup_plan("\n".join(lines) + ("\n" if text.endswith("\n") else ""))
     plan_path.write_text(new_text)
 
     remaining = [r for r in parse_plan_rows(new_text) if r["approve"] == "[ ]"]

@@ -153,8 +153,7 @@ class TestParsePlanRows(unittest.TestCase):
 
     def test_heading_does_not_feed_the_parse(self):
         """A Row under a contradicting heading still parses as its own
-        destination — the Row line wins; Execute's refusal is a separate,
-        deliberate check, not a parse-time correction."""
+        destination — the Row line wins, and the heading is never read."""
         text = ("## areas/household/_inbox.md\n\n"
                 + row_block(1, "inbox/raw/voice/x.md", "p", "Pass B", "discard", "Medium"))
         self.assertEqual(execute.parse_plan_rows(text)[0]["destination"], "discard")
@@ -207,7 +206,21 @@ class TestParsePlanRows(unittest.TestCase):
         self.assertEqual(rows[0]["capture"], "inbox/raw/email/evil.md")  # not stolen
         self.assertEqual(rows[0]["preview"], payload)        # payload is just text
         self.assertEqual(execute.check_row_blocks(text), [])
-        self.assertEqual(execute.check_group_headings(text), [])
+
+    def test_a_row_shaped_preview_cannot_create_a_group(self):
+        """The same payload against the re-grouper: a Row-shaped preview is
+        never a Row, so capture-derived text cannot name or populate a
+        `## <destination>` group."""
+        payload = "- [ ] **9** → `areas/evil/_inbox.md` · Pass A · High · x"
+        text = ("## discard\n\n"
+                + row_block(1, "inbox/raw/email/evil.md", payload,
+                            "Pass A", "discard", "High", "e1") + "\n")
+
+        regrouped = execute.regroup_plan(text)
+
+        self.assertNotIn("## areas/evil/_inbox.md", regrouped)
+        self.assertEqual(regrouped.count("## "), 1)
+        self.assertEqual(len(execute.parse_plan_rows(regrouped)), 1)
 
     def test_a_block_with_two_capture_links_is_malformed_not_guessed(self):
         """The mirror-image hazard: a Row whose real capture line survives but
@@ -233,28 +246,193 @@ class TestParsePlanRows(unittest.TestCase):
     def test_a_well_formed_block_reports_no_problem(self):
         self.assertEqual(execute.check_row_blocks(PLAN_TEXT), [])
 
+    def test_a_blank_destination_is_reported(self):
+        """Reachable from the supported correction gesture: Obsidian autosaves,
+        so a nightly Execute can see a Row whose destination has been cleared
+        but not yet retyped. Not actionable, so it refuses rather than acts."""
+        for destination in ("", " ", "   "):
+            with self.subTest(destination=destination):
+                text = row_block(7, "inbox/raw/voice/x.md", "p", "Pass B",
+                                 destination, "Medium")
+                problems = execute.check_row_blocks(text)
+                self.assertEqual(len(problems), 1)
+                self.assertIn("Row 7", problems[0])
+                self.assertIn("blank destination", problems[0])
 
-class TestCheckGroupHeadings(unittest.TestCase):
-    def test_matching_heading_and_destination_is_clean(self):
-        self.assertEqual(execute.check_group_headings(PLAN_TEXT), [])
 
-    def test_mismatch_is_reported_with_the_row_number(self):
-        text = ("## discard\n\n"
-                + row_block(7, "inbox/raw/voice/x.md", "p", "Pass B",
-                            "areas/household/_inbox.md", "Medium"))
-        errors = execute.check_group_headings(text)
-        self.assertEqual(len(errors), 1)
-        self.assertIn("Row 7", errors[0])
-        self.assertIn("discard", errors[0])
+def headings_of(text):
+    return [ln[3:].strip() for ln in text.splitlines() if ln.startswith("## ")]
 
-    def test_row_under_no_heading_is_not_a_mismatch(self):
-        text = row_block(1, "inbox/raw/voice/x.md", "p", "Pass B", "discard", "Medium")
-        self.assertEqual(execute.check_group_headings(text), [])
 
-    def test_case_difference_alone_is_not_a_mismatch(self):
-        text = "## discard\n\n" + row_block(
-            1, "inbox/raw/voice/x.md", "p", "Pass B", "Discard", "Medium")
-        self.assertEqual(execute.check_group_headings(text), [])
+def grouping_of(text):
+    """`{heading: [row numbers under it]}` — what the Plan actually says about
+    where each Row sits, read back off the rendered document."""
+    grouped, heading = {}, None
+    for line in text.splitlines():
+        if line.startswith("## "):
+            heading = line[3:].strip()
+            grouped.setdefault(heading, [])
+        else:
+            match = execute.ROW_RE.match(line)
+            if match and heading is not None:
+                grouped[heading].append(match.group("n"))
+    return grouped
+
+
+class TestRegroupPlan(unittest.TestCase):
+    """Headings are regenerated output, never compared (ADR-0031)."""
+
+    def test_a_well_grouped_plan_is_unchanged(self):
+        self.assertEqual(execute.regroup_plan(PLAN_TEXT), PLAN_TEXT)
+
+    def test_a_row_under_the_wrong_heading_is_moved_under_its_own_destination(self):
+        text = PLAN_TEXT.replace(
+            "- [x] **1** → `areas/household/_inbox.md`", "- [x] **1** → `discard`")
+        # The in-place edit alone leaves Row 1 sitting under the old heading...
+        self.assertEqual(grouping_of(text)["areas/household/_inbox.md"], ["1", "3"])
+
+        regrouped = execute.regroup_plan(text)
+
+        self.assertEqual(grouping_of(regrouped),
+                         {"areas/household/_inbox.md": ["3"], "discard": ["1", "2"]})
+
+    def test_an_emptied_heading_is_dropped(self):
+        # Row 2 was the only Row under `## discard`; re-routing it in place
+        # leaves that heading with nothing under it.
+        text = PLAN_TEXT.replace(
+            "- [x] **2** → `discard`", "- [x] **2** → `areas/household/_inbox.md`")
+        self.assertIn("discard", headings_of(text))
+
+        regrouped = execute.regroup_plan(text)
+
+        self.assertEqual(headings_of(regrouped), ["areas/household/_inbox.md"])
+
+    def test_a_needed_heading_that_is_absent_is_created(self):
+        text = PLAN_TEXT.replace(
+            "- [ ] **3** → `areas/household/_inbox.md`",
+            "- [ ] **3** → `projects/goals-os/Goals OS.md`")
+        self.assertNotIn("projects/goals-os/Goals OS.md", headings_of(text))
+
+        regrouped = execute.regroup_plan(text)
+        self.assertIn("projects/goals-os/Goals OS.md", headings_of(regrouped))
+        self.assertEqual(grouping_of(regrouped)["projects/goals-os/Goals OS.md"], ["3"])
+
+    def test_rows_with_no_headings_at_all_gain_them(self):
+        text = ("- [ ] **1** → `discard` · Pass B · — · —\n"
+                "    p\n    [[inbox/raw/voice/a.md]]\n")
+        self.assertEqual(execute.regroup_plan(text),
+                         "## discard\n\n" + text)
+
+    def test_is_idempotent(self):
+        text = PLAN_TEXT.replace(
+            "- [x] **1** → `areas/household/_inbox.md`", "- [x] **1** → `discard`")
+        once = execute.regroup_plan(text)
+        self.assertEqual(execute.regroup_plan(once), once)
+
+    def test_preserves_frontmatter_h1_and_prose(self):
+        text = PLAN_TEXT.replace(
+            "# Triage Plan — voice — 2026-07-11\n",
+            "# Triage Plan — voice — 2026-07-11\n\nA note I typed to myself.\n",
+        )
+        regrouped = execute.regroup_plan(text)
+        self.assertTrue(regrouped.startswith(
+            "---\ntype: triage-plan\nsource: voice\ndate: 2026-07-11\n"
+            "status: pending\n---\n\n# Triage Plan — voice — 2026-07-11\n\n"
+            "A note I typed to myself.\n"
+        ))
+
+    def test_preserves_prose_inside_a_section_and_keeps_that_heading_alive(self):
+        text = PLAN_TEXT.replace("## discard\n\n", "## discard\n\nWhy these go:\n\n")
+        regrouped = execute.regroup_plan(
+            text.replace("→ `discard`", "→ `areas/household/_inbox.md`")
+        )
+        self.assertIn("## discard\n\nWhy these go:\n", regrouped)
+        self.assertEqual(grouping_of(regrouped)["discard"], [])
+
+    def test_preserves_numbering_tick_state_and_executed_markers(self):
+        text = plan_text(
+            with_row(PLAN_ROWS, 2, approve="[x] (done)"), "voice", "2026-07-11",
+        ).replace("- [x] **1** → `areas/household/_inbox.md`", "- [x] **1** → `discard`")
+        regrouped = execute.regroup_plan(text)
+        parsed = {r["n"]: r["approve"] for r in execute.parse_plan_rows(regrouped)}
+        self.assertEqual(parsed, {"1": "[x]", "2": "[x] (done)", "3": "[ ]"})
+        self.assertEqual(
+            sorted(r["n"] for r in execute.parse_plan_rows(regrouped)), ["1", "2", "3"]
+        )
+
+    def test_moves_an_indented_row_block_verbatim(self):
+        text = PLAN_TEXT.replace(
+            "- [x] **2** → `discard`", "  - [x] **2** → `areas/household/_inbox.md`",
+        ).replace("\n    not worth keeping\n    [[", "\n      not worth keeping\n      [[")
+        regrouped = execute.regroup_plan(text)
+        self.assertIn(
+            "  - [x] **2** → `areas/household/_inbox.md` · Pass B · Medium · —\n"
+            "      not worth keeping\n"
+            "      [[inbox/raw/voice/2026-07-11-140500-junk.md]]",
+            regrouped,
+        )
+        # Document order within the group: Rows 1 and 3 were already there,
+        # Row 2 arrives from the group below them.
+        self.assertEqual(grouping_of(regrouped)["areas/household/_inbox.md"],
+                         ["1", "3", "2"])
+
+    def test_group_order_follows_existing_headings_then_new_destinations(self):
+        # Row 3 is the first Row of the first group; re-routing it to a brand
+        # new destination must not hoist that destination to the top.
+        text = PLAN_TEXT.replace(
+            "- [ ] **3** → `areas/household/_inbox.md`", "- [ ] **3** → `today`")
+        self.assertEqual(
+            headings_of(execute.regroup_plan(text)),
+            ["areas/household/_inbox.md", "discard", "today"],
+        )
+
+    def test_a_plan_with_neither_rows_nor_headings_is_returned_unchanged(self):
+        text = "---\nstatus: pending\n---\n\n# Triage Plan\n"
+        self.assertEqual(execute.regroup_plan(text), text)
+
+    def test_a_blank_destination_never_emits_a_heading_and_never_grows(self):
+        """`## ` is not a heading `HEADING_RE` reads back, so emitting one
+        would be re-read as prose and a fresh `## ` emitted below it — two more
+        lines every single run, in a file the user is actively editing."""
+        for destination in ("", " "):
+            with self.subTest(destination=destination):
+                text = PLAN_TEXT.replace(
+                    "- [x] **1** → `areas/household/_inbox.md`",
+                    f"- [x] **1** → `{destination}`")
+                sizes = []
+                for _ in range(6):
+                    text = execute.regroup_plan(text)
+                    sizes.append(len(text.splitlines()))
+
+                self.assertEqual(len(set(sizes)), 1, f"file grew: {sizes}")
+                self.assertNotIn("## \n", text)
+                self.assertNotIn("##  ", text)
+                # The Row itself survives, ungrouped, with its tick intact.
+                rows = {r["n"]: r for r in execute.parse_plan_rows(text)}
+                self.assertEqual(len(rows), 3)
+                self.assertEqual(rows["1"]["approve"], "[x]")
+                self.assertEqual(rows["1"]["capture"],
+                                 "inbox/raw/voice/2026-07-11-140203-buy-milk.md")
+
+    def test_a_blank_destination_row_is_held_above_the_groups(self):
+        text = execute.regroup_plan(PLAN_TEXT.replace(
+            "- [x] **1** → `areas/household/_inbox.md`", "- [x] **1** → ``"))
+        self.assertLess(text.index("**1**"), text.index("## "))
+        self.assertEqual(grouping_of(text),
+                         {"areas/household/_inbox.md": ["3"], "discard": ["2"]})
+
+    def test_headless_prose_settles_in_one_pass(self):
+        """Prose under no heading is hoisted into the preamble — the only
+        position for it that a second pass leaves alone."""
+        text = PLAN_TEXT.replace(
+            "# Triage Plan — voice — 2026-07-11\n",
+            "# Triage Plan — voice — 2026-07-11\n\n"
+            "- [ ] **9** → `discard` · Pass B · — · —\n    p\n"
+            "    [[inbox/raw/voice/z.md]]\n\nA stray note.\n",
+        )
+        once = execute.regroup_plan(text)
+        self.assertIn("A stray note.", once)
+        self.assertEqual(execute.regroup_plan(once), once)
 
 
 class TestExecutePlan(unittest.TestCase):
@@ -374,13 +552,105 @@ class TestExecutePlan(unittest.TestCase):
         self.assertIn("  - [x] **2** → `discard` · Pass B · Medium · — (done)",
                       self.plan_path.read_text())
 
-    def test_refuses_whole_plan_when_a_row_disagrees_with_its_heading(self):
-        # Row 1 is ticked and sits under `## areas/household/_inbox.md`, but
-        # claims `discard`. Nothing at all may happen — not even row 2, which
-        # is ticked and perfectly consistent.
-        text = PLAN_TEXT.replace(
+    def test_in_place_destination_edit_executes_to_the_edited_destination(self):
+        # Re-routing is one edit: change the destination on the Row line. Row 1
+        # was a file-capture, is now a discard, and still sits under the old
+        # heading — which is presentation, so it changes nothing.
+        self.plan_path.write_text(PLAN_TEXT.replace(
             "- [x] **1** → `areas/household/_inbox.md`",
             "- [x] **1** → `discard`",
+        ))
+
+        result = execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
+
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(result["filed"], [])
+        self.assertEqual(len(result["discarded"]), 2)
+        self.assertFalse((self.brain_path / "areas" / "household" / "_inbox.md").exists())
+        self.assertTrue(
+            (self.brain_path / "archive" / "inbox" / "voice"
+             / "2026-07-11-140203-buy-milk.md").exists()
+        )
+
+    def test_the_plan_comes_back_regrouped_after_an_in_place_edit(self):
+        self.plan_path.write_text(PLAN_TEXT.replace(
+            "- [x] **1** → `areas/household/_inbox.md`",
+            "- [x] **1** → `discard`",
+        ))
+
+        execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
+
+        text = self.plan_path.read_text()
+        self.assertEqual(grouping_of(text),
+                         {"areas/household/_inbox.md": ["3"], "discard": ["1", "2"]})
+        self.assertIn("- [x] **1** → `discard` · Pass A · High · a1b2c3d4 (done)", text)
+
+    def test_a_row_moved_under_a_wrong_heading_still_executes_to_its_own_destination(self):
+        # The mirror case: the Row line is untouched, the *heading* is what a
+        # user hand-moved it under. The heading is never read, so the Row files
+        # to its own destination — and is moved back on the way out.
+        rows = "\n\n".join(row_block(**r) for r in PLAN_ROWS)
+        self.plan_path.write_text(
+            "---\ntype: triage-plan\nsource: voice\ndate: 2026-07-11\n"
+            "status: pending\n---\n\n# Triage Plan — voice — 2026-07-11\n\n"
+            "## discard\n\n" + rows + "\n"
+        )
+
+        result = execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
+
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(result["filed"], ["inbox/raw/voice/2026-07-11-140203-buy-milk.md"])
+        self.assertEqual(result["discarded"], ["inbox/raw/voice/2026-07-11-140500-junk.md"])
+        self.assertIn("buy-milk",
+                      (self.brain_path / "areas" / "household" / "_inbox.md").read_text())
+        self.assertEqual(grouping_of(self.plan_path.read_text()),
+                         {"discard": ["2"], "areas/household/_inbox.md": ["1", "3"]})
+
+    def test_regrouping_on_execute_is_idempotent(self):
+        execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
+        once = self.plan_path.read_text()
+        execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
+        self.assertEqual(self.plan_path.read_text(), once)
+
+    def test_ticked_blank_destination_refuses_instead_of_crashing_mid_run(self):
+        """Row 1 is ticked and valid; Row 2 is ticked with a cleared
+        destination. `_file_capture` used to resolve that to the Brain root and
+        raise an uncaught IsADirectoryError *after* Row 1 was filed, archived
+        and logged but *before* the Plan was rewritten — leaving the Plan
+        disagreeing with the Action Log about what had happened."""
+        text = PLAN_TEXT.replace("- [x] **2** → `discard`", "- [x] **2** → ``")
+        self.plan_path.write_text(text)
+
+        with self.assertRaises(execute.ExecuteError) as ctx:
+            execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
+
+        self.assertIn("Row 2", str(ctx.exception))
+        self.assertIn("blank destination", str(ctx.exception))
+        self.assertFalse((self.brain_path / "areas" / "household" / "_inbox.md").exists())
+        self.assertFalse((self.brain_path / "archive").exists())
+        self.assertFalse((self.brain_path / "log").exists())
+        self.assertEqual(self.plan_path.read_text(), text)
+
+    def test_repeated_runs_never_grow_a_plan_holding_a_blank_destination(self):
+        # Unticked, so nothing executes and nothing refuses on the rows that
+        # matter — but execute_plan re-groups on every run regardless.
+        self.plan_path.write_text(
+            PLAN_TEXT.replace("- [ ] **3** → `areas/household/_inbox.md`",
+                              "- [ ] **3** → ``")
+                     .replace("- [x] **", "- [ ] **")
+        )
+        sizes = []
+        for _ in range(3):
+            with self.assertRaises(execute.ExecuteError):
+                execute.execute_plan(self.brain_path, self.plan_path, now=self.now)
+            sizes.append(len(self.plan_path.read_text().splitlines()))
+        self.assertEqual(len(set(sizes)), 1, f"file grew: {sizes}")
+
+    def test_malformed_row_block_still_refuses_the_whole_plan(self):
+        # The other refusal class is unchanged: a Row whose capture cannot be
+        # read unambiguously stops everything, including the clean ticked rows.
+        text = PLAN_TEXT.replace(
+            "    Remember to buy milk\n", "    [[inbox/raw/voice/decoy.md]]\n",
         )
         self.plan_path.write_text(text)
 
@@ -732,7 +1002,10 @@ class TestRefusalHasNoSideEffects(unittest.TestCase):
         # Specifically: the *valid* ticked row did not slip through.
         self.assertFalse((self.brain_path / "areas" / "household" / "_inbox.md").exists())
 
-    def test_heading_mismatch_refuses_before_any_side_effect(self):
+    def test_a_mis_grouped_row_is_not_a_refusal_at_all(self):
+        """The heading is regenerated output, never compared (ADR-0031), so a
+        Row under a heading it does not match runs like any other Row and the
+        hook fires for it — this is the class of refusal that was removed."""
         self._write_plan(
             "## areas/household/_inbox.md\n\n"
             + row_block(1, "inbox/raw/fakesource/good.md", "a filed item",
@@ -741,8 +1014,18 @@ class TestRefusalHasNoSideEffects(unittest.TestCase):
             + row_block(2, "inbox/raw/fakesource/real.md", "mis-grouped",
                         "Pass B", "discard", "Medium", approve="[x]") + "\n"
         )
-        self._assert_refused_untouched("Row 2")
-        self.assertFalse((self.brain_path / "areas" / "household" / "_inbox.md").exists())
+
+        result = execute.execute_plan(
+            self.brain_path, self.plan_path, now=self.now,
+            library_path=self.library_path,
+        )
+
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(result["filed"], ["inbox/raw/fakesource/good.md"])
+        self.assertEqual(result["discarded"], ["inbox/raw/fakesource/real.md"])
+        # Every Row executed, so the Plan archived — regrouped on the way out.
+        self.assertEqual(grouping_of(result["archived_to"].read_text()),
+                         {"areas/household/_inbox.md": ["1"], "discard": ["2"]})
 
     def test_a_clean_plan_in_the_same_fixture_does_execute(self):
         """Guards the test itself: the fixture must be capable of executing,

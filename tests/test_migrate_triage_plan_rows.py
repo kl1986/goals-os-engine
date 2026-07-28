@@ -148,8 +148,10 @@ class TestConvertPlanText(unittest.TestCase):
         # One heading per destination, however many Rows share it.
         self.assertEqual(self.converted.count("## discard"), 1)
 
-    def test_converted_plan_has_no_heading_mismatch(self):
-        self.assertEqual(execute.check_group_headings(self.converted), [])
+    def test_converted_plan_is_already_regrouped(self):
+        """Every Row lands under a heading matching its own destination, so
+        the re-grouper is a no-op on a freshly converted Plan."""
+        self.assertEqual(execute.regroup_plan(self.converted), self.converted)
 
     def test_conversion_is_idempotent(self):
         self.assertEqual(migrate.convert_plan_text(self.converted), self.converted)
@@ -318,7 +320,6 @@ class TestConvertedPlanStillWorks(unittest.TestCase):
         self.assertEqual(captures.count("inbox/raw/email/a.md"), 1)
         self.assertIn("inbox/raw/email/e.md", captures)
         self.assertEqual(sorted(r["n"] for r in rows), ["1", "2", "3", "4", "5"])
-        self.assertEqual(execute.check_group_headings(self.plan.read_text()), [])
 
 
 if __name__ == "__main__":
