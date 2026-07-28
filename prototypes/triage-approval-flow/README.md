@@ -67,9 +67,18 @@ leaves a blank line between Row blocks and the flow never removes it. This
 supports leaving that defect filed rather than fixed: you have to glue the Rows
 by hand, on purpose, in addition to deleting the capture line.
 
-## Status
+## Status — answered
 
-Question partly answered. Findings 1 and 3 are settled and reduce risk.
-Finding 2 is new and needs a decision. **The device check is still the one
-thing this cannot substitute for** — see
+All three findings settled. **Finding 2 was fixed** on the implementation
+branch as `97ab1c5`: group order now comes from the document position of each
+destination's first Row rather than from a matching heading, so renaming or
+deleting a heading leaves the group's position and its Rows' order untouched.
+Verified back through this prototype — `edit_heading` then `regroup` now
+returns the Plan byte-identical, row order `1,2,3,4,5` preserved.
+
+This is the prototype's own justification: the defect was reachable in two
+gestures and invisible to 578 passing tests, because it lived in a *sequence*
+of edits rather than in any single transformation.
+
+**The device check is still the one thing this cannot substitute for** — see
 `projects/goals-os/scratch/Checkbox tap test (Obsidian iOS).md` in the Brain.
