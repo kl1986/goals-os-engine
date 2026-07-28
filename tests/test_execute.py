@@ -61,6 +61,18 @@ PLAN_ROWS = [
 ]
 PLAN_TEXT = plan_text(PLAN_ROWS, "voice", "2026-07-11")
 
+# Three groups, five Rows — the shape the mobile-approval prototype used to
+# reproduce the heading-rename reorder. Rows 1-3 sit in the first group, so a
+# reorder that appends that group at the end is impossible to miss.
+THREE_GROUP_ROWS = [
+    dict(n=n, capture=f"inbox/raw/voice/2026-07-11-1402{n:02d}-x.md",
+         preview=f"capture {n}", route="Pass A", destination=destination,
+         confidence="High")
+    for n, destination in enumerate(
+        ["discard", "discard", "discard", "unmatched",
+         "areas/ho-lee-fook/_inbox.md"], start=1)
+]
+
 
 class TestActionTypeFor(unittest.TestCase):
     def test_discard_destination_is_discard_capture(self):
@@ -264,6 +276,13 @@ def headings_of(text):
     return [ln[3:].strip() for ln in text.splitlines() if ln.startswith("## ")]
 
 
+def row_order(text):
+    """Row numbers in the order the document presents them — what the user
+    scrolls past on a phone, and what a group reorder disturbs."""
+    return [m.group("n") for m in
+            (execute.ROW_RE.match(ln) for ln in text.splitlines()) if m]
+
+
 def grouping_of(text):
     """`{heading: [row numbers under it]}` — what the Plan actually says about
     where each Row sits, read back off the rendered document."""
@@ -376,15 +395,77 @@ class TestRegroupPlan(unittest.TestCase):
         self.assertEqual(grouping_of(regrouped)["areas/household/_inbox.md"],
                          ["1", "3", "2"])
 
-    def test_group_order_follows_existing_headings_then_new_destinations(self):
-        # Row 3 is the first Row of the first group; re-routing it to a brand
-        # new destination must not hoist that destination to the top.
+    def test_group_order_follows_each_destinations_first_row(self):
+        """Groups sort by the document position of their first Row, never by a
+        heading's. Re-routing Row 3 — which sits between Rows 1 and 2 in the
+        document — opens its new group exactly where that Row already is, so no
+        Row moves at all."""
         text = PLAN_TEXT.replace(
             "- [ ] **3** → `areas/household/_inbox.md`", "- [ ] **3** → `today`")
+        regrouped = execute.regroup_plan(text)
+        self.assertEqual(
+            headings_of(regrouped),
+            ["areas/household/_inbox.md", "today", "discard"],
+        )
+        self.assertEqual(row_order(regrouped), ["1", "3", "2"])
+
+    def test_a_new_destination_on_the_last_row_appends_its_group(self):
+        text = PLAN_TEXT.replace("- [x] **2** → `discard`", "- [x] **2** → `today`")
         self.assertEqual(
             headings_of(execute.regroup_plan(text)),
-            ["areas/household/_inbox.md", "discard", "today"],
+            ["areas/household/_inbox.md", "today"],
         )
+
+    def test_renaming_a_heading_keeps_its_group_in_place(self):
+        """The defect this rule exists to fix. `## discard` renamed by hand no
+        longer holds any Row (the Rows still say `discard`), so the old
+        heading-anchored rule dropped it, found `discard` heading-less, and
+        appended the whole group at the end — a silent reorder mid-approval.
+        The rename is still reverted; the group must not move."""
+        text = plan_text(THREE_GROUP_ROWS, "voice", "2026-07-11")
+        self.assertEqual(headings_of(text), ["discard", "unmatched", "areas/ho-lee-fook/_inbox.md"])
+        self.assertEqual(row_order(text), ["1", "2", "3", "4", "5"])
+
+        regrouped = execute.regroup_plan(text.replace("## discard\n", "## keep\n"))
+
+        self.assertEqual(headings_of(regrouped),
+                         ["discard", "unmatched", "areas/ho-lee-fook/_inbox.md"])
+        self.assertEqual(row_order(regrouped), ["1", "2", "3", "4", "5"])
+        self.assertEqual(regrouped, execute.regroup_plan(text))  # rename reverted
+
+    def test_deleting_a_heading_outright_keeps_its_group_in_place(self):
+        text = plan_text(THREE_GROUP_ROWS, "voice", "2026-07-11")
+
+        regrouped = execute.regroup_plan(text.replace("## discard\n\n", ""))
+
+        self.assertEqual(headings_of(regrouped),
+                         ["discard", "unmatched", "areas/ho-lee-fook/_inbox.md"])
+        self.assertEqual(row_order(regrouped), ["1", "2", "3", "4", "5"])
+
+    def test_renaming_the_middle_heading_keeps_every_group_in_place(self):
+        text = plan_text(THREE_GROUP_ROWS, "voice", "2026-07-11")
+
+        regrouped = execute.regroup_plan(text.replace("## unmatched\n", "## sort later\n"))
+
+        self.assertEqual(headings_of(regrouped),
+                         ["discard", "unmatched", "areas/ho-lee-fook/_inbox.md"])
+        self.assertEqual(row_order(regrouped), ["1", "2", "3", "4", "5"])
+
+    def test_a_prose_kept_alive_heading_sorts_by_its_own_position(self):
+        """It has no first Row to sort by, so it holds the one position it does
+        have — its own — and carries its prose with it, between the groups it
+        was written between."""
+        text = plan_text(THREE_GROUP_ROWS, "voice", "2026-07-11").replace(
+            "## unmatched\n", "## unmatched\n\nStill deciding these.\n")
+        emptied = text.replace("→ `unmatched`", "→ `discard`")
+
+        regrouped = execute.regroup_plan(emptied)
+
+        self.assertEqual(headings_of(regrouped),
+                         ["discard", "unmatched", "areas/ho-lee-fook/_inbox.md"])
+        self.assertIn("## unmatched\n\nStill deciding these.\n", regrouped)
+        self.assertEqual(grouping_of(regrouped)["unmatched"], [])
+        self.assertEqual(execute.regroup_plan(regrouped), regrouped)
 
     def test_a_plan_with_neither_rows_nor_headings_is_returned_unchanged(self):
         text = "---\nstatus: pending\n---\n\n# Triage Plan\n"
@@ -420,6 +501,61 @@ class TestRegroupPlan(unittest.TestCase):
         self.assertLess(text.index("**1**"), text.index("## "))
         self.assertEqual(grouping_of(text),
                          {"areas/household/_inbox.md": ["3"], "discard": ["2"]})
+
+    def test_is_idempotent_across_a_sweep_of_disturbed_plans(self):
+        """Idempotence is the hard requirement — both write paths run this on
+        every write — so it is checked over the whole space of disturbances the
+        ordering rule touches, not one case. A second pass must be byte-equal,
+        and so must a third."""
+        base = plan_text(THREE_GROUP_ROWS, "voice", "2026-07-11")
+        with_prose = base.replace("## unmatched\n", "## unmatched\n\nDeciding.\n")
+        cases = {
+            "well-grouped": base,
+            "heading renamed": base.replace("## discard\n", "## keep\n"),
+            "middle heading renamed": base.replace("## unmatched\n", "## later\n"),
+            "last heading renamed": base.replace(
+                "## areas/ho-lee-fook/_inbox.md\n", "## hlf\n"),
+            "heading deleted": base.replace("## discard\n\n", ""),
+            "all headings deleted": "".join(
+                ln + "\n" for ln in base.splitlines() if not ln.startswith("## ")),
+            "new destination mid-plan": base.replace(
+                "**2** → `discard`", "**2** → `today`"),
+            "new destination on last row": base.replace(
+                "**5** → `areas/ho-lee-fook/_inbox.md`", "**5** → `today`"),
+            "first row re-routed to an existing group below": base.replace(
+                "**1** → `discard`", "**1** → `areas/ho-lee-fook/_inbox.md`"),
+            "prose keeps a heading alive": with_prose.replace(
+                "→ `unmatched`", "→ `discard`"),
+            "prose heading kept alive and renamed": with_prose.replace(
+                "→ `unmatched`", "→ `discard`").replace("## discard\n", "## keep\n"),
+            "blank destination": base.replace("**3** → `discard`", "**3** → ``"),
+            "headless prose": base.replace(
+                "# Triage Plan — voice — 2026-07-11\n",
+                "# Triage Plan — voice — 2026-07-11\n\nA stray note.\n"),
+        }
+        for name, text in cases.items():
+            with self.subTest(case=name):
+                once = execute.regroup_plan(text)
+                twice = execute.regroup_plan(once)
+                self.assertEqual(twice, once)
+                self.assertEqual(execute.regroup_plan(twice), once)
+                # No Row is ever lost, whatever the disturbance.
+                self.assertEqual(sorted(row_order(once)), list("12345"))
+
+    def test_the_sweep_of_disturbed_plans_never_reorders_the_groups(self):
+        """Every disturbance that only touches *headings* must leave the Rows
+        in exactly the document order the user last saw."""
+        base = plan_text(THREE_GROUP_ROWS, "voice", "2026-07-11")
+        headings = ["## discard\n", "## unmatched\n",
+                    "## areas/ho-lee-fook/_inbox.md\n"]
+        for heading in headings:
+            for disturbance in ("renamed", "deleted"):
+                with self.subTest(heading=heading.strip(), disturbance=disturbance):
+                    text = base.replace(
+                        heading, "## renamed by hand\n" if disturbance == "renamed"
+                        else "")
+                    self.assertEqual(execute.regroup_plan(text),
+                                     execute.regroup_plan(base))
 
     def test_headless_prose_settles_in_one_pass(self):
         """Prose under no heading is hoisted into the preamble — the only

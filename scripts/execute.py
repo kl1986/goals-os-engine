@@ -287,16 +287,36 @@ def regroup_plan(text: str) -> str:
     edited destination, and the next write moves it under the matching heading,
     creating that heading if it is absent and dropping any heading left with
     nothing under it. The accepted trade is that a hand-edit to a *heading* is
-    silently ineffective and reverted on the next write.
+    silently ineffective and reverted on the next write — reverted in place,
+    without moving the group (see the ordering rule below).
 
     Ordering, chosen so the result is stable and idempotent:
 
-    - **Groups** keep the order of the existing `## ` headings that still
-      receive at least one Row, then any destination with no heading yet, in
-      the order its first Row appears. A destination edit therefore never
-      reshuffles the groups around it.
+    - **Groups** are ordered by the document position of each destination's
+      **first Row** — never by the position of a heading. A group's identity
+      and its position both come from its Rows, the only thing ADR-0031 treats
+      as authoritative, so a heading influences neither: it is output, never
+      input. In a well-grouped Plan first-Row order and heading order are the
+      same, so this is a no-op; it differs only where a heading is out of step
+      with its Rows. Renaming or deleting a heading therefore leaves its
+      group's position and its Rows' order untouched (the earlier
+      heading-anchored rule dropped the renamed heading, found the Rows'
+      destination heading-less, and appended the whole group at the end —
+      a silent reorder mid-approval). Re-routing a Row to a brand-new
+      destination opens that group where the Row already sits, which is the
+      arrangement that moves the fewest Rows; re-routing the *last* Row
+      therefore still appends its new group at the end.
+    - **A heading kept alive by prose with no Rows under it** has no first Row
+      to sort by, so it sorts by its own document position — the only position
+      it has, and the one that keeps its prose where the user last saw it.
+      Its prose is emitted under it, so prose is never orphaned nor absorbed
+      into a neighbouring section.
     - **Rows within a group** keep their document order. Numbering is global
       and untouched, so a re-routed Row keeps its number wherever it lands.
+
+    Every sort key is a distinct line index in the same document, and each
+    emitted group's key line precedes the next group's, so a second pass sorts
+    the same way: the arrangement is a fixed point.
 
     A Row whose destination is **blank** gets no heading at all: `## ` is not a
     heading any reader would parse back (`HEADING_RE` needs text after the
@@ -331,8 +351,8 @@ def regroup_plan(text: str) -> str:
         return text  # no Rows and no headings — nothing to group
 
     preamble = lines[:min(starts)]
-    heading_order, section_prose = [], {}
-    group_order, groups = [], {}
+    heading_order, section_prose, heading_line = [], {}, {}
+    group_order, groups, first_row_line = [], {}, {}
     headless_prose, ungrouped = [], []
 
     heading = None
@@ -348,6 +368,7 @@ def regroup_plan(text: str) -> str:
                 if destination not in groups:
                     groups[destination] = []
                     group_order.append(destination)
+                    first_row_line[destination] = i  # the group's sort key
                 groups[destination].append(block)
             i = end
             continue
@@ -357,6 +378,7 @@ def regroup_plan(text: str) -> str:
             if heading not in section_prose:
                 section_prose[heading] = []
                 heading_order.append(heading)
+                heading_line[heading] = i  # only used if no Row ever names it
         elif lines[i].strip():
             (section_prose[heading] if heading is not None else headless_prose).append(
                 lines[i]
@@ -371,7 +393,11 @@ def regroup_plan(text: str) -> str:
         out = out.rstrip("\n") + "\n\n" + "\n".join(headless_prose) + "\n"
     for block in ungrouped:
         out = out.rstrip("\n") + "\n\n" + block + "\n"
-    for destination in heading_order + [d for d in group_order if d not in section_prose]:
+    ordered = sorted(
+        group_order + [h for h in heading_order if h not in groups],
+        key=lambda d: first_row_line.get(d, heading_line.get(d)),
+    )
+    for destination in ordered:
         prose = section_prose.get(destination, [])
         blocks = groups.get(destination, [])
         if not prose and not blocks:
