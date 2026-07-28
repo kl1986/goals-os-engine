@@ -48,6 +48,7 @@ confidence: High
 | `ruleset` | The target config file's basename without extension (e.g. `routing-rules`). Target path = `config/{ruleset}.md`. |
 | `date` | `YYYY-MM-DD`, the date this batch file was created (matches the filename's date segment). |
 | `status` | `pending` while any diff in the file is undecided; `resolved` once every diff has an explicit Approve or Reject tick (see Lifecycle). |
+| `evidence-basis` | Omit for the normal `corrections` basis. A bootstrap batch for an empty rule-set must set this to `bootstrap-raw-captures` (see below). |
 
 ### Per-diff section
 
@@ -56,13 +57,31 @@ Each diff is a `###`-headed section, in file order, numbered `Diff 1`, `Diff 2`,
 1. **Heading:** `### Diff {n} — {slug}` — `slug` is a short, free-text, kebab-case-by-convention label for human readability. Not normative, not parsed for meaning, not used as an identifier anywhere.
 2. **Rule block:** a fenced code block (` ``` ` / ` ``` `, no language tag), containing the proposed rule **verbatim, in the target rule-set's own native syntax** — exactly the text that gets appended if approved. This mechanism never parses that syntax; it only treats the fenced block as an opaque, complete, appendable unit (ticket 05).
 3. **`**Why:**` line** — one line, plain English, the rationale.
-4. **`**Evidence:**` line** — one line, a comma-separated list of `[[wikilink]]`s to the ≥2 justifying Action Log correction entries, each pointing at a specific entry's heading: `[[log/YYYY-MM-DD#HH:MM — <action type>]]` (matches `action-log-schema.md`'s `### HH:MM — <action type>` heading exactly, so the link resolves to that entry in Obsidian). **Fewer than two links makes the diff malformed** — see Error handling.
+4. **`**Evidence:**` line** — one line, a comma-separated list of `[[wikilink]]`s. Normally these are ≥2 justifying Action Log correction entries, each pointing at a specific entry's heading: `[[log/YYYY-MM-DD#HH:MM — <action type>]]` (matches `action-log-schema.md`'s `### HH:MM — <action type>` heading exactly, so the link resolves to that entry in Obsidian). **Fewer than two links makes the diff malformed** — see Error handling.
 5. **Decision checklist** — exactly two checkbox lines, in this order:
    ```
    - [ ] Approve
    - [ ] Reject
    ```
    Both start unticked. The user (or an Adapter acting only on his explicit instruction) ticks **at most one**. Never tick a box on this surface automatically or speculatively — same discipline as Triage Plan approval.
+
+### Bootstrap evidence exception
+
+The normal correction-evidence requirement cannot seed an empty rule-set: until
+the first rules exist, there may be no corrected classifications from which to
+learn. A **direct user-authorised, confirm-first bootstrap batch** may instead
+use two or more Raw Capture precedents per diff. It must set
+`evidence-basis: bootstrap-raw-captures` in its frontmatter and every Evidence
+link for every diff must point to `[[inbox/raw/...]]`. The `**Why:**` line must
+state the repeated deterministic signal and the intended route.
+
+This exception is deliberately narrow: it is only for an empty
+`config/routing-rules.md`, creates no automatic write, and still requires an explicit
+Approve tick before the rule is appended. Once any live rule exists, all later
+proposals use the normal correction basis; raw-capture evidence is not a
+second ongoing learning path. A partially processed bootstrap batch remains
+eligible until all of its original diffs are decided, so independently approved
+or rejected diffs in that same batch can finish safely after its first append.
 
 ### Processed-state marker
 
