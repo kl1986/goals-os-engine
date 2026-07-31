@@ -1445,5 +1445,99 @@ class TestSourceExecuteHookDestination(unittest.TestCase):
         self.assertEqual(len(result["discarded"]), 1)
 
 
+class TestMultiDestinationRows(unittest.TestCase):
+    """ADR-0033: one Row may name several destinations, and the
+    route/confidence/rule triple is wrapped in an Obsidian comment."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.brain_path = Path(self._tmp.name)
+        for d in ("areas/household", "areas/finances", "projects/bills",
+                  "inbox/raw/voice", "inbox/triage"):
+            (self.brain_path / d).mkdir(parents=True)
+        (self.brain_path / "inbox/raw/voice/2026-07-11-140203-buy-milk.md").write_text("x")
+        self.now = dt.datetime(2026, 7, 11, 15, 0)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _plan(self, destinations, approve="[x]"):
+        # Built directly rather than via row_block(), which backticks a single
+        # destination for you — here the backticks are part of the list syntax.
+        block = (
+            f"- {approve} **1** → {destinations} %%· Pass B · — · —%%\n"
+            "    Remember to buy milk\n"
+            "    [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]]"
+        )
+        path = self.brain_path / "inbox/triage/2026-07-11-voice.md"
+        path.write_text("---\nstatus: pending\n---\n\n# Plan\n\n" + block + "\n")
+        return path
+
+    def test_parses_a_list_and_keeps_destination_as_the_first(self):
+        rows = execute.parse_plan_rows(
+            self._plan("`areas/finances/_inbox.md`, `projects/bills/notes.md`").read_text())
+        self.assertEqual(rows[0]["destinations"],
+                         ["areas/finances/_inbox.md", "projects/bills/notes.md"])
+        # Existing single-valued consumers keep working unchanged.
+        self.assertEqual(rows[0]["destination"], "areas/finances/_inbox.md")
+
+    def test_files_one_capture_to_every_destination_archiving_once(self):
+        plan = self._plan("`areas/finances/_inbox.md`, `projects/bills/notes.md`")
+        result = execute.execute_plan(self.brain_path, plan, now=self.now)
+        self.assertEqual(result["errors"], [])
+        # One capture filed, not two — the Row is one action with two writes.
+        self.assertEqual(len(result["filed"]), 1)
+        for dest in ("areas/finances/_inbox.md", "projects/bills/notes.md"):
+            self.assertIn("buy-milk", (self.brain_path / dest).read_text())
+        self.assertTrue((self.brain_path / "archive/inbox/voice/2026-07-11-140203-buy-milk.md").exists())
+
+    def test_one_action_log_entry_naming_every_destination(self):
+        plan = self._plan("`areas/finances/_inbox.md`, `projects/bills/notes.md`")
+        execute.execute_plan(self.brain_path, plan, now=self.now)
+        log = (self.brain_path / "log" / "2026-07-11.md").read_text()
+        self.assertEqual(log.count("- **action:**"), 1)
+        self.assertIn("areas/finances/_inbox.md", log)
+        self.assertIn("projects/bills/notes.md", log)
+
+    def test_discard_combined_with_a_real_destination_refuses_the_plan(self):
+        plan = self._plan("`areas/finances/_inbox.md`, `discard`")
+        with self.assertRaises(execute.ExecuteError) as ctx:
+            execute.execute_plan(self.brain_path, plan, now=self.now)
+        self.assertIn("cannot be combined", str(ctx.exception))
+        # Refusal is before any side effect: nothing filed, capture untouched.
+        self.assertFalse((self.brain_path / "areas/finances/_inbox.md").exists())
+        self.assertTrue((self.brain_path / "inbox/raw/voice/2026-07-11-140203-buy-milk.md").exists())
+
+    def test_a_repeated_destination_refuses_the_plan(self):
+        plan = self._plan("`areas/finances/_inbox.md`, `areas/finances/_inbox.md`")
+        with self.assertRaises(execute.ExecuteError) as ctx:
+            execute.execute_plan(self.brain_path, plan, now=self.now)
+        self.assertIn("listed twice", str(ctx.exception))
+
+    def test_a_blank_entry_in_the_list_refuses_rather_than_filing_the_rest(self):
+        plan = self._plan("`areas/finances/_inbox.md`, ``")
+        self.assertTrue(any("blank destination" in e
+                            for e in execute.check_row_blocks(plan.read_text())))
+
+    def test_pre_adr_0033_rows_without_the_comment_wrapper_still_parse(self):
+        """No dual *shape* — the `%%` is optional punctuation on one field, so
+        an open Plan written before this change still executes, and both write
+        paths re-emit it wrapped."""
+        line = "- [x] **1** → `areas/household/_inbox.md` · Pass B · — · —"
+        text = ("---\nstatus: pending\n---\n\n# Plan\n\n" + line
+                + "\n    Remember to buy milk\n    [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]]\n")
+        rows = execute.parse_plan_rows(text)
+        self.assertEqual(rows[0]["destinations"], ["areas/household/_inbox.md"])
+        self.assertEqual(rows[0]["approve"], "[x]")
+
+    def test_regrouping_a_multi_destination_row_is_a_fixed_point(self):
+        plan = self._plan("`areas/finances/_inbox.md`, `projects/bills/notes.md`", approve="[ ]")
+        once = execute.regroup_plan(plan.read_text())
+        self.assertEqual(once, execute.regroup_plan(once))
+        # It groups under its first destination — the heading is still derived
+        # from the Row, never read back (ADR-0031 preserved).
+        self.assertIn("## areas/finances/_inbox.md", once)
+
+
 if __name__ == "__main__":
     unittest.main()

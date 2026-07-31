@@ -51,16 +51,20 @@ status: pending
 
 ## areas/household/_inbox.md
 
-- [ ] **1** → `areas/household/_inbox.md` · Pass A · High · a1b2c3d4
+- [ ] **1** → `areas/household/_inbox.md` %%· Pass A · High · a1b2c3d4%%
     Remember to buy milk on the way home.
     [[inbox/raw/text/2026-07-11-140203-buy-milk]]
 
 ## areas/work/_inbox.md
 
-- [ ] **2** → `areas/work/_inbox.md` · Pass B · Medium · —
+- [ ] **2** → `areas/work/_inbox.md`, `projects/roadmap/notes.md` %%· Pass B · Medium · —%%
     discussed the roadmap
     [[inbox/raw/text/2026-07-11-140500-standup-notes]]
 ```
+
+**v0.3 (31/07/2026, ADR-0033)** changes two things about the Row line, both visible above. The destination field takes a **comma-separated list** — one capture filed to each destination in turn — and the `route · confidence · rule` triple is wrapped in `%%…%%`, an Obsidian comment, so the reading surface shows only the checkbox, the number and the destinations. The fields stay on the line, so parsing is still line-local and `ROW_RE` is still the single owner of the Row shape; the `%%` is optional on read, so a Plan written before this still parses and executes.
+
+A multi-destination Row is still **one action**: the capture is archived once, the per-source `execute_hook.py` fires once, and one Action Log entry names every destination. Two combinations are refused as whole-Plan refusals alongside the blank destination — `discard` combined with a real destination (a contradiction), and the same destination listed twice (a duplicate entry). A Row groups under its **first** destination; the heading is regenerated output as before and is never read back.
 
 Each Row is a markdown **task-list item** — never a table row: Obsidian only renders task syntax as an interactive checkbox in a list item, so a table made approval, the one gesture required on every Row, a raw-text edit (ADR-0031). The task line carries, in order, the approve box, the global row number, the destination, the route, the confidence and the rule identifier; the preview and the capture wikilink sit on indented continuation lines, with the wikilink always last.
 

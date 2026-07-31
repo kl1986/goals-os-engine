@@ -110,15 +110,41 @@ import md_sections  # noqa: E402
 # swallowed. It cannot be abused: a preview is a single line, so a payload cannot
 # emit both a capture line and a Row line to reach that state.
 # ---------------------------------------------------------------------------
+# A Row may name **several** destinations, comma-separated, each backticked:
+# `areas/finances/_inbox.md`, `projects/bills-review/…`. One capture, filed to
+# each in turn (ADR-0033). One destination is the overwhelmingly common case
+# and reads identically to the ADR-0031 shape it generalises.
+#
+# The route/confidence/rule triple is wrapped in `%%…%%`, an Obsidian comment,
+# so the reading surface shows only the checkbox, the number and the
+# destinations — the three things being approved — while the fields the
+# Action Log and rule-learning need stay on the line. Wrapping rather than
+# relocating is what keeps parsing **line-local** (ADR-0031's load-bearing
+# property): one line is still independently meaningful, so triage_pending.py
+# and dashboard.py continue to read Rows without knowing anything about layout.
+# The `%%` is optional on read, so a pre-ADR-0033 Plan still parses and still
+# executes — no migration script, and no dual *shape*: this is one optional
+# piece of punctuation on one field, not a second grammar.
+#
+# Only Triage's writer emits the wrapper. Execute's write path deliberately
+# does not add it: it moves Row blocks verbatim and appends the executed
+# marker, and rewriting the line to normalise punctuation would put every
+# Row's tick and marker state through a reformat for a cosmetic gain. So an
+# already-open Plan keeps its unwrapped metadata visible until Triage next
+# writes to it, and new Plans are wrapped from the first write.
+DESTINATION_LIST_RE = r'`[^`]*`(?:\s*,\s*`[^`]*`)*'
 ROW_RE = re.compile(
     r'^[ \t]*- (?P<tick>\[[ x]\])'
     r'\s+\*\*(?P<n>\d+)\*\*'
-    r'\s+→\s+`(?P<destination>[^`]*)`'
-    r'\s+·\s+(?P<route>Pass [AB])'
-    r'\s+·\s+(?P<confidence>[^·]*?)'
-    r'\s+·\s+(?P<rule>[^·]*?)'
+    rf'\s+→\s+(?P<destinations>{DESTINATION_LIST_RE})'
+    r'\s+(?P<meta_open>%%)?·\s+(?P<route>Pass [AB])'
+    r'\s+·\s+(?P<confidence>[^·%]*?)'
+    r'\s+·\s+(?P<rule>[^·%]*?)'
+    r'(?(meta_open)\s*%%|)'
     r'(?:\s+\((?P<marker>done|dispatched)\))?\s*$'
 )
+# Pulls the individual destinations back out of the matched list.
+DESTINATION_RE = re.compile(r'`([^`]*)`')
 # A continuation line of the Row above it: indented, non-blank. A blank line,
 # a heading, or the next Row all end the block.
 ROW_CONTINUATION_RE = re.compile(r'^[ \t]+(?P<text>\S.*?)[ \t]*$')
@@ -129,6 +155,21 @@ FRONTMATTER_STATUS_RE = re.compile(r'^status:\s*\S+\s*$', re.MULTILINE)
 
 class ExecuteError(Exception):
     pass
+
+
+def split_destination_list(field: str) -> list:
+    """The individual destinations of a Row's destination field, in order.
+
+    Empties are preserved rather than dropped: a Row reading ``→ `areas/x`, ` ` ``
+    has said something incomplete, and `check_row_blocks()` must be able to see
+    the blank to refuse the Plan. Silently dropping it would file to `areas/x`
+    and call the half-typed edit done."""
+    return [d.strip() for d in DESTINATION_RE.findall(field or "")]
+
+
+def render_destination_list(destinations) -> str:
+    """The destination field as written back to a Row line."""
+    return ", ".join(f"`{d}`" for d in destinations)
 
 
 def action_type_for(destination: str) -> str:
@@ -169,9 +210,16 @@ def _row_dict(match: re.Match, capture: str, preview: str) -> dict:
     d = match.groupdict()
     marker = d.pop("marker")
     tick = d.pop("tick")
+    d.pop("meta_open", None)  # regex bookkeeping for the optional `%%` wrapper
     d["approve"] = f"{tick} ({marker})" if marker else tick
     d["capture"] = capture
     d["preview"] = preview
+    # `destinations` is the full list; `destination` stays the single-valued
+    # key every existing consumer reads (triage_pending.py, dashboard.py, the
+    # tests) and holds the first — which is the only one on a single-
+    # destination Row, i.e. every Row written before ADR-0033.
+    d["destinations"] = split_destination_list(d.pop("destinations"))
+    d["destination"] = d["destinations"][0] if d["destinations"] else ""
     return d
 
 
@@ -269,10 +317,28 @@ def check_row_blocks(text: str) -> list:
     for _, row, problem in _parse_blocks(text):
         if problem:
             errors.append(f"Row {row['n']}: malformed Row block — {problem}")
-        if not row["destination"].strip():
+        destinations = row["destinations"]
+        if not destinations or any(not d.strip() for d in destinations):
             errors.append(
                 f"Row {row['n']}: blank destination — a Row must name where its "
                 "capture goes (a path, `today`, `agent: <name>`, or `discard`)."
+            )
+            continue
+        # `discard` means "file nowhere", so pairing it with a real destination
+        # is a contradiction the Row cannot be executed under — and unlike a
+        # blank, it looks deliberate, so acting on either reading would be
+        # guessing at which half the user meant (ADR-0033).
+        if len(destinations) > 1 and any(
+            action_type_for(d) == "discard-capture" for d in destinations
+        ):
+            errors.append(
+                f"Row {row['n']}: `discard` cannot be combined with another "
+                "destination — either bin the capture or file it, not both."
+            )
+        if len(set(destinations)) != len(destinations):
+            errors.append(
+                f"Row {row['n']}: the same destination is listed twice — "
+                "filing one capture to it twice would duplicate the entry."
             )
     return errors
 
@@ -596,35 +662,53 @@ def execute_plan(
             errors.append(f"Row {row['n']}: Raw Capture not found at {row['capture']}")
             continue
 
-        destination = row["destination"]
-        if destination.strip().lower() == "unmatched":
+        destinations = row["destinations"]
+        if any(d.strip().lower() == "unmatched" for d in destinations):
             errors.append(f"Row {row['n']}: destination is still 'unmatched' — resolve Pass B before approving.")
             continue
 
+        destination = row["destination"]
+        # The Row's action type is that of its **first** destination. On a
+        # multi-destination Row every entry is a file of some kind — a mixed
+        # Row is refused by `check_row_blocks()` before anything is acted on —
+        # so this classifies the Row as a whole, and drives the one archive
+        # move, one hook call and one Action Log entry it gets below.
         action_type = action_type_for(destination)
         log_id = uuid.uuid4().hex[:8]
         row["log_id"] = log_id
         try:
-            if action_type == "file-capture":
-                entry_line = f"- {date_str} — [[{row['capture']}]] — {row['preview']}\n"
-                _file_capture(brain_path, destination, entry_line)
-                outcome = f"Filed to {destination}"
-                action_desc = f"Filed capture (row {row['n']}) to {destination}."
-                filed.append(row["capture"])
-            elif action_type == "file-capture-today":
-                entry_line = f"- [ ] {row['preview']} — [[{row['capture']}]]\n"
-                _file_capture_today(brain_path, date_str, entry_line)
-                outcome = "Filed to today's daily note"
-                action_desc = f"Filed capture (row {row['n']}) to today's daily note."
-                filed.append(row["capture"])
-            elif action_type == "agent-dispatched":
+            if action_type == "agent-dispatched":
                 outcome = f"Dispatched to {destination} (Reviewer gate pending)"
                 action_desc = f"Dispatched capture (row {row['n']}) to {destination}."
                 agent_dispatched.append(row)
-            else:
+            elif action_type == "discard-capture":
                 outcome = "Discarded — no destination filed"
                 action_desc = f"Discarded capture (row {row['n']}) — no destination."
                 discarded.append(row["capture"])
+            else:
+                # One capture, filed to each destination in turn (ADR-0033).
+                # Ordinary iteration of the single-destination path: an
+                # ExecuteError on the second destination leaves the first
+                # already written, so the partial write is reported against the
+                # Row rather than silently swallowed — the capture is not
+                # archived and the Row keeps its tick, so re-running after the
+                # fix completes it. Filing twice to an already-written
+                # destination is what the duplicate check refuses up front.
+                written = []
+                for d in destinations:
+                    if action_type_for(d) == "file-capture-today":
+                        _file_capture_today(
+                            brain_path, date_str,
+                            f"- [ ] {row['preview']} — [[{row['capture']}]]\n")
+                        written.append("today's daily note")
+                    else:
+                        _file_capture(
+                            brain_path, d,
+                            f"- {date_str} — [[{row['capture']}]] — {row['preview']}\n")
+                        written.append(d)
+                outcome = "Filed to " + ", ".join(written)
+                action_desc = f"Filed capture (row {row['n']}) to {', '.join(written)}."
+                filed.append(row["capture"])
         except ExecuteError as e:
             errors.append(f"Row {row['n']}: {e}")
             continue

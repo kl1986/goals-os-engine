@@ -153,12 +153,14 @@ class TestWriteTriagePlan(unittest.TestCase):
     def test_rows_carry_every_field_and_the_rule_id(self):
         path = triage.write_triage_plan(self.brain_path, "voice", self._match_result(), date_str="2026-07-11")
         text = path.read_text()
-        # Pass A row carries the computed rule id.
+        # Pass A row carries the computed rule id. The route/confidence/rule
+        # triple is wrapped in `%%…%%` so Obsidian hides it in reading view,
+        # while it stays on the line for the Action Log (ADR-0033).
         self.assertIn(
-            "- [ ] **1** → `areas/household/_inbox.md` · Pass A · High · a1b2c3d4", text
+            "- [ ] **1** → `areas/household/_inbox.md` %%· Pass A · High · a1b2c3d4%%", text
         )
         # Pass B row has no rule — always "—".
-        self.assertIn("- [ ] **2** → `unmatched` · Pass B · — · —", text)
+        self.assertIn("- [ ] **2** → `unmatched` %%· Pass B · — · —%%", text)
         rows = {r["n"]: r for r in execute.parse_plan_rows(text)}
         self.assertEqual(rows["1"]["capture"],
                          "inbox/raw/voice/2026-07-11-140203-buy-milk.md")
@@ -169,7 +171,7 @@ class TestWriteTriagePlan(unittest.TestCase):
         del match_result["routed"][0]["rule_id"]
         path = triage.write_triage_plan(self.brain_path, "voice", match_result, date_str="2026-07-11")
         text = path.read_text()
-        self.assertIn("- [ ] **1** → `areas/household/_inbox.md` · Pass A · High · —", text)
+        self.assertIn("- [ ] **1** → `areas/household/_inbox.md` %%· Pass A · High · —%%", text)
 
     def test_a_row_shaped_capture_body_cannot_inject_a_row(self):
         """Principle 10 at the write boundary: a Raw Capture body that is itself

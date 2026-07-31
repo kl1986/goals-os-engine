@@ -235,14 +235,21 @@ def build_row_block(n: int, capture_link: str, preview: str, route: str,
     (preview, then the capture wikilink) demoted to continuation lines so a
     phone-width viewport still shows the checkbox and the destination.
 
+    ADR-0033 generalises `destination` to accept a list — one capture filed to
+    several places — and wraps route/confidence/rule in `%%…%%` so Obsidian
+    hides them in reading view. A plain string is still accepted and is the
+    common case; the fields stay on the line, so parsing is still line-local.
+
     The capture wikilink is always the last line, and there are always exactly
     two continuation lines: `execute._read_block` requires that arity, which is
     what makes a Row block unambiguous rather than a positional guess. An empty
     preview is written as `—` rather than an empty line, both because a blank
     line would terminate the block and orphan the capture link, and because a
     one-line block is malformed by that same rule."""
+    destinations = [destination] if isinstance(destination, str) else list(destination)
     return (
-        f"- [ ] **{n}** → `{destination}` · {route} · {confidence or '—'} · {rule or '—'}\n"
+        f"- [ ] **{n}** → {execute.render_destination_list(destinations)} "
+        f"%%· {route} · {confidence or '—'} · {rule or '—'}%%\n"
         f"{ROW_INDENT}{preview or '—'}\n"
         f"{ROW_INDENT}[[{capture_link}]]"
     )
