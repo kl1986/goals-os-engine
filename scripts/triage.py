@@ -31,6 +31,16 @@ IF_RE = re.compile(
     r'^if:\s*source\s*==\s*"([^"]+)"(?:\s+and\s+contains\("([^"]+)"\))?\s*$', re.IGNORECASE
 )
 THEN_RE = re.compile(r'^then:\s*route\s*->\s*(.+?)\s*$', re.IGNORECASE)
+# `then: discard` — a rule may say a capture is noise, not just where it goes.
+# Until ADR-0034 the rule format could only name a file destination, so the
+# single most repetitive judgement in the Brain ("this sender is noise") was
+# the one thing Pass A could not express: 25 of 32 rows on the 23/07 email plan
+# were discards, every one decided by a model, every one due to recur. The
+# safety property is unchanged and is what makes this affordable — a `discard`
+# rule proposes a Row that still needs an explicit tick, and a discarded
+# capture is archived, not deleted (protocols/capture.md), so the worst case
+# is one unticked Row and a capture recoverable from archive/inbox/.
+THEN_DISCARD_RE = re.compile(r'^then:\s*discard\s*$', re.IGNORECASE)
 CONFIDENCE_RE = re.compile(r'^confidence:\s*(High|Medium|Low)\s*$', re.IGNORECASE)
 
 # Continuation lines of a Row's task line. Four spaces, not the six that would
@@ -74,7 +84,13 @@ def compute_rule_id(rule: dict) -> str:
     if_clause = f'source == "{rule.get("source", "")}"'
     if rule.get("contains"):
         if_clause += f' and contains("{rule["contains"]}")'
-    then_clause = f'route -> {rule.get("destination", "")}'
+    # A `then: discard` rule hashes over `discard`, matching the grammar
+    # THEN_DISCARD_RE accepts. `then: route -> discard` deliberately hashes to
+    # the *same* id: both parse to the same destination and Execute treats them
+    # identically (`action_type_for`), so they are one rule written two ways,
+    # and the id answers "which rule fired" — a question about behaviour.
+    destination = rule.get("destination", "")
+    then_clause = "discard" if destination == "discard" else f"route -> {destination}"
     confidence_clause = rule.get("confidence", "Medium")
     text = f"if: {if_clause} then: {then_clause} confidence: {confidence_clause}"
     normalized = " ".join(text.split())
@@ -103,6 +119,11 @@ def parse_routing_rules(text: str) -> list:
         m = THEN_RE.match(line)
         if m and current is not None:
             current["destination"] = m.group(1)
+            continue
+        if THEN_DISCARD_RE.match(line) and current is not None:
+            # The literal Execute already understands (`action_type_for`), so
+            # a Pass A discard and a Pass B discard are the same Row downstream.
+            current["destination"] = "discard"
             continue
         m = CONFIDENCE_RE.match(line)
         if m and current is not None:

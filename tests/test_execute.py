@@ -421,7 +421,13 @@ class TestRegroupPlan(unittest.TestCase):
         longer holds any Row (the Rows still say `discard`), so the old
         heading-anchored rule dropped it, found `discard` heading-less, and
         appended the whole group at the end — a silent reorder mid-approval.
-        The rename is still reverted; the group must not move."""
+        The rename is still reverted; the group must not move *because of it*.
+
+        Under ADR-0034 the discard group is pinned last regardless, so the
+        fixture's document order (discard first) is not what regrouping emits.
+        What this test still proves is what it was written to prove: the
+        renamed result is identical to the un-renamed result, so the heading
+        edit itself moved nothing."""
         text = plan_text(THREE_GROUP_ROWS, "voice", "2026-07-11")
         self.assertEqual(headings_of(text), ["discard", "unmatched", "areas/ho-lee-fook/_inbox.md"])
         self.assertEqual(row_order(text), ["1", "2", "3", "4", "5"])
@@ -429,8 +435,8 @@ class TestRegroupPlan(unittest.TestCase):
         regrouped = execute.regroup_plan(text.replace("## discard\n", "## keep\n"))
 
         self.assertEqual(headings_of(regrouped),
-                         ["discard", "unmatched", "areas/ho-lee-fook/_inbox.md"])
-        self.assertEqual(row_order(regrouped), ["1", "2", "3", "4", "5"])
+                         ["unmatched", "areas/ho-lee-fook/_inbox.md", "discard"])
+        self.assertEqual(row_order(regrouped), ["4", "5", "1", "2", "3"])
         self.assertEqual(regrouped, execute.regroup_plan(text))  # rename reverted
 
     def test_deleting_a_heading_outright_keeps_its_group_in_place(self):
@@ -439,8 +445,8 @@ class TestRegroupPlan(unittest.TestCase):
         regrouped = execute.regroup_plan(text.replace("## discard\n\n", ""))
 
         self.assertEqual(headings_of(regrouped),
-                         ["discard", "unmatched", "areas/ho-lee-fook/_inbox.md"])
-        self.assertEqual(row_order(regrouped), ["1", "2", "3", "4", "5"])
+                         ["unmatched", "areas/ho-lee-fook/_inbox.md", "discard"])
+        self.assertEqual(row_order(regrouped), ["4", "5", "1", "2", "3"])
 
     def test_renaming_the_middle_heading_keeps_every_group_in_place(self):
         text = plan_text(THREE_GROUP_ROWS, "voice", "2026-07-11")
@@ -448,8 +454,8 @@ class TestRegroupPlan(unittest.TestCase):
         regrouped = execute.regroup_plan(text.replace("## unmatched\n", "## sort later\n"))
 
         self.assertEqual(headings_of(regrouped),
-                         ["discard", "unmatched", "areas/ho-lee-fook/_inbox.md"])
-        self.assertEqual(row_order(regrouped), ["1", "2", "3", "4", "5"])
+                         ["unmatched", "areas/ho-lee-fook/_inbox.md", "discard"])
+        self.assertEqual(row_order(regrouped), ["4", "5", "1", "2", "3"])
 
     def test_a_prose_kept_alive_heading_sorts_by_its_own_position(self):
         """It has no first Row to sort by, so it holds the one position it does
@@ -462,7 +468,7 @@ class TestRegroupPlan(unittest.TestCase):
         regrouped = execute.regroup_plan(emptied)
 
         self.assertEqual(headings_of(regrouped),
-                         ["discard", "unmatched", "areas/ho-lee-fook/_inbox.md"])
+                         ["unmatched", "areas/ho-lee-fook/_inbox.md", "discard"])
         self.assertIn("## unmatched\n\nStill deciding these.\n", regrouped)
         self.assertEqual(grouping_of(regrouped)["unmatched"], [])
         self.assertEqual(execute.regroup_plan(regrouped), regrouped)

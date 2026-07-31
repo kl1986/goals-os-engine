@@ -459,9 +459,20 @@ def regroup_plan(text: str) -> str:
         out = out.rstrip("\n") + "\n\n" + "\n".join(headless_prose) + "\n"
     for block in ungrouped:
         out = out.rstrip("\n") + "\n\n" + block + "\n"
+    # The `discard` group always sorts last, whatever its Rows' positions
+    # (ADR-0034). Noise is the bulk of a Plan and the part needing least
+    # attention — 25 of the 32 Rows on the 23/07 email Plan — so putting it
+    # below everything else means the Rows that want a decision are what you
+    # land on, and Obsidian's native heading fold collapses the rest out of
+    # sight. It stays a fixed point because the key is a property of the
+    # destination, not of the document: a second pass sorts it last again.
+    def group_key(destination):
+        position = first_row_line.get(destination, heading_line.get(destination))
+        return (action_type_for(destination) == "discard-capture", position)
+
     ordered = sorted(
         group_order + [h for h in heading_order if h not in groups],
-        key=lambda d: first_row_line.get(d, heading_line.get(d)),
+        key=group_key,
     )
     for destination in ordered:
         prose = section_prose.get(destination, [])

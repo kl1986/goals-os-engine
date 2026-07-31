@@ -26,6 +26,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import execute  # noqa: E402 — the single owner of Row parsing and group ordering
 import triage  # noqa: E402 — reuses the Row builder rather than re-deriving the new shape
 
 # The pre-ADR-0031 table row. The `rule` column is optional: it was itself a
@@ -149,7 +150,13 @@ def convert_plan_text(text: str) -> str:
         f"## {destination}\n\n" + "\n\n".join(_converted_block(r) for r in group) + "\n"
         for destination, group in grouped.items()
     ]
-    return head + "\n\n" + "\n".join(sections)
+    # Hand the result to the one owner of group ordering rather than emitting a
+    # near-miss. Grouping here follows the order destinations first appear,
+    # which was a regroup fixed point until ADR-0034 pinned the discard group
+    # last; going through `regroup_plan()` keeps "a converted Plan is already
+    # regrouped" true by construction instead of by coincidence, and immune to
+    # the next ordering rule as well.
+    return execute.regroup_plan(head + "\n\n" + "\n".join(sections))
 
 
 def convert_plan_file(plan_path: Path, dry_run: bool = False) -> int:

@@ -431,3 +431,63 @@ class TestRun(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDiscardRules(unittest.TestCase):
+    """ADR-0034: a routing rule may say a capture is noise, not just where it
+    goes — the judgement that was 25 of 32 Rows on the 23/07 email Plan."""
+
+    def test_then_discard_parses_to_the_discard_destination(self):
+        rules = triage.parse_routing_rules(
+            'if: source == "email" and contains("jobalerts-noreply@linkedin.com")\n'
+            "then: discard\n"
+            "confidence: High\n"
+        )
+        self.assertEqual(len(rules), 1)
+        self.assertEqual(rules[0]["destination"], "discard")
+        self.assertEqual(rules[0]["contains"], "jobalerts-noreply@linkedin.com")
+
+    def test_the_two_ways_of_writing_a_discard_rule_share_one_id(self):
+        """`then: discard` and `then: route -> discard` are one rule written
+        two ways — same parsed destination, same Execute behaviour — so the id
+        that answers "which rule fired" must be the same for both."""
+        base = 'if: source == "email" and contains("x")\n'
+        discard = triage.parse_routing_rules(base + "then: discard\n")[0]
+        routed = triage.parse_routing_rules(base + "then: route -> discard\n")[0]
+        self.assertEqual(triage.compute_rule_id(discard),
+                         triage.compute_rule_id(routed))
+
+    def test_a_discard_rule_and_a_routing_rule_differ(self):
+        base = 'if: source == "email" and contains("x")\n'
+        discard = triage.parse_routing_rules(base + "then: discard\n")[0]
+        routed = triage.parse_routing_rules(base + "then: route -> areas/home/_inbox.md\n")[0]
+        self.assertNotEqual(triage.compute_rule_id(discard),
+                            triage.compute_rule_id(routed))
+
+    def test_a_matched_discard_rule_routes_the_capture_at_pass_a(self):
+        rules = triage.parse_routing_rules(
+            'if: source == "email" and contains("linkedin")\nthen: discard\nconfidence: High\n')
+        result = triage.match_captures(
+            [{"source": "email", "title": "t", "body": "from linkedin jobs",
+              "path": "inbox/raw/email/a.md"}], rules)
+        self.assertEqual(len(result["routed"]), 1)
+        self.assertEqual(result["routed"][0]["destination"], "discard")
+        self.assertEqual(result["unmatched"], [])
+
+    def test_execute_reads_a_pass_a_discard_exactly_as_a_pass_b_one(self):
+        self.assertEqual(execute.action_type_for("discard"), "discard-capture")
+
+
+class TestDiscardGroupIsPinnedLast(unittest.TestCase):
+    def test_the_noise_group_sorts_below_every_other_group(self):
+        rows = [
+            "- [ ] **1** → `discard` %%· Pass A · High · aaaaaaaa%%\n    p1\n    [[inbox/raw/email/1.md]]",
+            "- [ ] **2** → `areas/home/_inbox.md` %%· Pass B · — · —%%\n    p2\n    [[inbox/raw/email/2.md]]",
+        ]
+        text = "---\nstatus: pending\n---\n\n# Plan\n\n" + "\n\n".join(rows) + "\n"
+        regrouped = execute.regroup_plan(text)
+        self.assertLess(regrouped.index("## areas/home/_inbox.md"),
+                        regrouped.index("## discard"))
+        # Still a fixed point — the pin is a property of the destination, not
+        # of the document, so a second pass sorts it last again.
+        self.assertEqual(execute.regroup_plan(regrouped), regrouped)
