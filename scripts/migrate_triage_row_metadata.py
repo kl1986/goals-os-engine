@@ -55,6 +55,27 @@ UNWRAPPED_ROW_RE = re.compile(
 ROW_START_RE = re.compile(r'^[ \t]*- \[[ x]\]\s+\*\*\d+\*\*\s+→')
 
 
+# An all-dash metadata segment: Pass B, no confidence, no rule. It states
+# nothing the absence of the segment does not (ADR-0036), so it is stripped
+# rather than wrapped. A Pass A segment carries a real rule id and is kept.
+EMPTY_META_RE = re.compile(
+    r'\s*%%·\s*Pass B\s*·\s*[—-]\s*·\s*[—-]\s*%%'
+)
+
+
+def strip_empty_metadata(text: str):
+    """`(new_text, stripped)` — remove zero-information metadata segments."""
+    out, stripped = [], 0
+    for line in text.splitlines():
+        if execute.ROW_RE.match(line):
+            new_line = EMPTY_META_RE.sub("", line)
+            if new_line != line:
+                stripped += 1
+                line = new_line
+        out.append(line)
+    return "\n".join(out) + ("\n" if text.endswith("\n") else ""), stripped
+
+
 def convert_text(text: str):
     """`(new_text, converted_count, problem_line)`. Pure — no I/O.
 
@@ -62,6 +83,7 @@ def convert_text(text: str):
     wrapped nor convertible; when it is set the caller must discard
     `new_text` and refuse the file.
     """
+    text, _ = strip_empty_metadata(text)
     out, converted = [], 0
     for line in text.splitlines():
         m = UNWRAPPED_ROW_RE.match(line)
@@ -88,9 +110,14 @@ def migrate(brain_path: Path, dry_run: bool = False) -> dict:
         if problem:
             refused[plan.name] = f"unreadable Row line: {problem.strip()!r}"
             continue
-        if not count:
+        # Keyed on the text actually changing, not on the wrap count: a Plan
+        # whose Rows only needed their empty metadata stripped has nothing to
+        # wrap, and an earlier cut keyed on `count` skipped exactly those —
+        # which today is 123 of the Brain's 124 Rows, i.e. the whole point.
+        if new_text == text:
             continue
-        converted[plan.name] = count
+        converted[plan.name] = count or len(
+            [line for line in text.splitlines() if EMPTY_META_RE.search(line)])
         if not dry_run:
             plan.write_text(new_text, encoding="utf-8")
     return {"converted": converted, "refused": refused}

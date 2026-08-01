@@ -137,10 +137,10 @@ ROW_RE = re.compile(
     r'^[ \t]*- (?P<tick>\[[ x]\])'
     r'\s+\*\*(?P<n>\d+)\*\*'
     rf'\s+→\s+(?P<destinations>{DESTINATION_LIST_RE})'
-    r'\s+(?P<meta_open>%%)?·\s+(?P<route>Pass [AB])'
+    r'(?:\s+(?P<meta_open>%%)?·\s+(?P<route>Pass [AB])'
     r'\s+·\s+(?P<confidence>[^·%]*?)'
     r'\s+·\s+(?P<rule>[^·%]*?)'
-    r'(?(meta_open)\s*%%|)'
+    r'(?(meta_open)\s*%%|))?'
     r'(?:\s+\((?P<marker>done|dispatched)\))?\s*$'
 )
 # Pulls the individual destinations back out of the matched list.
@@ -220,6 +220,16 @@ def _row_dict(match: re.Match, capture: str, preview: str) -> dict:
     marker = d.pop("marker")
     tick = d.pop("tick")
     d.pop("meta_open", None)  # regex bookkeeping for the optional `%%` wrapper
+    # The `· route · confidence · rule` segment is optional (ADR-0036). On 123
+    # of the Brain's 124 open Rows it read `· Pass B · — · —`: three fields, no
+    # information, on every line of the surface whose whole job is to be read
+    # while deciding. A Row that omits it *is* a Pass B Row with no rule and no
+    # confidence — that is what those dashes said — so the defaults below are
+    # the same fact, stated by absence instead of by punctuation. Only a Pass A
+    # Row, which has a real rule id worth recording, still carries the segment.
+    d["route"] = d["route"] or "Pass B"
+    d["confidence"] = d["confidence"] or "—"
+    d["rule"] = d["rule"] or "—"
     d["approve"] = f"{tick} ({marker})" if marker else tick
     d["capture"] = capture
     d["preview"] = preview
