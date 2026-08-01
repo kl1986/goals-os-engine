@@ -789,7 +789,17 @@ def execute_plan(
     new_text = regroup_plan("\n".join(lines) + ("\n" if text.endswith("\n") else ""))
     plan_path.write_text(new_text)
 
-    remaining = [r for r in parse_plan_rows(new_text) if r["approve"] == "[ ]"]
+    # A Plan is finished when every Row has actually been *acted on*, which is
+    # what the executed marker records — not merely when no Row is left
+    # unticked. Those differ exactly when a ticked Row errors: an `unmatched`
+    # destination, a missing Raw Capture, a destination directory that is not
+    # there. Such a Row is `[x]` with no marker, and counting it as done
+    # stamped `status: executed` on a Plan where nothing had executed and moved
+    # it out of `inbox/triage/` — off the pending nudge and the Dashboard, with
+    # its captures still sitting in `inbox/raw/`. Ticking a Plan's worth of
+    # still-`unmatched` Rows, which is the natural thing to do on a Plan whose
+    # Pass B has not been resolved, archived the lot in one run.
+    remaining = [r for r in parse_plan_rows(new_text) if not r["approve"].endswith(")")]
     archived_to = None
     if not remaining:
         final_text = FRONTMATTER_STATUS_RE.sub("status: executed", new_text, count=1)

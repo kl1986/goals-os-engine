@@ -1547,3 +1547,58 @@ class TestMultiDestinationRows(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPlanCompletionRequiresActionNotJustATick(unittest.TestCase):
+    """A Plan is finished when every Row has been *acted on*, not when no Row
+    is left unticked. Those differ exactly when a ticked Row errors — and
+    ticking a Plan of still-`unmatched` Rows is the natural thing to do on a
+    Plan whose Pass B has not been resolved."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.brain_path = Path(self._tmp.name)
+        (self.brain_path / "areas" / "household").mkdir(parents=True)
+        (self.brain_path / "inbox" / "raw" / "voice").mkdir(parents=True)
+        (self.brain_path / "inbox" / "triage").mkdir(parents=True)
+        for name in ("a.md", "b.md"):
+            (self.brain_path / "inbox" / "raw" / "voice" / name).write_text("x")
+        self.now = dt.datetime(2026, 7, 11, 15, 0)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _plan(self, *destinations):
+        blocks = [
+            f"- [x] **{i}** → `{d}` %%· Pass B · — · —%%\n    p{i}\n"
+            f"    [[inbox/raw/voice/{name}]]"
+            for i, (d, name) in enumerate(zip(destinations, ("a.md", "b.md")), 1)
+        ]
+        path = self.brain_path / "inbox" / "triage" / "2026-07-11-voice.md"
+        path.write_text("---\nstatus: pending\n---\n\n# Plan\n\n" + "\n\n".join(blocks) + "\n")
+        return path
+
+    def test_a_plan_of_ticked_unmatched_rows_is_not_archived(self):
+        plan = self._plan("unmatched", "unmatched")
+        result = execute.execute_plan(self.brain_path, plan, now=self.now)
+        self.assertEqual(len(result["errors"]), 2)
+        self.assertFalse(result["plan_executed"])
+        self.assertTrue(plan.exists())
+        self.assertIn("status: pending", plan.read_text())
+        # The captures are still there to be triaged once Pass B is resolved.
+        self.assertTrue((self.brain_path / "inbox" / "raw" / "voice" / "a.md").exists())
+
+    def test_a_plan_mixing_one_good_row_and_one_errored_row_is_not_archived(self):
+        plan = self._plan("areas/household/_inbox.md", "unmatched")
+        result = execute.execute_plan(self.brain_path, plan, now=self.now)
+        self.assertEqual(len(result["filed"]), 1)
+        self.assertEqual(len(result["errors"]), 1)
+        self.assertFalse(result["plan_executed"])
+        self.assertTrue(plan.exists())
+
+    def test_a_plan_whose_rows_all_acted_is_still_archived(self):
+        plan = self._plan("areas/household/_inbox.md", "discard")
+        result = execute.execute_plan(self.brain_path, plan, now=self.now)
+        self.assertEqual(result["errors"], [])
+        self.assertTrue(result["plan_executed"])
+        self.assertFalse(plan.exists())
