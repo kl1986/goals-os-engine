@@ -35,6 +35,14 @@ CHECKBOX_RE = re.compile(
 FRONTMATTER_STATUS_RE = re.compile(r'^status:\s*\S+\s*$', re.MULTILINE)
 FRONTMATTER_RULESET_RE = re.compile(r'^ruleset:\s*(\S+)\s*$', re.MULTILINE)
 FRONTMATTER_EVIDENCE_BASIS_RE = re.compile(r'^evidence-basis:\s*(\S+)\s*$', re.MULTILINE)
+# Bases whose evidence is Raw Captures rather than Action Log corrections,
+# validated identically. `bootstrap-raw-captures` was the one-off seeding
+# pass; `sender-marked-noise` is a user ticking "Always bin <sender>" on a
+# Triage Plan (ADR-0035), whose evidence is the captures from that sender
+# sitting in the Plan they ticked it on. Distinct names because the record
+# should say which one produced a rule, identical validation because the
+# question — do these captures exist? — is the same.
+RAW_CAPTURE_EVIDENCE_BASES = {"bootstrap-raw-captures", "sender-marked-noise"}
 ROUTING_IF_RE = re.compile(r'^if:\s*source\s*==\s*"[^"]+"', re.IGNORECASE)
 ROUTING_THEN_RE = re.compile(r'^then:\s*route\s*->\s*.+$', re.IGNORECASE)
 
@@ -152,11 +160,11 @@ def _is_malformed(diff: dict, evidence_basis: str, brain_path: Path) -> str:
         return "fewer than 2 evidence links"
     if diff["approve_ticked"] and diff["reject_ticked"]:
         return "both Approve and Reject ticked"
-    if evidence_basis == "bootstrap-raw-captures":
+    if evidence_basis in RAW_CAPTURE_EVIDENCE_BASES:
         if any(not link.startswith("inbox/raw/") for link in diff["evidence"]):
-            return "bootstrap evidence must link only to inbox/raw/ captures"
+            return "raw-capture evidence must link only to inbox/raw/ captures"
         if any(not _wikilink_path(brain_path, link).is_file() for link in diff["evidence"]):
-            return "bootstrap evidence links a Raw Capture that does not exist"
+            return "raw-capture evidence links a Raw Capture that does not exist"
     elif evidence_basis == "corrections":
         if any(not link.startswith("log/") for link in diff["evidence"]):
             return "normal evidence must link only to Action Log corrections"
@@ -226,13 +234,21 @@ def apply_batch(brain_path: Path, batch_path: Path, now: dt.datetime = None) -> 
     evidence_basis_match = FRONTMATTER_EVIDENCE_BASIS_RE.search(text)
     evidence_basis = evidence_basis_match.group(1) if evidence_basis_match else "corrections"
     diffs = parse_batch(text)
-    if evidence_basis not in {"corrections", "bootstrap-raw-captures"}:
+    if evidence_basis not in {"corrections"} | RAW_CAPTURE_EVIDENCE_BASES:
         raise RuleDiffReviewError(f"Unknown evidence basis: {evidence_basis}")
-    if evidence_basis == "bootstrap-raw-captures":
+    if evidence_basis in RAW_CAPTURE_EVIDENCE_BASES:
         if ruleset != "routing-rules":
-            raise RuleDiffReviewError("Bootstrap raw-capture evidence is only supported for routing-rules")
+            raise RuleDiffReviewError("Raw-capture evidence is only supported for routing-rules")
         if not target_path.exists():
             raise RuleDiffReviewError(f"Target rule-set file does not exist: {target_path}")
+    # The empty-file guard belongs to `bootstrap-raw-captures` alone: that
+    # basis exists to seed rules into a Brain that has none, so finding live
+    # rules means the bootstrap has already happened and re-running it would
+    # duplicate the seed. `sender-marked-noise` is the opposite case by
+    # construction — the user is ticking a sender on a Brain that is already
+    # running, and will almost always have rules — so applying the guard to it
+    # would make the checkbox work exactly once, on an empty config.
+    if evidence_basis == "bootstrap-raw-captures":
         if _has_live_routing_rule(target_path) and not any(_is_processed(diff) for diff in diffs):
             raise RuleDiffReviewError("Bootstrap raw-capture evidence requires an empty routing-rules.md")
 

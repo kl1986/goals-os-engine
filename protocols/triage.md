@@ -51,16 +51,20 @@ status: pending
 
 ## areas/household/_inbox.md
 
-- [ ] **1** → `areas/household/_inbox.md` · Pass A · High · a1b2c3d4
+- [ ] **1** → `areas/household/_inbox.md` %%· Pass A · High · a1b2c3d4%%
     Remember to buy milk on the way home.
     [[inbox/raw/text/2026-07-11-140203-buy-milk]]
 
 ## areas/work/_inbox.md
 
-- [ ] **2** → `areas/work/_inbox.md` · Pass B · Medium · —
+- [ ] **2** → `areas/work/_inbox.md`, `projects/roadmap/notes.md` %%· Pass B · Medium · —%%
     discussed the roadmap
     [[inbox/raw/text/2026-07-11-140500-standup-notes]]
 ```
+
+**v0.3 (31/07/2026, ADR-0033)** changes two things about the Row line, both visible above. The destination field takes a **comma-separated list** — one capture filed to each destination in turn — and the `route · confidence · rule` triple is wrapped in `%%…%%`, an Obsidian comment, so the reading surface shows only the checkbox, the number and the destinations. The fields stay on the line, so parsing is still line-local and `ROW_RE` is still the single owner of the Row shape; the `%%` is optional on read, so a Plan written before this still parses and executes.
+
+A multi-destination Row is still **one action**: the capture is archived once, the per-source `execute_hook.py` fires once, and one Action Log entry names every destination. Two combinations are refused as whole-Plan refusals alongside the blank destination — `discard` combined with a real destination (a contradiction), and the same destination listed twice (a duplicate entry). A Row groups under its **first** destination; the heading is regenerated output as before and is never read back.
 
 Each Row is a markdown **task-list item** — never a table row: Obsidian only renders task syntax as an interactive checkbox in a list item, so a table made approval, the one gesture required on every Row, a raw-text edit (ADR-0031). The task line carries, in order, the approve box, the global row number, the destination, the route, the confidence and the rule identifier; the preview and the capture wikilink sit on indented continuation lines, with the wikilink always last.
 
@@ -78,7 +82,13 @@ The `rule` field records which `config/routing-rules.md` rule fired for a Pass A
 
 A Brain still holding Plans in the pre-ADR-0031 markdown table converts them with the one-time script `scripts/migrate_triage_plan_rows.py --brain <brain>` (add `--dry-run` first to see what it would do). It rewrites every open Plan in `inbox/triage/` into this shape, preserving each Row's number, destination, route, confidence, rule identifier, preview, capture link and approval/executed state, and is a no-op on a Plan already converted. It deliberately does not touch `archive/triage/` — an archived Plan is a record of what was executed, not something anyone will tick again. If a Plan holds a table line the script cannot parse (a hand-typed `[X]`, a dropped cell), it **refuses that file untouched and names the line** rather than converting the rest, because the rewrite would delete that line and the approval state with it. There is no dual-shape parsing: `ROW_RE` reads the task-list shape only, so a Plan must be converted before Execute, the nudge or the Dashboard will see its Rows.
 
-A destination of literal `discard` (rather than a real path) tells Execute to archive the Raw Capture with nothing filed — the right call when Pass B decides an item isn't worth keeping. Pass A never writes `discard`; only in-session Pass B classification does.
+A destination of literal `discard` (rather than a real path) tells Execute to archive the Raw Capture with nothing filed — the right call when an item isn't worth keeping.
+
+**v0.4 (31/07/2026, ADR-0034):** Pass A can now write `discard` too. A rule may say `then: discard` in place of `then: route -> <path>`, so "this sender is noise" — the most repetitive judgement in the Brain, and 25 of 32 Rows on the 23/07 email Plan — is expressible as a deterministic rule instead of a per-capture model decision. It parses to the same `discard` literal Pass B writes, so the Row is identical downstream and Execute is unchanged. (`then: route -> discard` is accepted as the same rule and shares its id.)
+
+The `discard` group is **pinned below every other group** in a Plan, whatever its Rows' positions, so the Rows wanting a decision are what you land on and Obsidian's native heading fold collapses the noise out of sight. Note this is a `##` heading rather than a callout: a callout's lines start `> `, which `ROW_RE` does not match, so Rows inside one would be invisible to Execute, the nudge and the Dashboard.
+
+Noise Rows are **not pre-ticked**. "Default to noise" means classified as noise, not approved as noise — every Row still needs an explicit `[x]`, and pre-ticking would make Triage's write an approval on the user's behalf, which is graduation (Phase 5), not classification.
 
 ## Idempotency
 

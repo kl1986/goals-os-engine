@@ -31,6 +31,16 @@ IF_RE = re.compile(
     r'^if:\s*source\s*==\s*"([^"]+)"(?:\s+and\s+contains\("([^"]+)"\))?\s*$', re.IGNORECASE
 )
 THEN_RE = re.compile(r'^then:\s*route\s*->\s*(.+?)\s*$', re.IGNORECASE)
+# `then: discard` — a rule may say a capture is noise, not just where it goes.
+# Until ADR-0034 the rule format could only name a file destination, so the
+# single most repetitive judgement in the Brain ("this sender is noise") was
+# the one thing Pass A could not express: 25 of 32 rows on the 23/07 email plan
+# were discards, every one decided by a model, every one due to recur. The
+# safety property is unchanged and is what makes this affordable — a `discard`
+# rule proposes a Row that still needs an explicit tick, and a discarded
+# capture is archived, not deleted (protocols/capture.md), so the worst case
+# is one unticked Row and a capture recoverable from archive/inbox/.
+THEN_DISCARD_RE = re.compile(r'^then:\s*discard\s*$', re.IGNORECASE)
 CONFIDENCE_RE = re.compile(r'^confidence:\s*(High|Medium|Low)\s*$', re.IGNORECASE)
 
 # Continuation lines of a Row's task line. Four spaces, not the six that would
@@ -74,7 +84,13 @@ def compute_rule_id(rule: dict) -> str:
     if_clause = f'source == "{rule.get("source", "")}"'
     if rule.get("contains"):
         if_clause += f' and contains("{rule["contains"]}")'
-    then_clause = f'route -> {rule.get("destination", "")}'
+    # A `then: discard` rule hashes over `discard`, matching the grammar
+    # THEN_DISCARD_RE accepts. `then: route -> discard` deliberately hashes to
+    # the *same* id: both parse to the same destination and Execute treats them
+    # identically (`action_type_for`), so they are one rule written two ways,
+    # and the id answers "which rule fired" — a question about behaviour.
+    destination = rule.get("destination", "")
+    then_clause = "discard" if destination == "discard" else f"route -> {destination}"
     confidence_clause = rule.get("confidence", "Medium")
     text = f"if: {if_clause} then: {then_clause} confidence: {confidence_clause}"
     normalized = " ".join(text.split())
@@ -103,6 +119,11 @@ def parse_routing_rules(text: str) -> list:
         m = THEN_RE.match(line)
         if m and current is not None:
             current["destination"] = m.group(1)
+            continue
+        if THEN_DISCARD_RE.match(line) and current is not None:
+            # The literal Execute already understands (`action_type_for`), so
+            # a Pass A discard and a Pass B discard are the same Row downstream.
+            current["destination"] = "discard"
             continue
         m = CONFIDENCE_RE.match(line)
         if m and current is not None:
@@ -200,6 +221,67 @@ def _preview(body: str, length: int = 60) -> str:
     return text if len(text) <= length else text[: length - 1] + "…"
 
 
+# An email capture's body opens with `**From:**` / `**Subject:**` headers
+# (the email plugin's `build_capture_body()`), so a blind first-N-characters
+# preview spends its whole budget on the From line — address included — and
+# truncates mid-word before the Subject ever appears:
+#
+#     **From:** "ICAS / CA Weekly" <Update@update.icas.com> **Sub…
+#
+# The subject is the one field a person triages on, and it was invisible on
+# every email Row in the Brain. These pull the two fields out and compose
+# `Sender — Subject` instead, dropping the labels and the raw address, which
+# buys back roughly forty characters of the thing worth reading.
+EMAIL_FROM_RE = re.compile(r'^\*\*From:\*\*\s*(.+?)\s*$', re.MULTILINE)
+EMAIL_SUBJECT_RE = re.compile(r'^\*\*Subject:\*\*\s*(.+?)\s*$', re.MULTILINE)
+EMAIL_ADDRESS_RE = re.compile(r'\s*<[^>]*>\s*')
+# Sender is capped well below the whole so a long display name can never crowd
+# out the subject; the subject takes whatever is left.
+EMAIL_SENDER_LEN = 28
+EMAIL_PREVIEW_LEN = 90
+
+
+def _email_preview(body: str):
+    """`Sender — Subject` for an email capture, or None if it doesn't look like
+    one (in which case the caller falls back to the generic preview).
+
+    The extracted fields are still untrusted capture content — a `Subject:`
+    header is attacker-controlled in exactly the way a body is — so they go
+    through `_sanitize()` and the length cap the same as any other preview.
+    Principle 10 is enforced here, not assumed from the header shape."""
+    subject_match = EMAIL_SUBJECT_RE.search(body)
+    if not subject_match:
+        return None
+    subject = _sanitize(subject_match.group(1))
+    from_match = EMAIL_FROM_RE.search(body)
+    sender = _sanitize(EMAIL_ADDRESS_RE.sub("", from_match.group(1))).strip('" ') if from_match else ""
+    if sender and len(sender) > EMAIL_SENDER_LEN:
+        sender = sender[: EMAIL_SENDER_LEN - 1] + "…"
+    composed = f"**{sender}** — {subject}" if sender else subject
+    if len(composed) > EMAIL_PREVIEW_LEN:
+        composed = composed[: EMAIL_PREVIEW_LEN - 1] + "…"
+    return composed
+
+
+def structured_preview(body: str, source: str = None):
+    """The preview derived from a capture's *structure* rather than from the
+    first N characters of its text, or None where no such derivation exists.
+
+    Separated from `preview_for()` so a caller that only has the capture file
+    — `refresh_triage_previews.py` — can tell "I can do better than what is
+    written" from "I would merely produce something different". The generic
+    fallback is position-based and depends on exactly the body Triage was
+    handed at stamp time, which is not recoverable from the file alone."""
+    if source == "email":
+        return _email_preview(body)
+    return None
+
+
+def preview_for(body: str, source: str = None) -> str:
+    """The preview line for a capture, source-aware where it pays to be."""
+    return structured_preview(body, source) or _preview(body)
+
+
 def _existing_ids(text: str) -> set:
     return set(re.findall(r'\[\[(inbox/raw/[^\]]+)\]\]', text))
 
@@ -235,14 +317,21 @@ def build_row_block(n: int, capture_link: str, preview: str, route: str,
     (preview, then the capture wikilink) demoted to continuation lines so a
     phone-width viewport still shows the checkbox and the destination.
 
+    ADR-0033 generalises `destination` to accept a list — one capture filed to
+    several places — and wraps route/confidence/rule in `%%…%%` so Obsidian
+    hides them in reading view. A plain string is still accepted and is the
+    common case; the fields stay on the line, so parsing is still line-local.
+
     The capture wikilink is always the last line, and there are always exactly
     two continuation lines: `execute._read_block` requires that arity, which is
     what makes a Row block unambiguous rather than a positional guess. An empty
     preview is written as `—` rather than an empty line, both because a blank
     line would terminate the block and orphan the capture link, and because a
     one-line block is malformed by that same rule."""
+    destinations = [destination] if isinstance(destination, str) else list(destination)
     return (
-        f"- [ ] **{n}** → `{destination}` · {route} · {confidence or '—'} · {rule or '—'}\n"
+        f"- [ ] **{n}** → {execute.render_destination_list(destinations)} "
+        f"%%· {route} · {confidence or '—'} · {rule or '—'}%%\n"
         f"{ROW_INDENT}{preview or '—'}\n"
         f"{ROW_INDENT}[[{capture_link}]]"
     )
@@ -250,7 +339,8 @@ def build_row_block(n: int, capture_link: str, preview: str, route: str,
 
 def _build_row(n: int, capture: dict, route: str, destination: str, confidence: str, rule: str = "—") -> str:
     return build_row_block(
-        n, _row_id(capture), _preview(capture.get("body", "")),
+        n, _row_id(capture),
+        preview_for(capture.get("body", ""), capture.get("source")),
         route, destination, confidence, rule,
     )
 

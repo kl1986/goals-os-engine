@@ -421,7 +421,13 @@ class TestRegroupPlan(unittest.TestCase):
         longer holds any Row (the Rows still say `discard`), so the old
         heading-anchored rule dropped it, found `discard` heading-less, and
         appended the whole group at the end — a silent reorder mid-approval.
-        The rename is still reverted; the group must not move."""
+        The rename is still reverted; the group must not move *because of it*.
+
+        Under ADR-0034 the discard group is pinned last regardless, so the
+        fixture's document order (discard first) is not what regrouping emits.
+        What this test still proves is what it was written to prove: the
+        renamed result is identical to the un-renamed result, so the heading
+        edit itself moved nothing."""
         text = plan_text(THREE_GROUP_ROWS, "voice", "2026-07-11")
         self.assertEqual(headings_of(text), ["discard", "unmatched", "areas/ho-lee-fook/_inbox.md"])
         self.assertEqual(row_order(text), ["1", "2", "3", "4", "5"])
@@ -429,8 +435,8 @@ class TestRegroupPlan(unittest.TestCase):
         regrouped = execute.regroup_plan(text.replace("## discard\n", "## keep\n"))
 
         self.assertEqual(headings_of(regrouped),
-                         ["discard", "unmatched", "areas/ho-lee-fook/_inbox.md"])
-        self.assertEqual(row_order(regrouped), ["1", "2", "3", "4", "5"])
+                         ["unmatched", "areas/ho-lee-fook/_inbox.md", "discard"])
+        self.assertEqual(row_order(regrouped), ["4", "5", "1", "2", "3"])
         self.assertEqual(regrouped, execute.regroup_plan(text))  # rename reverted
 
     def test_deleting_a_heading_outright_keeps_its_group_in_place(self):
@@ -439,8 +445,8 @@ class TestRegroupPlan(unittest.TestCase):
         regrouped = execute.regroup_plan(text.replace("## discard\n\n", ""))
 
         self.assertEqual(headings_of(regrouped),
-                         ["discard", "unmatched", "areas/ho-lee-fook/_inbox.md"])
-        self.assertEqual(row_order(regrouped), ["1", "2", "3", "4", "5"])
+                         ["unmatched", "areas/ho-lee-fook/_inbox.md", "discard"])
+        self.assertEqual(row_order(regrouped), ["4", "5", "1", "2", "3"])
 
     def test_renaming_the_middle_heading_keeps_every_group_in_place(self):
         text = plan_text(THREE_GROUP_ROWS, "voice", "2026-07-11")
@@ -448,8 +454,8 @@ class TestRegroupPlan(unittest.TestCase):
         regrouped = execute.regroup_plan(text.replace("## unmatched\n", "## sort later\n"))
 
         self.assertEqual(headings_of(regrouped),
-                         ["discard", "unmatched", "areas/ho-lee-fook/_inbox.md"])
-        self.assertEqual(row_order(regrouped), ["1", "2", "3", "4", "5"])
+                         ["unmatched", "areas/ho-lee-fook/_inbox.md", "discard"])
+        self.assertEqual(row_order(regrouped), ["4", "5", "1", "2", "3"])
 
     def test_a_prose_kept_alive_heading_sorts_by_its_own_position(self):
         """It has no first Row to sort by, so it holds the one position it does
@@ -462,7 +468,7 @@ class TestRegroupPlan(unittest.TestCase):
         regrouped = execute.regroup_plan(emptied)
 
         self.assertEqual(headings_of(regrouped),
-                         ["discard", "unmatched", "areas/ho-lee-fook/_inbox.md"])
+                         ["unmatched", "areas/ho-lee-fook/_inbox.md", "discard"])
         self.assertIn("## unmatched\n\nStill deciding these.\n", regrouped)
         self.assertEqual(grouping_of(regrouped)["unmatched"], [])
         self.assertEqual(execute.regroup_plan(regrouped), regrouped)
@@ -1445,5 +1451,154 @@ class TestSourceExecuteHookDestination(unittest.TestCase):
         self.assertEqual(len(result["discarded"]), 1)
 
 
+class TestMultiDestinationRows(unittest.TestCase):
+    """ADR-0033: one Row may name several destinations, and the
+    route/confidence/rule triple is wrapped in an Obsidian comment."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.brain_path = Path(self._tmp.name)
+        for d in ("areas/household", "areas/finances", "projects/bills",
+                  "inbox/raw/voice", "inbox/triage"):
+            (self.brain_path / d).mkdir(parents=True)
+        (self.brain_path / "inbox/raw/voice/2026-07-11-140203-buy-milk.md").write_text("x")
+        self.now = dt.datetime(2026, 7, 11, 15, 0)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _plan(self, destinations, approve="[x]"):
+        # Built directly rather than via row_block(), which backticks a single
+        # destination for you — here the backticks are part of the list syntax.
+        block = (
+            f"- {approve} **1** → {destinations} %%· Pass B · — · —%%\n"
+            "    Remember to buy milk\n"
+            "    [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]]"
+        )
+        path = self.brain_path / "inbox/triage/2026-07-11-voice.md"
+        path.write_text("---\nstatus: pending\n---\n\n# Plan\n\n" + block + "\n")
+        return path
+
+    def test_parses_a_list_and_keeps_destination_as_the_first(self):
+        rows = execute.parse_plan_rows(
+            self._plan("`areas/finances/_inbox.md`, `projects/bills/notes.md`").read_text())
+        self.assertEqual(rows[0]["destinations"],
+                         ["areas/finances/_inbox.md", "projects/bills/notes.md"])
+        # Existing single-valued consumers keep working unchanged.
+        self.assertEqual(rows[0]["destination"], "areas/finances/_inbox.md")
+
+    def test_files_one_capture_to_every_destination_archiving_once(self):
+        plan = self._plan("`areas/finances/_inbox.md`, `projects/bills/notes.md`")
+        result = execute.execute_plan(self.brain_path, plan, now=self.now)
+        self.assertEqual(result["errors"], [])
+        # One capture filed, not two — the Row is one action with two writes.
+        self.assertEqual(len(result["filed"]), 1)
+        for dest in ("areas/finances/_inbox.md", "projects/bills/notes.md"):
+            self.assertIn("buy-milk", (self.brain_path / dest).read_text())
+        self.assertTrue((self.brain_path / "archive/inbox/voice/2026-07-11-140203-buy-milk.md").exists())
+
+    def test_one_action_log_entry_naming_every_destination(self):
+        plan = self._plan("`areas/finances/_inbox.md`, `projects/bills/notes.md`")
+        execute.execute_plan(self.brain_path, plan, now=self.now)
+        log = (self.brain_path / "log" / "2026-07-11.md").read_text()
+        self.assertEqual(log.count("- **action:**"), 1)
+        self.assertIn("areas/finances/_inbox.md", log)
+        self.assertIn("projects/bills/notes.md", log)
+
+    def test_discard_combined_with_a_real_destination_refuses_the_plan(self):
+        plan = self._plan("`areas/finances/_inbox.md`, `discard`")
+        with self.assertRaises(execute.ExecuteError) as ctx:
+            execute.execute_plan(self.brain_path, plan, now=self.now)
+        self.assertIn("cannot be combined", str(ctx.exception))
+        # Refusal is before any side effect: nothing filed, capture untouched.
+        self.assertFalse((self.brain_path / "areas/finances/_inbox.md").exists())
+        self.assertTrue((self.brain_path / "inbox/raw/voice/2026-07-11-140203-buy-milk.md").exists())
+
+    def test_a_repeated_destination_refuses_the_plan(self):
+        plan = self._plan("`areas/finances/_inbox.md`, `areas/finances/_inbox.md`")
+        with self.assertRaises(execute.ExecuteError) as ctx:
+            execute.execute_plan(self.brain_path, plan, now=self.now)
+        self.assertIn("listed twice", str(ctx.exception))
+
+    def test_a_blank_entry_in_the_list_refuses_rather_than_filing_the_rest(self):
+        plan = self._plan("`areas/finances/_inbox.md`, ``")
+        self.assertTrue(any("blank destination" in e
+                            for e in execute.check_row_blocks(plan.read_text())))
+
+    def test_pre_adr_0033_rows_without_the_comment_wrapper_still_parse(self):
+        """No dual *shape* — the `%%` is optional punctuation on one field, so
+        an open Plan written before this change still executes, and both write
+        paths re-emit it wrapped."""
+        line = "- [x] **1** → `areas/household/_inbox.md` · Pass B · — · —"
+        text = ("---\nstatus: pending\n---\n\n# Plan\n\n" + line
+                + "\n    Remember to buy milk\n    [[inbox/raw/voice/2026-07-11-140203-buy-milk.md]]\n")
+        rows = execute.parse_plan_rows(text)
+        self.assertEqual(rows[0]["destinations"], ["areas/household/_inbox.md"])
+        self.assertEqual(rows[0]["approve"], "[x]")
+
+    def test_regrouping_a_multi_destination_row_is_a_fixed_point(self):
+        plan = self._plan("`areas/finances/_inbox.md`, `projects/bills/notes.md`", approve="[ ]")
+        once = execute.regroup_plan(plan.read_text())
+        self.assertEqual(once, execute.regroup_plan(once))
+        # It groups under its first destination — the heading is still derived
+        # from the Row, never read back (ADR-0031 preserved).
+        self.assertIn("## areas/finances/_inbox.md", once)
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPlanCompletionRequiresActionNotJustATick(unittest.TestCase):
+    """A Plan is finished when every Row has been *acted on*, not when no Row
+    is left unticked. Those differ exactly when a ticked Row errors — and
+    ticking a Plan of still-`unmatched` Rows is the natural thing to do on a
+    Plan whose Pass B has not been resolved."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.brain_path = Path(self._tmp.name)
+        (self.brain_path / "areas" / "household").mkdir(parents=True)
+        (self.brain_path / "inbox" / "raw" / "voice").mkdir(parents=True)
+        (self.brain_path / "inbox" / "triage").mkdir(parents=True)
+        for name in ("a.md", "b.md"):
+            (self.brain_path / "inbox" / "raw" / "voice" / name).write_text("x")
+        self.now = dt.datetime(2026, 7, 11, 15, 0)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _plan(self, *destinations):
+        blocks = [
+            f"- [x] **{i}** → `{d}` %%· Pass B · — · —%%\n    p{i}\n"
+            f"    [[inbox/raw/voice/{name}]]"
+            for i, (d, name) in enumerate(zip(destinations, ("a.md", "b.md")), 1)
+        ]
+        path = self.brain_path / "inbox" / "triage" / "2026-07-11-voice.md"
+        path.write_text("---\nstatus: pending\n---\n\n# Plan\n\n" + "\n\n".join(blocks) + "\n")
+        return path
+
+    def test_a_plan_of_ticked_unmatched_rows_is_not_archived(self):
+        plan = self._plan("unmatched", "unmatched")
+        result = execute.execute_plan(self.brain_path, plan, now=self.now)
+        self.assertEqual(len(result["errors"]), 2)
+        self.assertFalse(result["plan_executed"])
+        self.assertTrue(plan.exists())
+        self.assertIn("status: pending", plan.read_text())
+        # The captures are still there to be triaged once Pass B is resolved.
+        self.assertTrue((self.brain_path / "inbox" / "raw" / "voice" / "a.md").exists())
+
+    def test_a_plan_mixing_one_good_row_and_one_errored_row_is_not_archived(self):
+        plan = self._plan("areas/household/_inbox.md", "unmatched")
+        result = execute.execute_plan(self.brain_path, plan, now=self.now)
+        self.assertEqual(len(result["filed"]), 1)
+        self.assertEqual(len(result["errors"]), 1)
+        self.assertFalse(result["plan_executed"])
+        self.assertTrue(plan.exists())
+
+    def test_a_plan_whose_rows_all_acted_is_still_archived(self):
+        plan = self._plan("areas/household/_inbox.md", "discard")
+        result = execute.execute_plan(self.brain_path, plan, now=self.now)
+        self.assertEqual(result["errors"], [])
+        self.assertTrue(result["plan_executed"])
+        self.assertFalse(plan.exists())

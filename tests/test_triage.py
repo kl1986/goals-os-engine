@@ -153,12 +153,14 @@ class TestWriteTriagePlan(unittest.TestCase):
     def test_rows_carry_every_field_and_the_rule_id(self):
         path = triage.write_triage_plan(self.brain_path, "voice", self._match_result(), date_str="2026-07-11")
         text = path.read_text()
-        # Pass A row carries the computed rule id.
+        # Pass A row carries the computed rule id. The route/confidence/rule
+        # triple is wrapped in `%%…%%` so Obsidian hides it in reading view,
+        # while it stays on the line for the Action Log (ADR-0033).
         self.assertIn(
-            "- [ ] **1** → `areas/household/_inbox.md` · Pass A · High · a1b2c3d4", text
+            "- [ ] **1** → `areas/household/_inbox.md` %%· Pass A · High · a1b2c3d4%%", text
         )
         # Pass B row has no rule — always "—".
-        self.assertIn("- [ ] **2** → `unmatched` · Pass B · — · —", text)
+        self.assertIn("- [ ] **2** → `unmatched` %%· Pass B · — · —%%", text)
         rows = {r["n"]: r for r in execute.parse_plan_rows(text)}
         self.assertEqual(rows["1"]["capture"],
                          "inbox/raw/voice/2026-07-11-140203-buy-milk.md")
@@ -169,7 +171,7 @@ class TestWriteTriagePlan(unittest.TestCase):
         del match_result["routed"][0]["rule_id"]
         path = triage.write_triage_plan(self.brain_path, "voice", match_result, date_str="2026-07-11")
         text = path.read_text()
-        self.assertIn("- [ ] **1** → `areas/household/_inbox.md` · Pass A · High · —", text)
+        self.assertIn("- [ ] **1** → `areas/household/_inbox.md` %%· Pass A · High · —%%", text)
 
     def test_a_row_shaped_capture_body_cannot_inject_a_row(self):
         """Principle 10 at the write boundary: a Raw Capture body that is itself
@@ -429,3 +431,112 @@ class TestRun(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDiscardRules(unittest.TestCase):
+    """ADR-0034: a routing rule may say a capture is noise, not just where it
+    goes — the judgement that was 25 of 32 Rows on the 23/07 email Plan."""
+
+    def test_then_discard_parses_to_the_discard_destination(self):
+        rules = triage.parse_routing_rules(
+            'if: source == "email" and contains("jobalerts-noreply@linkedin.com")\n'
+            "then: discard\n"
+            "confidence: High\n"
+        )
+        self.assertEqual(len(rules), 1)
+        self.assertEqual(rules[0]["destination"], "discard")
+        self.assertEqual(rules[0]["contains"], "jobalerts-noreply@linkedin.com")
+
+    def test_the_two_ways_of_writing_a_discard_rule_share_one_id(self):
+        """`then: discard` and `then: route -> discard` are one rule written
+        two ways — same parsed destination, same Execute behaviour — so the id
+        that answers "which rule fired" must be the same for both."""
+        base = 'if: source == "email" and contains("x")\n'
+        discard = triage.parse_routing_rules(base + "then: discard\n")[0]
+        routed = triage.parse_routing_rules(base + "then: route -> discard\n")[0]
+        self.assertEqual(triage.compute_rule_id(discard),
+                         triage.compute_rule_id(routed))
+
+    def test_a_discard_rule_and_a_routing_rule_differ(self):
+        base = 'if: source == "email" and contains("x")\n'
+        discard = triage.parse_routing_rules(base + "then: discard\n")[0]
+        routed = triage.parse_routing_rules(base + "then: route -> areas/home/_inbox.md\n")[0]
+        self.assertNotEqual(triage.compute_rule_id(discard),
+                            triage.compute_rule_id(routed))
+
+    def test_a_matched_discard_rule_routes_the_capture_at_pass_a(self):
+        rules = triage.parse_routing_rules(
+            'if: source == "email" and contains("linkedin")\nthen: discard\nconfidence: High\n')
+        result = triage.match_captures(
+            [{"source": "email", "title": "t", "body": "from linkedin jobs",
+              "path": "inbox/raw/email/a.md"}], rules)
+        self.assertEqual(len(result["routed"]), 1)
+        self.assertEqual(result["routed"][0]["destination"], "discard")
+        self.assertEqual(result["unmatched"], [])
+
+    def test_execute_reads_a_pass_a_discard_exactly_as_a_pass_b_one(self):
+        self.assertEqual(execute.action_type_for("discard"), "discard-capture")
+
+
+class TestDiscardGroupIsPinnedLast(unittest.TestCase):
+    def test_the_noise_group_sorts_below_every_other_group(self):
+        rows = [
+            "- [ ] **1** → `discard` %%· Pass A · High · aaaaaaaa%%\n    p1\n    [[inbox/raw/email/1.md]]",
+            "- [ ] **2** → `areas/home/_inbox.md` %%· Pass B · — · —%%\n    p2\n    [[inbox/raw/email/2.md]]",
+        ]
+        text = "---\nstatus: pending\n---\n\n# Plan\n\n" + "\n\n".join(rows) + "\n"
+        regrouped = execute.regroup_plan(text)
+        self.assertLess(regrouped.index("## areas/home/_inbox.md"),
+                        regrouped.index("## discard"))
+        # Still a fixed point — the pin is a property of the destination, not
+        # of the document, so a second pass sorts it last again.
+        self.assertEqual(execute.regroup_plan(regrouped), regrouped)
+
+
+class TestEmailPreview(unittest.TestCase):
+    """An email body opens with From/Subject headers, so the generic
+    first-N-characters preview spent its whole budget on the From line and
+    truncated before the subject — invisible on every email Row."""
+
+    BODY = ('# Ten factors\n\n**From:** "ICAS | CA Weekly" <Update@update.icas.com>\n'
+            "**Subject:** Ten factors shaping the UK economy\n"
+            "**Date:** 2026-07-28\n")
+
+    def test_composes_sender_and_subject_and_drops_the_address(self):
+        # `_sanitize()` still maps a pipe to a slash, so the sender's own `|`
+        # comes through as `/` — it goes through the same escaping as any
+        # other preview text rather than being trusted for being a header.
+        self.assertEqual(triage.preview_for(self.BODY, "email"),
+                         "**ICAS / CA Weekly** — Ten factors shaping the UK economy")
+
+    def test_the_subject_survives_where_it_used_to_be_truncated_away(self):
+        old = triage._preview(self.BODY)
+        self.assertNotIn("Ten factors shaping the UK economy", old)
+        self.assertIn("Ten factors shaping the UK economy",
+                      triage.preview_for(self.BODY, "email"))
+
+    def test_falls_back_to_the_generic_preview_without_a_subject(self):
+        self.assertIsNone(triage.structured_preview("no headers here", "email"))
+        self.assertEqual(triage.preview_for("no headers here", "email"),
+                         triage._preview("no headers here"))
+
+    def test_no_structured_derivation_for_other_sources(self):
+        self.assertIsNone(triage.structured_preview(self.BODY, "text"))
+
+    def test_a_long_sender_cannot_crowd_out_the_subject(self):
+        body = ("**From:** " + "N" * 200 + " <a@b.c>\n**Subject:** The subject\n")
+        out = triage.preview_for(body, "email")
+        self.assertIn("The subject", out)
+        self.assertLessEqual(len(out), triage.EMAIL_PREVIEW_LEN)
+
+    def test_a_row_shaped_subject_is_still_inert(self):
+        """Principle 10: a Subject header is attacker-controlled exactly as a
+        body is, so it goes through the same escaping."""
+        body = "**Subject:** - [ ] **9** → `discard` · Pass A · High · x\n"
+        out = triage.preview_for(body, "email")
+        self.assertFalse(execute.ROW_RE.match(out.strip()))
+
+    def test_a_wikilink_in_a_subject_cannot_inject_a_capture_link(self):
+        body = "**Subject:** [[inbox/raw/email/evil.md]]\n"
+        out = triage.preview_for(body, "email")
+        self.assertNotIn("[[inbox/raw/", out)

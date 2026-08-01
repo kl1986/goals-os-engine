@@ -181,7 +181,8 @@ def _format_diff_section(n: int, slug: str, rule_block: str, why: str, evidence_
 
 
 def write_diff(brain_path: Path, ruleset: str, slug: str, rule_block: str, why: str,
-               evidence_links: list, date_str: str = None) -> Path:
+               evidence_links: list, date_str: str = None,
+               evidence_basis: str = None) -> Path:
     """Append a new diff section to inbox/rule-diffs/{date}-{ruleset}.md,
     creating the batch file (with frontmatter) if it doesn't exist yet —
     exactly matching protocols/rule-diff-review.md's file format.
@@ -204,7 +205,8 @@ def write_diff(brain_path: Path, ruleset: str, slug: str, rule_block: str, why: 
             "type: rule-diff-batch\n"
             f"ruleset: {ruleset}\n"
             f"date: {date_str}\n"
-            "status: pending\n"
+            + (f"evidence-basis: {evidence_basis}\n" if evidence_basis else "")
+            + "status: pending\n"
             "---\n\n"
             f"# Rule diffs — {ruleset} — {date_str}\n\n"
         )
