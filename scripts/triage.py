@@ -221,6 +221,67 @@ def _preview(body: str, length: int = 60) -> str:
     return text if len(text) <= length else text[: length - 1] + "…"
 
 
+# An email capture's body opens with `**From:**` / `**Subject:**` headers
+# (the email plugin's `build_capture_body()`), so a blind first-N-characters
+# preview spends its whole budget on the From line — address included — and
+# truncates mid-word before the Subject ever appears:
+#
+#     **From:** "ICAS / CA Weekly" <Update@update.icas.com> **Sub…
+#
+# The subject is the one field a person triages on, and it was invisible on
+# every email Row in the Brain. These pull the two fields out and compose
+# `Sender — Subject` instead, dropping the labels and the raw address, which
+# buys back roughly forty characters of the thing worth reading.
+EMAIL_FROM_RE = re.compile(r'^\*\*From:\*\*\s*(.+?)\s*$', re.MULTILINE)
+EMAIL_SUBJECT_RE = re.compile(r'^\*\*Subject:\*\*\s*(.+?)\s*$', re.MULTILINE)
+EMAIL_ADDRESS_RE = re.compile(r'\s*<[^>]*>\s*')
+# Sender is capped well below the whole so a long display name can never crowd
+# out the subject; the subject takes whatever is left.
+EMAIL_SENDER_LEN = 28
+EMAIL_PREVIEW_LEN = 90
+
+
+def _email_preview(body: str):
+    """`Sender — Subject` for an email capture, or None if it doesn't look like
+    one (in which case the caller falls back to the generic preview).
+
+    The extracted fields are still untrusted capture content — a `Subject:`
+    header is attacker-controlled in exactly the way a body is — so they go
+    through `_sanitize()` and the length cap the same as any other preview.
+    Principle 10 is enforced here, not assumed from the header shape."""
+    subject_match = EMAIL_SUBJECT_RE.search(body)
+    if not subject_match:
+        return None
+    subject = _sanitize(subject_match.group(1))
+    from_match = EMAIL_FROM_RE.search(body)
+    sender = _sanitize(EMAIL_ADDRESS_RE.sub("", from_match.group(1))).strip('" ') if from_match else ""
+    if sender and len(sender) > EMAIL_SENDER_LEN:
+        sender = sender[: EMAIL_SENDER_LEN - 1] + "…"
+    composed = f"**{sender}** — {subject}" if sender else subject
+    if len(composed) > EMAIL_PREVIEW_LEN:
+        composed = composed[: EMAIL_PREVIEW_LEN - 1] + "…"
+    return composed
+
+
+def structured_preview(body: str, source: str = None):
+    """The preview derived from a capture's *structure* rather than from the
+    first N characters of its text, or None where no such derivation exists.
+
+    Separated from `preview_for()` so a caller that only has the capture file
+    — `refresh_triage_previews.py` — can tell "I can do better than what is
+    written" from "I would merely produce something different". The generic
+    fallback is position-based and depends on exactly the body Triage was
+    handed at stamp time, which is not recoverable from the file alone."""
+    if source == "email":
+        return _email_preview(body)
+    return None
+
+
+def preview_for(body: str, source: str = None) -> str:
+    """The preview line for a capture, source-aware where it pays to be."""
+    return structured_preview(body, source) or _preview(body)
+
+
 def _existing_ids(text: str) -> set:
     return set(re.findall(r'\[\[(inbox/raw/[^\]]+)\]\]', text))
 
@@ -278,7 +339,8 @@ def build_row_block(n: int, capture_link: str, preview: str, route: str,
 
 def _build_row(n: int, capture: dict, route: str, destination: str, confidence: str, rule: str = "—") -> str:
     return build_row_block(
-        n, _row_id(capture), _preview(capture.get("body", "")),
+        n, _row_id(capture),
+        preview_for(capture.get("body", ""), capture.get("source")),
         route, destination, confidence, rule,
     )
 

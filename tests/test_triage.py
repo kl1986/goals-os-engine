@@ -491,3 +491,52 @@ class TestDiscardGroupIsPinnedLast(unittest.TestCase):
         # Still a fixed point — the pin is a property of the destination, not
         # of the document, so a second pass sorts it last again.
         self.assertEqual(execute.regroup_plan(regrouped), regrouped)
+
+
+class TestEmailPreview(unittest.TestCase):
+    """An email body opens with From/Subject headers, so the generic
+    first-N-characters preview spent its whole budget on the From line and
+    truncated before the subject — invisible on every email Row."""
+
+    BODY = ('# Ten factors\n\n**From:** "ICAS | CA Weekly" <Update@update.icas.com>\n'
+            "**Subject:** Ten factors shaping the UK economy\n"
+            "**Date:** 2026-07-28\n")
+
+    def test_composes_sender_and_subject_and_drops_the_address(self):
+        # `_sanitize()` still maps a pipe to a slash, so the sender's own `|`
+        # comes through as `/` — it goes through the same escaping as any
+        # other preview text rather than being trusted for being a header.
+        self.assertEqual(triage.preview_for(self.BODY, "email"),
+                         "**ICAS / CA Weekly** — Ten factors shaping the UK economy")
+
+    def test_the_subject_survives_where_it_used_to_be_truncated_away(self):
+        old = triage._preview(self.BODY)
+        self.assertNotIn("Ten factors shaping the UK economy", old)
+        self.assertIn("Ten factors shaping the UK economy",
+                      triage.preview_for(self.BODY, "email"))
+
+    def test_falls_back_to_the_generic_preview_without_a_subject(self):
+        self.assertIsNone(triage.structured_preview("no headers here", "email"))
+        self.assertEqual(triage.preview_for("no headers here", "email"),
+                         triage._preview("no headers here"))
+
+    def test_no_structured_derivation_for_other_sources(self):
+        self.assertIsNone(triage.structured_preview(self.BODY, "text"))
+
+    def test_a_long_sender_cannot_crowd_out_the_subject(self):
+        body = ("**From:** " + "N" * 200 + " <a@b.c>\n**Subject:** The subject\n")
+        out = triage.preview_for(body, "email")
+        self.assertIn("The subject", out)
+        self.assertLessEqual(len(out), triage.EMAIL_PREVIEW_LEN)
+
+    def test_a_row_shaped_subject_is_still_inert(self):
+        """Principle 10: a Subject header is attacker-controlled exactly as a
+        body is, so it goes through the same escaping."""
+        body = "**Subject:** - [ ] **9** → `discard` · Pass A · High · x\n"
+        out = triage.preview_for(body, "email")
+        self.assertFalse(execute.ROW_RE.match(out.strip()))
+
+    def test_a_wikilink_in_a_subject_cannot_inject_a_capture_link(self):
+        body = "**Subject:** [[inbox/raw/email/evil.md]]\n"
+        out = triage.preview_for(body, "email")
+        self.assertNotIn("[[inbox/raw/", out)
