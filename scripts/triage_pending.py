@@ -32,7 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import execute  # noqa: E402 — reuses ROW_RE/parse_plan_rows so the two cannot drift
 
-UNRESOLVED_DESTINATIONS = {"unmatched", "—", "-", ""}
+UNRESOLVED_DESTINATIONS = {"unmatched", "?"}
 CLOSED_STATUSES = {"executed", "archived", "done", "complete", "completed"}
 
 
@@ -53,30 +53,35 @@ def is_open_plan(text: str) -> bool:
 
 
 def row_is_pending(row: dict) -> bool:
-    """Unticked rows only. `[x]`, `[x] (done)` and `[x] (dispatched)` are done."""
-    return row["approve"].strip().startswith("[ ]")
+    """Unticked rows with valid actionable destinations only."""
+    if not row["approve"].strip().startswith("[ ]"):
+        return False
+    dest = row.get("destination", "").strip()
+    return bool(dest) and dest not in ("—", "-")
 
 
 def row_awaits_pass_b(row: dict) -> bool:
-    return row["destination"].strip().lower() in UNRESOLVED_DESTINATIONS
+    return row.get("destination", "").strip().lower() in UNRESOLVED_DESTINATIONS
 
 
 def scan_plans(triage_dir: Path) -> dict:
     """Count pending rows across every open plan, grouped by source.
 
     Returns {"awaiting_pass_b": int, "awaiting_execute": int,
-             "plans": int, "by_source": {source: (pass_b, execute)},
+             "migration_required": int, "plans": int,
+             "by_source": {source: (pass_b, execute)},
              "oldest": str|None}.
     """
     awaiting_pass_b = 0
     awaiting_execute = 0
+    migration_required = 0
     plans = 0
     by_source = {}
     oldest = None
 
     if not triage_dir.is_dir():
-        return {"awaiting_pass_b": 0, "awaiting_execute": 0, "plans": 0,
-                "by_source": {}, "oldest": None}
+        return {"awaiting_pass_b": 0, "awaiting_execute": 0, "migration_required": 0,
+                "plans": 0, "by_source": {}, "oldest": None}
 
     for plan in sorted(triage_dir.glob("*.md")):
         try:
@@ -85,6 +90,18 @@ def scan_plans(triage_dir: Path) -> dict:
             continue
         if not is_open_plan(text):
             continue
+
+        parts = plan.stem.split("-", 3)
+        source = parts[3] if len(parts) == 4 else plan.stem
+
+        if execute.requires_migration(text):
+            migration_required += 1
+            plans += 1
+            by_source.setdefault(source, (0, 0))
+            if oldest is None:
+                oldest = plan.stem
+            continue
+
         rows = [r for r in execute.parse_plan_rows(text) if row_is_pending(r)]
         if not rows:
             continue
@@ -94,28 +111,28 @@ def scan_plans(triage_dir: Path) -> dict:
         awaiting_pass_b += pass_b
         awaiting_execute += to_execute
 
-        # Filenames are YYYY-MM-DD-<source>.md; fall back to the whole stem
-        # rather than guessing if that shape ever changes.
-        parts = plan.stem.split("-", 3)
-        source = parts[3] if len(parts) == 4 else plan.stem
         prev = by_source.get(source, (0, 0))
         by_source[source] = (prev[0] + pass_b, prev[1] + to_execute)
         if oldest is None:
             oldest = plan.stem
 
     return {"awaiting_pass_b": awaiting_pass_b, "awaiting_execute": awaiting_execute,
-            "plans": plans, "by_source": by_source, "oldest": oldest}
+            "migration_required": migration_required, "plans": plans,
+            "by_source": by_source, "oldest": oldest}
 
 
 def format_line(counts: dict) -> str:
     total = counts["awaiting_pass_b"] + counts["awaiting_execute"]
-    if total == 0:
+    mig = counts.get("migration_required", 0)
+    if total == 0 and mig == 0:
         return "Triage: nothing pending."
     bits = []
     if counts["awaiting_pass_b"]:
         bits.append(f"{counts['awaiting_pass_b']} awaiting Pass B")
     if counts["awaiting_execute"]:
         bits.append(f"{counts['awaiting_execute']} awaiting Execute")
+    if mig:
+        bits.append(f"{mig} plan(s) require migration")
     line = (f"Triage: {total} row(s) pending across {counts['plans']} open plan(s) "
             f"— {', '.join(bits)}.")
     if counts["oldest"]:
@@ -127,6 +144,8 @@ def format_report(counts: dict) -> str:
     lines = [format_line(counts)]
     for source, (pass_b, to_exec) in sorted(counts["by_source"].items()):
         lines.append(f"  {source:<10} {pass_b:>4} awaiting Pass B, {to_exec:>4} awaiting Execute")
+    if counts.get("migration_required"):
+        lines.append("  Legacy plans require migration (run python3 scripts/migrate_triage_rows_one_line.py).")
     if counts["awaiting_pass_b"]:
         lines.append("  Pass A cannot clear the Pass B rows — they need routing rules "
                      "(config/routing-rules.md) or a session.")
@@ -144,7 +163,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     counts = scan_plans(Path(args.brain).expanduser() / "inbox" / "triage")
-    total = counts["awaiting_pass_b"] + counts["awaiting_execute"]
+    total = counts["awaiting_pass_b"] + counts["awaiting_execute"] + counts.get("migration_required", 0)
     if total == 0 and args.quiet_if_zero:
         return 0
     print(format_report(counts) if args.format == "report" else format_line(counts))

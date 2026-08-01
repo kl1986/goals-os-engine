@@ -202,6 +202,8 @@ def _sanitize(text: str) -> str:
       out of `_existing_ids()`, which scans the whole Plan for
       `[[inbox/raw/…]]` — an unescaped one in a preview would suppress a real
       capture's Row as an apparent duplicate.
+    - `→` is replaced with `->` so a preview cannot inject the Row destination
+      delimiter.
 
     Both render as the literal characters in Obsidian, so the preview reads
     unchanged. This closes the production path only; `execute._parse_blocks`
@@ -209,7 +211,7 @@ def _sanitize(text: str) -> str:
 
     The pipe replacement predates ADR-0031 (previews used to be table cells) and
     is kept: it costs nothing and a stray pipe in a preview is still noise."""
-    cleaned = text.replace("\n", " ").replace("|", "/").strip()
+    cleaned = text.replace("\n", " ").replace("|", "/").replace("→", "->").strip()
     cleaned = cleaned.replace("[[", "\\[\\[")
     if cleaned.startswith("- "):
         cleaned = "\\" + cleaned
@@ -307,34 +309,43 @@ def _row_id(capture: dict) -> str:
     return capture.get("path", f"inbox/raw/{capture['source']}/{capture['id']}.md")
 
 
-def build_row_block(n: int, capture_link: str, preview: str, route: str,
-                    destination: str, confidence: str, rule: str = "—") -> str:
-    """One Row as a markdown task-list item plus its continuation lines.
+DEFAULT_KEEPER_OPTIONS = [
+    ("Act on this", None),
+    ("Area", "areas/home/_inbox.md"),
+    ("Project", "projects/goals-os/_inbox.md"),
+    ("Bin it instead", None),
+]
 
-    Field set and ordering are the contract (ADR-0031): the checkbox and the
-    global row number first, then the destination — the two things being
-    approved — with route/confidence/rule after them, and the long fields
-    (preview, then the capture wikilink) demoted to continuation lines so a
-    phone-width viewport still shows the checkbox and the destination.
 
-    ADR-0033 generalises `destination` to accept a list — one capture filed to
-    several places — and wraps route/confidence/rule in `%%…%%` so Obsidian
-    hides them in reading view. A plain string is still accepted and is the
-    common case; the fields stay on the line, so parsing is still line-local.
+def build_row_block(n: int, capture_link: str, preview: str, route: str = "Pass B",
+                    destination: str = "unmatched", confidence: str = "—", rule: str = "—",
+                    tick: str = "[ ]") -> str:
+    """One Row as a markdown task-list item plus any continuation option lines.
 
-    The capture wikilink is always the last line, and there are always exactly
-    two continuation lines: `execute._read_block` requires that arity, which is
-    what makes a Row block unambiguous rather than a positional guess. An empty
-    preview is written as `—` rather than an empty line, both because a blank
-    line would terminate the block and orphan the capture link, and because a
-    one-line block is malformed by that same rule."""
+    Target shape (ADR-0036):
+    - [ ] <preview> → `<destination>` [[<capture_link>]]
+
+    Keepers (destination `?` or `unmatched`) carry option boxes as nested checkboxes:
+        - [ ] Act on this
+        - [ ] Area · `areas/home/_inbox.md`
+        - [ ] Project · `projects/goals-os/_inbox.md`
+        - [ ] Bin it instead
+    """
     destinations = [destination] if isinstance(destination, str) else list(destination)
-    return (
-        f"- [ ] **{n}** → {execute.render_destination_list(destinations)} "
-        f"%%· {route} · {confidence or '—'} · {rule or '—'}%%\n"
-        f"{ROW_INDENT}{preview or '—'}\n"
-        f"{ROW_INDENT}[[{capture_link}]]"
-    )
+    task_line = f"- {tick} {preview or '—'} → {execute.render_destination_list(destinations)} [[{capture_link}]]"
+
+    is_keeper = any(d.strip().lower() in ("unmatched", "?") for d in destinations)
+    if not is_keeper:
+        return task_line
+
+    lines = [task_line]
+    for label, val in DEFAULT_KEEPER_OPTIONS:
+        if val:
+            lines.append(f"{ROW_INDENT}- [ ] {label} · `{val}`")
+        else:
+            lines.append(f"{ROW_INDENT}- [ ] {label}")
+
+    return "\n".join(lines)
 
 
 def _build_row(n: int, capture: dict, route: str, destination: str, confidence: str, rule: str = "—") -> str:
@@ -346,29 +357,16 @@ def _build_row(n: int, capture: dict, route: str, destination: str, confidence: 
 
 
 def next_row_number(text: str) -> int:
-    """One past the highest row number already in the Plan.
-
-    Derived from the row numbers themselves, not from counting rows: numbering
-    is global across the destination groups and must stay stable, so a Row
-    keeps its number when it is re-routed into a different group and a new Row
-    never reuses a number just because the groups are unevenly filled."""
-    numbers = [
-        int(m.group("n"))
-        for m in (execute.ROW_RE.match(line) for line in text.splitlines())
-        if m
-    ]
-    return max(numbers, default=0) + 1
+    """One past the highest row number already in the Plan."""
+    rows = execute.parse_plan_rows(text)
+    if not rows:
+        return 1
+    return max((int(r["n"]) for r in rows if r.get("n", "").isdigit()), default=len(rows)) + 1
 
 
 def insert_row_block(text: str, destination: str, block: str) -> str:
     """Insert `block` at the end of the `## {destination}` section, creating
-    that heading at end-of-file when it does not exist yet.
-
-    Reuses `md_sections.SECTION_BODY` rather than re-deriving the pattern —
-    read its docstring: the body of an *empty* section is the empty string, and
-    appending to it needs the blank-line handling below rather than a
-    `rstrip` + `\\n\\n` that would leave a doubled blank line under the
-    heading."""
+    that heading at end-of-file when it does not exist yet."""
     pattern = re.compile(
         md_sections.SECTION_BODY.format(re.escape(destination)), re.MULTILINE | re.DOTALL
     )
@@ -383,30 +381,36 @@ def insert_row_block(text: str, destination: str, block: str) -> str:
     return text[:match.start(1)] + new_body + text[match.end(1):]
 
 
+def _update_frontmatter_rules(text: str, pass_a_rules: list) -> str:
+    """Ensure Pass A rule metadata is stored in frontmatter under rules: block."""
+    if not pass_a_rules:
+        return text
+
+    existing_rules = execute._parse_plan_rules_frontmatter(text)
+    for fname, r_id, conf in pass_a_rules:
+        existing_rules[fname] = {"rule": r_id, "confidence": conf or "High"}
+
+    rules_lines = ["rules:"]
+    for fname, meta in existing_rules.items():
+        rules_lines.append(f"  {fname}:")
+        rules_lines.append(f"    rule: {meta['rule']}")
+        rules_lines.append(f"    confidence: {meta['confidence']}")
+    rules_text = "\n".join(rules_lines)
+
+    fm_match = re.match(r'^(---\n.*?\n)(---(?:\n|\Z))', text, re.DOTALL)
+    if not fm_match:
+        return text
+
+    header, footer = fm_match.groups()
+    if re.search(r'^rules:\s*', header, re.MULTILINE):
+        new_header = re.sub(r'^rules:\s*\n.*?(?=\n[a-z0-9_-]+:|\Z)', rules_text + "\n", header, flags=re.MULTILINE | re.DOTALL)
+    else:
+        new_header = header.rstrip("\n") + "\n" + rules_text + "\n"
+
+    return new_header + text[fm_match.end(1):]
+
+
 def write_triage_plan(brain_path: Path, source: str, match_result: dict, date_str: str = None) -> Path:
-    """Write or update inbox/triage/{date}-{source}.md.
-
-    Idempotent: a capture already present in *any* still-open plan for
-    this source (by Raw Capture path) is left untouched — its row,
-    tick-state, and any Pass-B edits survive a re-run, and it never gets
-    a second row just because Triage runs again on a later day while it's
-    still un-executed. Only genuinely new captures get added.
-
-    A new Row is inserted under its own `## <destination>` heading (created if
-    absent), not appended at end-of-file — see ADR-0031 and `insert_row_block`.
-    When there is something new to add, the whole Plan is re-grouped through
-    `execute.regroup_plan()` before it is written, so a Plan whose Rows were
-    re-routed by hand converges instead of accumulating Rows under stale
-    headings. Headings are regenerated output, never compared to anything
-    (ADR-0031).
-
-    Note the ordering: a run that adds nothing returns early and does **not**
-    re-group. That is deliberate — grouping is cosmetic, so it is not worth
-    rewriting a file the user may have open to fix only its appearance, and the
-    early return is what keeps a no-op Triage run a genuine no-op. A hand
-    re-routed Row therefore settles on the next run that has a new capture to
-    add, or on the next Execute, whichever comes first.
-    """
     date_str = date_str or dt.datetime.now().strftime("%Y-%m-%d")
     triage_dir = brain_path / "inbox" / "triage"
     triage_dir.mkdir(parents=True, exist_ok=True)
@@ -428,6 +432,7 @@ def write_triage_plan(brain_path: Path, source: str, match_result: dict, date_st
         for c in match_result.get("unmatched", [])
     ]
 
+    pass_a_additions = []
     for capture, route, destination, confidence, rule in pending:
         if _row_id(capture) in already_present:
             continue
@@ -435,11 +440,17 @@ def write_triage_plan(brain_path: Path, source: str, match_result: dict, date_st
             text, destination,
             _build_row(n, capture, route, destination, confidence, rule),
         )
+        if route == "Pass A":
+            capture_fname = Path(_row_id(capture)).name
+            pass_a_additions.append((capture_fname, rule, confidence))
         n += 1
         added += 1
 
     if not added:
-        return plan_path  # nothing new — never create an empty stub, never rewrite
+        return plan_path
+
+    if pass_a_additions:
+        text = _update_frontmatter_rules(text, pass_a_additions)
 
     plan_path.write_text(execute.regroup_plan(text))
     return plan_path

@@ -10,18 +10,25 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import triage_pending as tp  # noqa: E402
+import execute  # noqa: E402
+import triage  # noqa: E402
 
 
 def row(n, dest="unmatched", approve="[ ]", route="Pass B"):
-    """A Row in the ADR-0031 task-list shape, with its own heading — the nudge
-    reads Rows line-locally, so the heading is only here to keep the fixture
-    honest about what a real Plan looks like."""
     tick, marker = approve[:3], approve[4:]
     suffix = f" {marker}" if marker else ""
-    return (f"## {dest}\n\n"
-            f"- {tick} **{n}** → `{dest}` · {route} · — · —{suffix}\n"
-            f"    preview…\n"
-            f"    [[inbox/raw/email/cap-{n}.md]]\n\n")
+    destinations = [dest]
+    task_line = f"- {tick} preview {n} → {execute.render_destination_list(destinations)} [[inbox/raw/email/cap-{n}.md]]{suffix}"
+    is_keeper = any(d.strip().lower() in ("unmatched", "?") for d in destinations)
+    if not is_keeper:
+        return f"## {dest}\n\n{task_line}\n\n"
+    lines = [task_line]
+    for label, val in triage.DEFAULT_KEEPER_OPTIONS:
+        if val:
+            lines.append(f"    - [ ] {label} · `{val}`")
+        else:
+            lines.append(f"    - [ ] {label}")
+    return f"## {dest}\n\n" + "\n".join(lines) + "\n\n"
 
 
 def plan(rows, status="pending", source="email", date="2026-07-23"):
@@ -150,6 +157,49 @@ class TestSharedParser(TriageDirFixture):
         self.write("2026-07-23-email.md", plan([row(1)]) +
                    "- [ ] 2 -> unmatched, Pass B\n    [[inbox/raw/email/cap-2.md]]\n")
         self.assertEqual(self.scan()["awaiting_pass_b"], 1)
+
+    def test_malformed_and_legacy_rows_not_counted(self):
+        """Blank destination or legacy rows must not count as actionable pending rows."""
+        blank_dest_plan = plan([]) + "- [ ] preview → `` [[inbox/raw/email/cap-blank.md]]\n"
+        self.write("2026-07-23-blank.md", blank_dest_plan)
+        c = self.scan()
+        self.assertEqual(c["awaiting_pass_b"], 0)
+        self.assertEqual(c["awaiting_execute"], 0)
+
+    def test_legacy_table_plan_reported_as_migration_required(self):
+        legacy_table = (
+            "---\ntype: triage-plan\nsource: email\ndate: 2026-07-23\nstatus: pending\n---\n\n"
+            "# Triage Plan — email — 2026-07-23\n\n"
+            "| # | capture | preview | route | destination | confidence | rule | approve |\n"
+            "|---|---|---|---|---|---|---|---|\n"
+            "| 1 | [[inbox/raw/email/cap-1.md]] | item 1 | Pass B | unmatched | High | — | [ ] |\n"
+        )
+        self.write("2026-07-23-email.md", legacy_table)
+        c = self.scan()
+        self.assertEqual(c["migration_required"], 1)
+        self.assertEqual(c["plans"], 1)
+        self.assertEqual(c["awaiting_pass_b"], 0)
+        self.assertEqual(c["awaiting_execute"], 0)
+
+        line = tp.format_line(c)
+        self.assertIn("1 plan(s) require migration", line)
+        self.assertNotIn("nothing pending", line)
+
+    def test_legacy_3_line_plan_reported_as_migration_required(self):
+        legacy_3line = (
+            "---\ntype: triage-plan\nsource: email\ndate: 2026-07-23\nstatus: pending\n---\n\n"
+            "# Triage Plan\n\n"
+            "## unmatched\n\n"
+            "- [ ] **1** → `unmatched` %%· Pass B · — · —%%\n"
+            "    item 1\n"
+            "    [[inbox/raw/email/cap-1.md]]\n"
+        )
+        self.write("2026-07-23-email.md", legacy_3line)
+        c = self.scan()
+        self.assertEqual(c["migration_required"], 1)
+        self.assertEqual(c["plans"], 1)
+        line = tp.format_line(c)
+        self.assertIn("1 plan(s) require migration", line)
 
 
 if __name__ == "__main__":

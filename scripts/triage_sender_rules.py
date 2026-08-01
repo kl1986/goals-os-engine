@@ -59,7 +59,7 @@ CHECKBOX_RE = re.compile(
 )
 # Rows whose destination still costs a decision. A Row already routed to a real
 # destination by a rule is not a candidate — its sender is handled.
-UNRESOLVED = {"unmatched", "discard"}
+UNRESOLVED = {"unmatched", "discard", "?"}
 
 
 def rule_block_for(address: str, source: str = "email") -> str:

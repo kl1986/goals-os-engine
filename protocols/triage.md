@@ -1,6 +1,6 @@
-# Protocol: Triage (v0.2)
+# Protocol: Triage (v0.5)
 
-Classifies Raw Captures against structured routing rules and writes a Triage Plan — the confirm-first review gate between Capture and Execute. Introduces `inbox/triage/` as the Brain's first new layout convention since Phase 1. v0.1 (16/07/2026, `capture-source-plugins` map, ticket 09/15) extends Pass B's classification scope to also consider `people/` as a valid destination — see "Pass B and Person Hubs" below. v0.2 (27/07/2026, ADR-0031) changes the Row shape: a Plan is now task-list items grouped under `## <destination>` headings rather than a markdown table, so the approve checkbox is tappable in Obsidian.
+Classifies Raw Captures against structured routing rules and writes a Triage Plan — the confirm-first review gate between Capture and Execute. Introduces `inbox/triage/` as the Brain's first new layout convention since Phase 1. v0.1 (16/07/2026, `capture-source-plugins` map, ticket 09/15) extends Pass B's classification scope to also consider `people/` as a valid destination — see "Pass B and Person Hubs" below. v0.2 (27/07/2026, ADR-0031) changed the Row shape into task list items. v0.5 (ADR-0036) unifies each Triage Row onto a single line with optional indented keeper option checkboxes (`- [ ] Act on this`, `- [ ] Area · \`path\``, `- [ ] Project · \`path\``, `- [ ] Bin it instead`), and stores Pass A metadata in frontmatter rules.
 
 ## Principle 10 — classify-only
 
@@ -10,7 +10,7 @@ The one exception is bookkeeping: each run also bumps its own `Triage` row in `c
 
 ## Two-pass classification
 
-- **Pass A — deterministic rule match.** `scripts/triage.py`'s `match_captures()` checks every un-triaged capture against `config/routing-rules.md`'s `if`/`then` rules. Zero LLM calls, fully reproducible. A match routes the capture with the rule's destination and confidence.
+- **Pass A — deterministic rule match.** `scripts/triage.py`'s `match_captures()` checks every un-triaged capture against `config/routing-rules.md`'s `if`/`then` rules. Zero LLM calls, fully reproducible. A match routes the capture with the rule's destination and confidence, recording rule metadata into frontmatter `rules:`.
 - **Pass B — model classification (unmatched only).** Anything Pass A can't resolve is the Adapter's job, done in-session: the model proposes a destination and confidence for the row. The script's own output for a Pass-B item is always `unmatched` — **never a guess** — so a bad automatic classification can't slip in disguised as Pass A.
 
 ## Pass B and Person Hubs
@@ -45,42 +45,48 @@ type: triage-plan
 source: text
 date: 2026-07-11
 status: pending
+rules:
+  2026-07-11-140203-buy-milk.md:
+    rule: a1b2c3d4
+    confidence: High
 ---
 
 # Triage Plan — text — 2026-07-11
 
 ## areas/household/_inbox.md
 
-- [ ] **1** → `areas/household/_inbox.md` %%· Pass A · High · a1b2c3d4%%
-    Remember to buy milk on the way home.
-    [[inbox/raw/text/2026-07-11-140203-buy-milk]]
+- [ ] Remember to buy milk on the way home → `areas/household/_inbox.md` [[inbox/raw/text/2026-07-11-140203-buy-milk.md]]
 
-## areas/work/_inbox.md
+## unmatched
 
-- [ ] **2** → `areas/work/_inbox.md`, `projects/roadmap/notes.md` %%· Pass B · Medium · —%%
-    discussed the roadmap
-    [[inbox/raw/text/2026-07-11-140500-standup-notes]]
+- [ ] Octopus Energy — £21.97 payment on 3rd August → `unmatched` [[inbox/raw/email/2026-07-11-140500-octopus.md]]
+    - [ ] Act on this
+    - [ ] Area · `areas/finances/_inbox.md`
+    - [ ] Project · `projects/goals-os/_inbox.md`
+    - [ ] Bin it instead
 ```
 
-**v0.3 (31/07/2026, ADR-0033)** changes two things about the Row line, both visible above. The destination field takes a **comma-separated list** — one capture filed to each destination in turn — and the `route · confidence · rule` triple is wrapped in `%%…%%`, an Obsidian comment, so the reading surface shows only the checkbox, the number and the destinations. The fields stay on the line, so parsing is still line-local and `ROW_RE` is still the single owner of the Row shape; the `%%` is optional on read, so a Plan written before this still parses and executes.
+**v0.5 (01/08/2026, ADR-0036)** collapses each Row into a single line (`- [ ] <preview> → \`<destination>\` [[<capture_link>]]`), superseding ADR-0031's three-line continuation rule and ADR-0033's `%%` comment wrapper. The capture wikilink sits inline at the end of the task line. Positional row numbers leave the task line and are derived from document order during parsing (`scripts/execute.py`'s `_scan_blocks()`).
 
-A multi-destination Row is still **one action**: the capture is archived once, the per-source `execute_hook.py` fires once, and one Action Log entry names every destination. Two combinations are refused as whole-Plan refusals alongside the blank destination — `discard` combined with a real destination (a contradiction), and the same destination listed twice (a duplicate entry). A Row groups under its **first** destination; the heading is regenerated output as before and is never read back.
+Pass A metadata (`rule` identifier and `confidence`) lives in Plan YAML frontmatter under a `rules:` block mapping capture filename to rule details. Pass B rows carry zero frontmatter rule entries. Execute reads this `rules:` block to record which specific rule produced an action, on the Action Log's `trigger` field (`action-log-schema.md`).
 
-Each Row is a markdown **task-list item** — never a table row: Obsidian only renders task syntax as an interactive checkbox in a list item, so a table made approval, the one gesture required on every Row, a raw-text edit (ADR-0031). The task line carries, in order, the approve box, the global row number, the destination, the route, the confidence and the rule identifier; the preview and the capture wikilink sit on indented continuation lines, with the wikilink always last.
+A multi-destination Row is supported by listing comma-separated destinations with each destination backticked (e.g. `→ \`dest1\`, \`dest2\``): the capture is archived once, the per-source `execute_hook.py` fires once, and one Action Log entry names every destination. Two combinations are refused as whole-Plan refusals alongside the blank destination — `discard` combined with a real destination (a contradiction), and the same destination listed twice (a duplicate entry). A Row groups under its **first** destination; the heading is regenerated output as before and is never read back.
 
-That arity is a contract, not a layout preference: a Row block always has both continuation lines (an empty preview is written as `—`), exactly one of which is the bare capture wikilink, last. It is what lets Execute read a block unambiguously — see `execute.md`'s "Refusals". Because a preview is 60 characters of an untrusted capture's own body, Triage escapes a leading `- ` and any `[[` in it, so preview text can never be shaped like a Row line or a capture link (Principle 10 at the write boundary; `scripts/triage.py`'s `_sanitize()`).
+Keeper Rows (destination `unmatched` or `?`) carry indented option checkboxes for friction-free triage on mobile:
+- `- [ ] Act on this` (maps destination to `today`)
+- `- [ ] Area · \`<path>\`` (sets destination to the specified Area path)
+- `- [ ] Project · \`<path>\`` (sets destination to the specified Project path)
+- `- [ ] Bin it instead` (maps destination to `discard`)
+
+Noise/discard Rows carry zero continuation option lines.
 
 The `## <destination>` heading is **presentation only** — it groups Rows sharing a destination so they can be approved as a run. It is *regenerated output*, never read for comparison (ADR-0031): the Row line's own destination is authoritative, parsing stays line-local (`scripts/execute.py`'s `ROW_RE`, the single owner of the Row shape), and both write paths — Triage's own and Execute's — pass the whole Plan through `execute.regroup_plan()`, which moves each Row block under the heading its destination names, creating headings that are needed and dropping ones left empty.
 
-**Re-routing a Row is therefore a single in-place edit**: change the destination on the Row line and stop. The Row executes to its edited destination wherever it currently sits, and the next write regroups it. Leave the Row's number alone — numbering is global and stable, so a re-routed Row keeps its number. The converse also holds: editing a *heading* achieves nothing and is reverted on the next write, because the heading has no authority.
-
-Row numbers are **global across groups and stable** — a Row keeps its number when it is re-routed into another group, and a new Row's number is derived from the highest number already in the Plan, never from counting Rows.
+**Re-routing a Row is a single edit**: change the destination on the Row line (or tick one of its keeper option boxes) and stop. The Row executes to its edited destination wherever it currently sits, and the next write regroups it. Editing a *heading* achieves nothing and is reverted on the next write, because the heading has no authority.
 
 `status` is `pending` until every Row is executed, then flips to `executed` and the file moves to `archive/triage/` (see `execute.md`). Every Row needs an explicit `[x]` tick before Execute will act on it — regardless of confidence; auto-execution on confidence is graduation, Phase 5.
 
-The `rule` field records which `config/routing-rules.md` rule fired for a Pass A Row — its first 8 hex characters of a SHA-1 hash over that rule's normalized `if:`/`then:`/`confidence:` text (`scripts/triage.py`'s `compute_rule_id()`). Pass B Rows (no rule fired) always carry `—`. Execute reads this field to record which specific rule produced an action, on the Action Log's `trigger` field (`action-log-schema.md`).
-
-A Brain still holding Plans in the pre-ADR-0031 markdown table converts them with the one-time script `scripts/migrate_triage_plan_rows.py --brain <brain>` (add `--dry-run` first to see what it would do). It rewrites every open Plan in `inbox/triage/` into this shape, preserving each Row's number, destination, route, confidence, rule identifier, preview, capture link and approval/executed state, and is a no-op on a Plan already converted. It deliberately does not touch `archive/triage/` — an archived Plan is a record of what was executed, not something anyone will tick again. If a Plan holds a table line the script cannot parse (a hand-typed `[X]`, a dropped cell), it **refuses that file untouched and names the line** rather than converting the rest, because the rewrite would delete that line and the approval state with it. There is no dual-shape parsing: `ROW_RE` reads the task-list shape only, so a Plan must be converted before Execute, the nudge or the Dashboard will see its Rows.
+A Brain holding Plans in older formats (3-line task list or pre-ADR-0031 markdown tables) converts them with `scripts/migrate_triage_rows_one_line.py --brain <brain>`. It rewrites every open Plan in `inbox/triage/` into the ADR-0036 single-line shape with nested keeper options and frontmatter rules, preserving approval states and verifying acceptance fields post-regroup. Legacy 3-line or table-based Rows cause whole-Plan refusals in Execute until converted.
 
 A destination of literal `discard` (rather than a real path) tells Execute to archive the Raw Capture with nothing filed — the right call when an item isn't worth keeping.
 
