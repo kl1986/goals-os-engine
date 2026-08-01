@@ -233,7 +233,7 @@ class TestApplyBatch(unittest.TestCase):
         result = rule_diff_review.apply_batch(self.brain_path, self.batch_path, now=self.now)
 
         self.assertEqual(result["applied"], [])
-        self.assertIn("bootstrap evidence", result["errors"][0])
+        self.assertIn("raw-capture evidence", result["errors"][0])
 
     def test_bootstrap_requires_empty_routing_rules(self):
         raw_dir = self.brain_path / "inbox" / "raw" / "email"

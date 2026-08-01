@@ -145,6 +145,15 @@ ROW_RE = re.compile(
 )
 # Pulls the individual destinations back out of the matched list.
 DESTINATION_RE = re.compile(r'`([^`]*)`')
+
+# The Plan's one section that holds no Rows: a checkbox per sender offering to
+# turn "this is noise" into a routing rule (ADR-0035). It is prose as far as
+# every Row reader is concerned — its checkboxes are not Row-shaped, so
+# ROW_RE never matches them and Execute cannot act on them — but `regroup_plan`
+# needs to know the name to rank it last, and `triage_sender_rules.py` needs it
+# to find and rebuild the section. Named here because this module owns Plan
+# layout; nothing else should hardcode the string.
+SENDER_RULES_HEADING = "Stop asking me about these"
 # A continuation line of the Row above it: indented, non-blank. A blank line,
 # a heading, or the next Row all end the block.
 ROW_CONTINUATION_RE = re.compile(r'^[ \t]+(?P<text>\S.*?)[ \t]*$')
@@ -459,16 +468,27 @@ def regroup_plan(text: str) -> str:
         out = out.rstrip("\n") + "\n\n" + "\n".join(headless_prose) + "\n"
     for block in ungrouped:
         out = out.rstrip("\n") + "\n\n" + block + "\n"
-    # The `discard` group always sorts last, whatever its Rows' positions
-    # (ADR-0034). Noise is the bulk of a Plan and the part needing least
-    # attention — 25 of the 32 Rows on the 23/07 email Plan — so putting it
-    # below everything else means the Rows that want a decision are what you
-    # land on, and Obsidian's native heading fold collapses the rest out of
-    # sight. It stays a fixed point because the key is a property of the
-    # destination, not of the document: a second pass sorts it last again.
+    # Groups sort by rank first, document position second. Rank is a property
+    # of the destination alone, never of the document, which is what keeps
+    # re-grouping a fixed point: a second pass ranks the same way.
+    #
+    #   0  ordinary destinations — the Rows wanting a decision, so they come
+    #      first and are what you land on
+    #   1  `discard` — the bulk of a Plan and the part needing least attention
+    #      (25 of the 32 Rows on the 23/07 email Plan), folded away below the
+    #      decisions (ADR-0034)
+    #   2  the sender-rules section — read *after* the noise it summarises,
+    #      and the last thing on the page because it is optional on any given
+    #      morning (ADR-0035)
     def group_key(destination):
         position = first_row_line.get(destination, heading_line.get(destination))
-        return (action_type_for(destination) == "discard-capture", position)
+        if destination == SENDER_RULES_HEADING:
+            rank = 2
+        elif action_type_for(destination) == "discard-capture":
+            rank = 1
+        else:
+            rank = 0
+        return (rank, position)
 
     ordered = sorted(
         group_order + [h for h in heading_order if h not in groups],
