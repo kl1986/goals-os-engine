@@ -28,6 +28,33 @@ The thin mapping layer that binds the Engine's protocols onto one Runtime (its s
 **Protocol**:
 A markdown-defined, runtime-independent specification of a behaviour (e.g. triage, weekly review). Protocols are what the Engine ships; Adapters make them executable.
 
+## Direction
+
+**Goal**:
+A finite outcome the user wants to achieve, with a success condition and a horizon. Each Goal has exactly one owning Area; Projects, Tickets, and other Areas may contribute without co-owning it. A Goal can be achieved, missed, paused, or abandoned.
+_Avoid_: using Goal for an ongoing habit, baseline, or quality bar
+
+**Goal status**:
+The evidence-backed assessment of an active Goal's trajectory: `on-track`, `at-risk`, or `off-track`. It is accompanied by evidence and a next review date, rather than a percentage-complete estimate.
+_Avoid_: percentage progress when no objective completion measure exists
+
+**Project**:
+A bounded, coordinated body of work that may contribute to one or more Goals, including Goals owned by other Areas. A Project never gains ownership of a Goal by contributing to it.
+
+**Ticket**:
+A trackable unit of work within a Project or Area. It may contribute directly to one or more Goals, but does not inherit a Project's Goal contributions as its own.
+
+**Goal contribution**:
+An explicit bare link from a Project or Ticket to a Goal that it advances. It expresses contribution, not ownership or priority; a Project's contribution is context for its Tickets, not an inherited claim.
+
+**Commitment**:
+An ongoing behaviour or protected floor the user intends to maintain while pursuing Goals. It is evaluated as maintained or breached, never as complete.
+_Avoid_: recurring Goal, maintenance Goal
+
+**Standard**:
+A quality or operating baseline that should remain true while the user pursues Goals. Falling below it signals a problem; meeting it does not itself complete a Goal.
+_Avoid_: Goal when the desired state is continuous
+
 ## Agents
 
 **System agent**:
