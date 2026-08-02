@@ -37,7 +37,7 @@ created: YYYY-MM-DD
 - YYYY-MM-DD — created
 ```
 
-`areas:` is a **list** of Brain Area slugs (unlike Projects' singular `area:`) — a person can legitimately span more than one Area (e.g. a contact touching both `work` and `example-business`). Each value must match a folder under `areas/`.
+`areas:` is a **list** of Brain Area slugs (unlike Projects' singular `area:`) — a person can legitimately span more than one Area (e.g. a contact touching both `work` and `example-business`). Each value must match a folder under `areas/`, and this is now **enforced, not just stated**: an Adapter filing into `tasks/areas/<slug>/` off the back of a hub's `areas:` line checks that `areas/<slug>/` is a real directory, and files nothing (logging why) when it is not. A hub may legitimately name an Area whose folder was never created; the fix is to create the Area, never to let the Adapter create it. `projects/<slug>/` works the same way.
 
 The `# <Full Name>` / `> <role>` header (unlike Projects, which have none) matches both v1's own Person Hub template and the Brain's existing Area notes (`# Home`, etc.) — a Person Hub is an identity note, the same shape as an Area, where a Project note is not.
 
