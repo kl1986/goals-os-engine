@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Goals OS schema and structure enforcer — three checks, one tool.
+"""Goals OS schema and structure enforcer — four checks, one tool.
 
 Implements the `goals-os-schema-and-structure-enforcer` ticket's decisions
 (25/07/2026). Pure Python, zero LLM calls, same house shape as
 `triage.py` / `version_control.py` (argparse, `--brain`).
 
-Three checks, all resolved against **one canonical slug map** derived from
-the Brain's `projects/<slug>/` and `areas/<slug>/` directories:
+Checks (a)–(c) resolve against **one canonical slug map** derived from the
+Brain's `projects/<slug>/` and `areas/<slug>/` directories; (d) stands on its
+own:
 
 **(a) Ticket frontmatter schema** — every `tasks/**/*.md` carries the full
 ADR-0015 key set, `status` is in the ADR-0025 vocabulary, `type` is in the
@@ -30,6 +31,25 @@ and `Files/`. Two finding kinds:
 **(c) Cross-note integrity** — `[[wikilinks]]` that resolve to no note in
 the Brain, and tickets filed under a `tasks/<projects|areas>/<slug>/` whose
 Project/Area does not exist.
+
+**(d) `CLAUDE.md` caveat expiry** — a "wait for the dependent ticket" caveat
+in always-loaded context must name the ticket that clears it, so it can
+expire itself. A caveat is marked with the literal `**Caveat**` token and
+must carry a `[[wikilink]]` to a ticket under `tasks/`. Three finding kinds:
+
+- `caveat-expired` — the named ticket is `status: done`, so the caveat may
+  now be stale. This is the whole point of the check: the last stale caveat
+  outlived its dependencies by weeks and told agents not to write a status
+  the pipeline required.
+- `caveat-unlinked` — a caveat naming no ticket at all; nothing can expire it.
+- `caveat-unresolved-ticket` — it links a note that is not a ticket, so there
+  is no status to clear on. Check (c) stays quiet about these because the
+  link resolves perfectly well; it just cannot ever go `done`.
+
+**Never fixable, by construction.** Removing a caveat means rewriting the
+prose around it and judging whether the surrounding sentence is still true.
+`apply_fixes` routes only (a)/(b)/(c), so a (d) finding cannot be applied
+even by mistake.
 
 ## Modes
 
@@ -122,6 +142,11 @@ FENCE_RE = re.compile(r"^(```|~~~)")
 INLINE_CODE_RE = re.compile(r"`+[^`\n]*`+")
 
 SKIP_DIR_NAMES = {".git", ".obsidian", "__pycache__", ".trash", "node_modules"}
+
+# The literal token that makes a `CLAUDE.md` caveat greppable (check (d)).
+# An unmarked caveat is undetectable by anything short of reading the prose,
+# which is exactly how the last one survived for weeks.
+CAVEAT_MARKER = "**Caveat**"
 
 # `inbox/raw/` captures are immutable on arrival and everything under
 # `archive/` is the executed record of them, so no repair may ever write
@@ -774,12 +799,114 @@ def scan(brain_path: Path, code_root: Path, files_root: Path) -> list:
         check_tickets(brain_path)
         + check_structure(brain_path, code_root, files_root, slug_map)
         + check_links(brain_path, slug_map)
+        + check_caveats(brain_path)
     )
 
 
 def _git(repo: Path, *args):
     return subprocess.run(["git", "-C", str(repo), *args],
                           capture_output=True, text=True)
+
+
+# --------------------------------------------------------------------------
+# Check (d) — CLAUDE.md caveat expiry
+# --------------------------------------------------------------------------
+
+def claude_md_files(brain_path: Path):
+    """Every `CLAUDE.md` in the Brain — the always-loaded-context surface.
+
+    Scoped to that filename on purpose. A conditional sentence in an ordinary
+    note is prose a reader chooses to open; the same sentence in a `CLAUDE.md`
+    is a standing instruction every agent is handed unasked, and that is the
+    only place a caveat can outlive its cause without anyone noticing.
+    """
+    return sorted(p for p in brain_notes(brain_path) if p.name == "CLAUDE.md")
+
+
+def iter_caveats(text: str):
+    """`(line, lineno, [wikilink targets])` for each `**Caveat**` line.
+
+    The marker is the whole mechanism: caveats are only greppable if they are
+    *marked*, and sniffing for "not yet"/"wait for" prose would misfire on
+    every sentence that merely describes one.
+
+    Fenced blocks are skipped, and inline code is masked before the line is
+    read, so a marker that is being *discussed* rather than *declared* does not
+    trip the check — `**Caveat**` in backticks is documentation. (The live Brain
+    caught this the moment the convention was written down: the sentence
+    explaining the token flagged itself.) Masking preserves offsets, so a
+    genuine caveat about a code symbol is still found on the same line.
+    """
+    in_fence = False
+    for lineno, raw in enumerate(text.splitlines(), start=1):
+        if FENCE_RE.match(raw.strip()):
+            in_fence = not in_fence
+            continue
+        line = _mask_inline_code(raw)
+        if in_fence or CAVEAT_MARKER not in line:
+            continue
+        targets = [m.group(1).strip() for m in WIKILINK_RE.finditer(line)]
+        yield raw, lineno, targets
+
+
+def _ticket_status(brain_path: Path, target: str):
+    """The `status:` of the ticket a caveat names, or None if it names no
+    ticket. Resolved the way Obsidian resolves a wikilink — by bare filename
+    — but restricted to `tasks/`, because only a ticket has a status that can
+    ever clear the caveat."""
+    stem = target.split("/")[-1].removesuffix(".md").lower()
+    for path in ticket_files(brain_path):
+        if path.stem.lower() == stem:
+            return parse_frontmatter(path.read_text(errors="replace")).get("status", "")
+    return None
+
+
+def check_caveats(brain_path: Path) -> list:
+    """Caveats in always-loaded context that can no longer expire on their own.
+
+    A `CLAUDE.md` caveat must name the ticket that clears it, so a stale one
+    surfaces itself instead of waiting for an agent to notice mid-way through
+    unrelated work. Nothing here is ever auto-repaired: removing a caveat means
+    rewriting the prose around it, and judging whether the surrounding sentence
+    still says something true. That is a human's call, so check (d) reports and
+    stops. (`apply_fixes` only routes checks (a)/(b)/(c), so this is structural,
+    not merely conventional.)
+    """
+    findings = []
+    for path in claude_md_files(brain_path):
+        rel = path.relative_to(brain_path).as_posix()
+        for _line, lineno, targets in iter_caveats(path.read_text(errors="replace")):
+            where = f"{rel}:{lineno}"
+            statuses = {t: _ticket_status(brain_path, t) for t in targets}
+            tickets = {t: s for t, s in statuses.items() if s is not None}
+
+            if not targets:
+                findings.append(Finding(
+                    "d", "caveat-unlinked", where,
+                    "caveat names no clearing ticket, so nothing can ever expire it",
+                    blocked_reason="a human must say which ticket clears it",
+                ))
+                continue
+            if not tickets:
+                named = ", ".join(f"[[{t}]]" for t in targets)
+                findings.append(Finding(
+                    "d", "caveat-unresolved-ticket", where,
+                    f"caveat links {named}, which is not a ticket under `tasks/` — "
+                    "it has no status that could clear the caveat",
+                    blocked_reason="a human must say which ticket clears it",
+                ))
+                continue
+
+            done = [t for t, s in tickets.items() if s.strip().lower() == "done"]
+            if done and len(done) == len(tickets):
+                named = ", ".join(f"[[{t}]]" for t in done)
+                findings.append(Finding(
+                    "d", "caveat-expired", where,
+                    f"caveat is still live but {named} is `status: done` — "
+                    "it may now be stale, and stale caveats obstruct",
+                    blocked_reason="removing a caveat rewrites prose — needs a human",
+                ))
+    return findings
 
 
 def guard_brain_repo(brain_path: Path):
@@ -944,9 +1071,10 @@ def run(brain_path: Path, code_root: Path, files_root: Path, apply: bool = False
 def format_report(findings: list, applied: bool) -> str:
     if not findings:
         return "No schema or structure findings."
-    labels = {"a": "(a) ticket frontmatter", "b": "(b) folder/naming", "c": "(c) cross-note integrity"}
+    labels = {"a": "(a) ticket frontmatter", "b": "(b) folder/naming",
+              "c": "(c) cross-note integrity", "d": "(d) CLAUDE.md caveat expiry"}
     out = []
-    for check in ("a", "b", "c"):
+    for check in ("a", "b", "c", "d"):
         group = [f for f in findings if f.check == check]
         if not group:
             continue
