@@ -499,9 +499,7 @@ class TestPendingPlanSummary(unittest.TestCase):
     def _row(self, n, dest, approve):
         tick, marker = approve[:3], approve[4:]
         suffix = f" {marker}" if marker else ""
-        return (f"- {tick} **{n}** → `{dest}` · Pass B · Medium · —{suffix}\n"
-                f"    preview\n"
-                f"    [[inbox/raw/email/cap-{n}.md]]\n\n")
+        return f"- {tick} preview → `{dest}` [[inbox/raw/email/cap-{n}.md]]{suffix}\n\n"
 
     def test_counts_ticked_and_pending_rows(self):
         self.plan.write_text(
@@ -516,3 +514,32 @@ class TestPendingPlanSummary(unittest.TestCase):
         self.assertEqual(summary["total"], 3)
         self.assertEqual(summary["ticked"], 2)
         self.assertEqual(summary["pending"], 1)
+
+    def test_legacy_plan_summary_and_rendering(self):
+        legacy_table = (
+            "---\ntype: triage-plan\nsource: email\ndate: 2026-07-27\nstatus: pending\n---\n\n"
+            "# Triage Plan — email — 2026-07-27\n\n"
+            "| # | capture | preview | route | destination | confidence | rule | approve |\n"
+            "|---|---|---|---|---|---|---|---|\n"
+            "| 1 | [[inbox/raw/email/cap-1.md]] | item 1 | Pass B | unmatched | High | — | [ ] |\n"
+        )
+        self.plan.write_text(legacy_table, encoding="utf-8")
+        summary = dashboard._pending_plan_summary(self.plan)
+        self.assertTrue(summary["migration_required"])
+        self.assertEqual(summary["total"], 0)
+
+        data = {
+            "generated": "2026-08-02 10:00",
+            "date_str": "2026-08-02",
+            "overdue": [],
+            "pending_plans": [summary],
+            "pending_rule_diffs": [],
+            "awaiting_review_tickets": [],
+            "waiting_for": [],
+            "action_log": {"exists": False, "entry_count": 0, "unreviewed": 0, "date_str": "2026-08-02"},
+            "dropzone": [],
+        }
+        text = dashboard.render_dashboard(data)
+        self.assertIn("migration required", text)
+        self.assertNotIn("No pending Triage Plans.", text)
+        self.assertNotIn("0 row(s)", text)

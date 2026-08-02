@@ -63,11 +63,19 @@ EMPTY_META_RE = re.compile(
 )
 
 
+WRAPPED_ROW_RE_33 = re.compile(
+    r'^[ \t]*- \[[ x]\]\s+\*\*\d+\*\*\s+→\s+'
+    rf'{execute.DESTINATION_LIST_RE}'
+    r'(?:\s+%%·\s+Pass [AB]\s+·[^%]*?%%)?'
+    r'(?:\s+\((?:done|dispatched)\))?\s*$'
+)
+
+
 def strip_empty_metadata(text: str):
     """`(new_text, stripped)` — remove zero-information metadata segments."""
     out, stripped = [], 0
     for line in text.splitlines():
-        if execute.ROW_RE.match(line):
+        if WRAPPED_ROW_RE_33.match(line):
             new_line = EMPTY_META_RE.sub("", line)
             if new_line != line:
                 stripped += 1
@@ -92,7 +100,7 @@ def convert_text(text: str):
             out.append(f"{m.group('head')} %%{m.group('meta').strip()}%%{marker}")
             converted += 1
             continue
-        if ROW_START_RE.match(line) and not execute.ROW_RE.match(line):
+        if ROW_START_RE.match(line) and not WRAPPED_ROW_RE_33.match(line):
             return text, 0, line
         out.append(line)
     return "\n".join(out) + ("\n" if text.endswith("\n") else ""), converted, None

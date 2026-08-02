@@ -35,9 +35,11 @@ def _wikilink(path: Path, root_dir: str) -> str:
 
 def _pending_plan_summary(path: Path) -> dict:
     text = path.read_text()
+    if execute.requires_migration(text):
+        return {"path": path, "total": 0, "ticked": 0, "pending": 0, "migration_required": True}
     rows = execute.parse_plan_rows(text)
     ticked = sum(1 for r in rows if r["approve"] in ("[x]", "[x] (done)"))
-    return {"path": path, "total": len(rows), "ticked": ticked, "pending": len(rows) - ticked}
+    return {"path": path, "total": len(rows), "ticked": ticked, "pending": len(rows) - ticked, "migration_required": False}
 
 
 def _pending_plans(brain_path: Path) -> list:
@@ -259,10 +261,13 @@ def render_dashboard(data: dict) -> str:
     if data["pending_plans"]:
         for plan in data["pending_plans"]:
             link = _wikilink(plan["path"], "inbox/triage")
-            lines.append(
-                f"- {link} — {plan['total']} row(s), "
-                f"{plan['ticked']} ticked, {plan['pending']} awaiting approval"
-            )
+            if plan.get("migration_required"):
+                lines.append(f"- {link} — migration required")
+            else:
+                lines.append(
+                    f"- {link} — {plan['total']} row(s), "
+                    f"{plan['ticked']} ticked, {plan['pending']} awaiting approval"
+                )
     else:
         lines.append("No pending Triage Plans.")
 

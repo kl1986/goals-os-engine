@@ -29,9 +29,7 @@ class TestSenderRules(unittest.TestCase):
         for i, sender in enumerate(senders, 1):
             name = f"c{i}.md"
             (self.brain / "inbox" / "raw" / "email" / name).write_text(capture(sender))
-            blocks.append(
-                f"- [ ] **{i}** → `{destination}` %%· Pass B · — · —%%\n"
-                f"    preview {i}\n    [[inbox/raw/email/{name}]]")
+            blocks.append(tsr.triage.build_row_block(i, f"inbox/raw/email/{name}", f"preview {i}", destination=destination))
         return "---\nstatus: pending\n---\n\n# Plan\n\n" + "\n\n".join(blocks) + "\n"
 
     def test_offers_a_checkbox_per_unresolved_sender(self):

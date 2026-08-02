@@ -66,34 +66,26 @@ def refresh_text(text: str, brain_path: Path, source: str):
     refreshed = skipped = 0
     for start, end, row, problem in execute._scan_blocks(text):
         if problem:
-            return text, 0, 0, row["n"]
-        # The block is [task line, preview line(s)…, capture link]. The preview
-        # is everything between, which the writer always emits as exactly one
-        # line; anything else is left alone rather than collapsed.
-        if end - start != 3:
-            skipped += 1
-            continue
+            return text, 0, 0, row.get("n", "?")
         capture_path = brain_path / row["capture"]
         if not capture_path.exists():
             skipped += 1
             continue
         # Only re-derive where there is a *structured* derivation to re-derive
-        # from — today, an email's From/Subject headers. The generic preview is
-        # the first N characters of the body Triage was handed at stamp time,
-        # and this script only has the capture file: stripping its frontmatter
-        # leaves the `# Title` heading that the stamped body did not have, so
-        # a generic refresh would rewrite good previews into worse ones
-        # (`Send a message…` → `# Send a message…`). Refresh what improves,
-        # skip what would merely differ.
+        # from — today, an email's From/Subject headers.
         new_preview = triage.structured_preview(capture_body(capture_path), source)
         if not new_preview:
             skipped += 1
             continue
-        indent = re.match(r'^[ \t]*', lines[start + 1]).group(0)
-        candidate = f"{indent}{new_preview}"
-        if candidate == lines[start + 1]:
+        line = lines[start]
+        m = execute.ROW_RE.match(line)
+        if not m:
+            skipped += 1
             continue
-        lines[start + 1] = candidate
+        old_preview = m.group("preview")
+        if old_preview == new_preview:
+            continue
+        lines[start] = line.replace(old_preview, new_preview, 1)
         refreshed += 1
     return "\n".join(lines) + ("\n" if text.endswith("\n") else ""), refreshed, skipped, None
 

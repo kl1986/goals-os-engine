@@ -100,12 +100,12 @@ def _converted_block(row: dict) -> str:
     block = triage.build_row_block(
         int(row["n"]), row["capture"], row["preview"], row["route"],
         row["destination"], row["confidence"], row["rule"] or "—",
+        tick=row.get("tick") or "[ ]",
     )
-    if row["tick"] == "[x]":
-        block = block.replace("- [ ] ", "- [x] ", 1)
-    if row["marker"]:
-        task_line, rest = block.split("\n", 1)
-        block = f"{task_line} ({row['marker']})\n{rest}"
+    if row.get("marker"):
+        lines_block = block.splitlines()
+        lines_block[0] = execute._mark_executed(lines_block[0], row["marker"])
+        block = "\n".join(lines_block)
     return block
 
 
@@ -136,11 +136,22 @@ def convert_plan_text(text: str) -> str:
     if not rows:
         return text
 
+    pass_a_rules = []
+    for r in rows:
+        route = r.get("route") or "Pass B"
+        rule = r.get("rule") or "—"
+        conf = r.get("confidence") or "High"
+        if route == "Pass A" and rule and rule != "—":
+            pass_a_rules.append((Path(r["capture"]).name, rule, conf))
+
     kept = [
         line for line in text.splitlines()
         if not TABLE_LINE_RE.match(line)
     ]
     head = "\n".join(kept).rstrip("\n")
+
+    if pass_a_rules:
+        head = triage._update_frontmatter_rules(head, pass_a_rules)
 
     grouped = {}
     for row in rows:
@@ -155,8 +166,11 @@ def convert_plan_text(text: str) -> str:
     # which was a regroup fixed point until ADR-0034 pinned the discard group
     # last; going through `regroup_plan()` keeps "a converted Plan is already
     # regrouped" true by construction instead of by coincidence, and immune to
-    # the next ordering rule as well.
-    return execute.regroup_plan(head + "\n\n" + "\n".join(sections))
+    converted = execute.regroup_plan(head + "\n\n" + "\n".join(sections))
+    errors = execute.check_row_blocks(converted)
+    if errors:
+        raise UnconvertiblePlanError(f"Converted text failed check_row_blocks: {errors[0]}")
+    return converted
 
 
 def convert_plan_file(plan_path: Path, dry_run: bool = False) -> int:

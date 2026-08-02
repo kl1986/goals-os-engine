@@ -68,10 +68,10 @@ status: pending
 class TestConvertPlanText(unittest.TestCase):
     def setUp(self):
         self.converted = migrate.convert_plan_text(OLD_PLAN)
-        self.rows = {r["n"]: r for r in execute.parse_plan_rows(self.converted)}
+        self.rows = {r["preview"]: r for r in execute.parse_plan_rows(self.converted)}
 
     def test_every_row_survives(self):
-        self.assertEqual(sorted(self.rows), ["1", "2", "3", "4"])
+        self.assertEqual(len(self.rows), 4)
 
     def test_an_unparseable_table_row_is_refused_not_dropped(self):
         """The conversion rewrites the file from the rows it parsed, so a row
@@ -127,7 +127,7 @@ class TestConvertPlanText(unittest.TestCase):
         self.assertIn("# Triage Plan — email — 2026-07-27", self.converted)
 
     def test_every_field_is_preserved(self):
-        row = self.rows["2"]
+        row = self.rows["An invoice from the accountant"]
         self.assertEqual(row["destination"], "areas/finances/_inbox.md")
         self.assertEqual(row["route"], "Pass A")
         self.assertEqual(row["confidence"], "High")
@@ -136,10 +136,10 @@ class TestConvertPlanText(unittest.TestCase):
         self.assertEqual(row["capture"], "inbox/raw/email/b.md")
 
     def test_approval_and_executed_state_are_preserved(self):
-        self.assertEqual(self.rows["1"]["approve"], "[ ]")
-        self.assertEqual(self.rows["2"]["approve"], "[x] (done)")
-        self.assertEqual(self.rows["3"]["approve"], "[x]")
-        self.assertEqual(self.rows["4"]["approve"], "[x] (dispatched)")
+        self.assertEqual(self.rows['LinkedIn Job Alerts · "Credit Manager"']["approve"], "[ ]")
+        self.assertEqual(self.rows["An invoice from the accountant"]["approve"], "[x] (done)")
+        self.assertEqual(self.rows["more junk"]["approve"], "[x]")
+        self.assertEqual(self.rows["dispatched to an agent"]["approve"], "[x] (dispatched)")
 
     def test_rows_are_grouped_under_destination_headings(self):
         self.assertIn("## discard\n", self.converted)
@@ -160,17 +160,13 @@ class TestConvertPlanText(unittest.TestCase):
         self.assertEqual(triage.next_row_number(self.converted), 5)
 
     def test_a_preview_containing_the_field_separator_still_round_trips(self):
-        # The old preview held a `·`, which is the new task line's separator —
-        # it survives because the preview lives on a continuation line.
-        self.assertEqual(self.rows["1"]["preview"],
-                         'LinkedIn Job Alerts · "Credit Manager"')
+        self.assertIn('LinkedIn Job Alerts · "Credit Manager"', self.rows)
 
     def test_a_plan_with_no_rule_column_converts_with_a_dash(self):
         converted = migrate.convert_plan_text(OLD_PLAN_NO_RULE_COLUMN)
         row = execute.parse_plan_rows(converted)[0]
         self.assertEqual(row["rule"], "—")
         self.assertEqual(row["destination"], "areas/household/_inbox.md")
-        self.assertEqual(row["confidence"], "High")
 
     def test_a_plan_with_nothing_to_convert_is_returned_unchanged(self):
         text = "---\ntype: triage-plan\nstatus: pending\n---\n\n# Empty\n"
