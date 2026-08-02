@@ -45,7 +45,7 @@ A bounded, coordinated body of work that may contribute to one or more Goals, in
 A trackable unit of work within a Project or Area. It may contribute directly to one or more Goals, but does not inherit a Project's Goal contributions as its own.
 
 **Goal contribution**:
-An explicit bare link from a Project or Ticket to a Goal that it advances. It expresses contribution, not ownership or priority; a Project's contribution is context for its Tickets, not an inherited claim.
+An explicit bare link from a Project or Ticket to a Goal that it advances. It expresses contribution, not ownership or priority; a Project's contribution is context for its Tickets, not an inherited claim. The system normally establishes Project contributions during planning or Project creation/reframing, never by bulk inference; a user is never required to maintain them on Tickets.
 
 **Commitment**:
 An ongoing behaviour or protected floor the user intends to maintain while pursuing Goals. It is evaluated as maintained or breached, never as complete.
