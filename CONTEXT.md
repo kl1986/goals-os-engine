@@ -162,6 +162,10 @@ Share of actions executed autonomously rather than confirm-first — the primary
 **Call Companion curation**:
 A bounded, interactive planning flow that reads unclassified active Tickets, proposes `call_suitable` and `estimate_minutes`, and writes frontmatter only upon explicit user confirmation.
 
+**Build clone**:
+The non-synced plain clone of a Brain that `/build` operates in when a Ticket's `target_repo` is the Brain (ADR-0039). Work reaches the Brain by push and the Version control routine's pull, never by editing the iCloud-synced tree directly. The vault stays canonical; the Build clone is disposable.
+_Avoid_: calling it a mirror or a backup — it holds no state the remote does not, and is not a recovery artefact
+
 ## Scheduling
 
 **Schedule**:
@@ -176,7 +180,16 @@ _Avoid_: Task, cron job (Job means the realised artefact specifically, not the w
 **Managed** = generated and owned by the Scheduler Adapter, marked by the namespaced `GoalsOSManaged` key in the plist so ownership is decidable from the file alone. **Unmanaged** = any hand-written plist, including third-party ones; the adapter **never touches** one and refuses loudly on a Label collision.
 
 **Scheduler Adapter**:
-`scripts/sync_schedules.py` plus `protocols/schedules.md` — ADR-0007's layer 2. Renders and reconciles Managed Jobs from the Brain's Schedules, idempotently. It schedules a **trigger**; it is not a session runner and does not fire an unattended agent session.
+`scripts/sync_schedules.py` plus `protocols/schedules.md` — ADR-0007's layer 2. Renders and reconciles Managed Jobs from the Brain's Schedules, idempotently. It schedules a **trigger** and is indifferent to what that trigger invokes: a Python script and an Unattended Session are the same thing to it, a `ProgramArguments` list.
+_Avoid_: "it cannot fire an unattended agent session" — it can, and does (ADR-0037). This phrasing appeared here and in `sync_schedules.py`'s own out-of-scope note, and left three tickets parked for a month behind a blocker that did not exist.
+
+**Unattended Session**:
+A scheduled agentic session (`claude -p /<skill>`) that performs LLM judgement with no human present — Triage Pass B, rule-learning's grouping step. A first-class Command kind in a Schedule (ADR-0037), distinguished from a script by running with permission prompting disabled and being confined to Proposal Surfaces.
+_Avoid_: session runner (there is no separate runner component — `launchd` plus the Runtime's own headless mode is the whole mechanism)
+
+**Proposal Surface**:
+A location where a write takes no effect until a human approves it — `inbox/triage/`, `inbox/rule-diffs/`, `log/`. The set an Unattended Session may write. Confirm-first is preserved here structurally, by what the session can reach, rather than by prompting — the only form of it that survives having no human present.
+_Avoid_: sandbox (the confinement is about consequence, not isolation)
 
 **Cadence** (retired from the Engine):
 How often a Routine runs. Formerly a column in the Engine's `protocols/routines.md` manifest; since ADR-0030 it lives only in the Brain, derived from a Schedule's kind and Timing. Do not reintroduce a cadence field to any Engine file — that is the double-source-of-truth ADR-0030 collapsed.
