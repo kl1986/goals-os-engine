@@ -35,3 +35,9 @@ to reconcile a second store that no longer exists — dead weight once
 `tasks/kanban.md` is gone); adopting Base Board's default "in progress" column
 label (a space-form value would silently diverge from the hyphenated
 `in-progress` used by tickets, ADR-0015, and any status query).
+
+**Since:** the view file was renamed `tasks/tickets.base` → `tasks/all-tickets.base`
+(26/07/2026) when it widened into one global board across every Project and Area.
+`tasks/tickets.base` above is the name as it stood on 22/07/2026 and is left as
+written; the decision is unchanged, only the filename moved. Live docs cite
+`tasks/all-tickets.base`.

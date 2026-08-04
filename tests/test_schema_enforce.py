@@ -586,3 +586,157 @@ def test_slug_map_folds_a_drifted_directory_onto_its_canonical_slug(brain):
     assert slug_map["goals-os"] == "project"
     assert slug_map["work"] == "area"
     assert "Goals OS" not in slug_map
+
+
+# --------------------------------------------------------------------------
+# (d) CLAUDE.md caveat expiry
+# --------------------------------------------------------------------------
+
+DONE_TICKET = """---
+status: done
+type: task
+priority:
+component: v2-shippable-core
+parent:
+assignee:
+github:
+goal:
+created: 2026-07-20
+resolved: 2026-07-25
+---
+
+# A finished ticket
+"""
+
+
+def _caveat_brain(brain, body: str, ticket: str = None):
+    """`brain` plus a project CLAUDE.md carrying `body`, and optionally a
+    second ticket written verbatim from `ticket`."""
+    _write(brain / "projects" / "goals-os" / "CLAUDE.md", body)
+    if ticket is not None:
+        _write(brain / "tasks" / "projects" / "goals-os" / "a-finished-ticket.md",
+               ticket)
+    return brain
+
+
+def test_a_brain_with_no_caveats_raises_nothing(brain, roots, tmp_path):
+    _caveat_brain(brain, "# Project context\n\nNothing conditional here.\n")
+    assert _kinds(_run(brain, roots, tmp_path)["findings"], "d") == []
+
+
+def test_a_caveat_naming_an_open_ticket_is_silent(brain, roots, tmp_path):
+    _caveat_brain(
+        brain,
+        "**Caveat** — don't write that value until [[a-conforming-ticket]] lands.\n",
+    )
+    assert _kinds(_run(brain, roots, tmp_path)["findings"], "d") == []
+
+
+def test_a_caveat_whose_ticket_is_done_is_flagged_stale(brain, roots, tmp_path):
+    _caveat_brain(
+        brain,
+        "**Caveat** — don't write that value until [[a-finished-ticket]] lands.\n",
+        ticket=DONE_TICKET,
+    )
+    findings = [f for f in _run(brain, roots, tmp_path)["findings"] if f.check == "d"]
+    assert [f.kind for f in findings] == ["caveat-expired"]
+    assert "a-finished-ticket" in findings[0].detail
+
+
+def test_an_expired_caveat_is_never_auto_repaired(brain, roots, tmp_path):
+    """Deleting a caveat means rewriting prose around it — always a human's
+    call, so `--apply` must leave the file byte-identical."""
+    body = "**Caveat** — don't write that value until [[a-finished-ticket]] lands.\n"
+    _caveat_brain(brain, body, ticket=DONE_TICKET)
+    _git_commit_all(brain, "add caveat")
+    findings = [f for f in _run(brain, roots, tmp_path)["findings"] if f.check == "d"]
+    assert not findings[0].fixable
+    _run(brain, roots, tmp_path, apply=True)
+    assert (brain / "projects" / "goals-os" / "CLAUDE.md").read_text() == body
+
+
+def test_a_caveat_naming_no_ticket_is_flagged_unlinked(brain, roots, tmp_path):
+    _caveat_brain(brain, "**Caveat** — don't write that value yet.\n")
+    findings = [f for f in _run(brain, roots, tmp_path)["findings"] if f.check == "d"]
+    assert [f.kind for f in findings] == ["caveat-unlinked"]
+
+
+def test_a_caveat_naming_a_non_ticket_note_is_flagged(brain, roots, tmp_path):
+    """A caveat must clear on a *ticket*'s status. A link to a Project note
+    resolves fine as a wikilink, so check (c) stays quiet — but it can never
+    go `done`, so the caveat would never expire."""
+    _caveat_brain(brain, "**Caveat** — blocked until [[goals-os]] is sorted.\n")
+    findings = [f for f in _run(brain, roots, tmp_path)["findings"] if f.check == "d"]
+    assert [f.kind for f in findings] == ["caveat-unresolved-ticket"]
+
+
+def test_caveat_scanning_ignores_non_claude_md_files(brain, roots, tmp_path):
+    """The convention is scoped to always-loaded context. The same words in an
+    ordinary note are prose, not a standing instruction to an agent."""
+    _write(brain / "projects" / "goals-os" / "notes.md",
+           "**Caveat** — don't write that value yet.\n")
+    assert _kinds(_run(brain, roots, tmp_path)["findings"], "d") == []
+
+
+def test_a_caveat_inside_a_fenced_block_is_ignored(brain, roots, tmp_path):
+    """Documenting the convention must not trip it."""
+    _caveat_brain(
+        brain,
+        "How to write one:\n\n```\n**Caveat** — don't do X until [[some-ticket]] lands.\n```\n",
+    )
+    assert _kinds(_run(brain, roots, tmp_path)["findings"], "d") == []
+
+
+def test_several_caveats_are_reported_independently(brain, roots, tmp_path):
+    _caveat_brain(
+        brain,
+        "**Caveat** — wait for [[a-finished-ticket]].\n\n"
+        "**Caveat** — wait for [[a-conforming-ticket]].\n\n"
+        "**Caveat** — wait for something.\n",
+        ticket=DONE_TICKET,
+    )
+    findings = [f for f in _run(brain, roots, tmp_path)["findings"] if f.check == "d"]
+    assert sorted(f.kind for f in findings) == ["caveat-expired", "caveat-unlinked"]
+    assert all(":" in f.path for f in findings)
+
+
+def test_caveats_are_found_in_every_claude_md_in_the_brain(brain, roots, tmp_path):
+    _write(brain / "CLAUDE.md", "**Caveat** — wait for [[a-finished-ticket]].\n")
+    _write(brain / "wiki" / "CLAUDE.md",
+           "**Caveat** — wait for [[a-finished-ticket]].\n")
+    _write(brain / "tasks" / "projects" / "goals-os" / "a-finished-ticket.md",
+           DONE_TICKET)
+    findings = [f for f in _run(brain, roots, tmp_path)["findings"] if f.check == "d"]
+    assert len(findings) == 2
+    assert sorted(f.path.split(":")[0] for f in findings) == ["CLAUDE.md", "wiki/CLAUDE.md"]
+
+
+def test_the_report_names_the_caveat_check(brain, roots, tmp_path):
+    _caveat_brain(brain, "**Caveat** — don't write that value yet.\n")
+    report = se.format_report(_run(brain, roots, tmp_path)["findings"], False)
+    assert "(d) CLAUDE.md caveat expiry" in report
+
+
+def test_a_caveat_token_inside_inline_code_is_ignored(brain, roots, tmp_path):
+    """Same reasoning as the fence skip, one line down: a `**Caveat**` in
+    backticks is being *discussed*, not declared. Found by running the check
+    against the live Brain, where the sentence documenting the convention
+    flagged itself."""
+    _caveat_brain(
+        brain,
+        "Mark it with the literal token `**Caveat**` plus a `[[wikilink]]` "
+        "to the clearing ticket.\n",
+    )
+    assert _kinds(_run(brain, roots, tmp_path)["findings"], "d") == []
+
+
+def test_a_real_caveat_is_still_found_on_a_line_containing_inline_code(brain, roots, tmp_path):
+    """Masking must not swallow the caveat itself — a caveat about a code
+    symbol is the normal case."""
+    _caveat_brain(
+        brain,
+        "**Caveat** — don't write `status: awaiting-review` until "
+        "[[a-finished-ticket]] lands.\n",
+        ticket=DONE_TICKET,
+    )
+    assert _kinds(_run(brain, roots, tmp_path)["findings"], "d") == ["caveat-expired"]
