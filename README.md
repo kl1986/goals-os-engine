@@ -22,6 +22,7 @@ Markdown-defined, runtime-independent behaviour specs — what the Engine ships;
 | Protocol | Defines |
 |-----|----------|
 | [`action-log-schema.md`](./protocols/action-log-schema.md) | The Action Log entry schema (v0) — the fields every agent action appends to the Brain's `log/`, per ADR-0005/0006. |
+| [`call-companion.md`](./protocols/call-companion.md) | Bounded, interactive planning flow (v0) — reads unclassified active Tickets, proposes `call_suitable` and `estimate_minutes`, writes frontmatter on explicit confirmation. |
 | [`onboarding.md`](./protocols/onboarding.md) | Turns a blank Brain clone into a working, personalised Brain (v0) — interview + idempotent materialisation of `config/` and one Area at a time, per ADR-0004. |
 | [`routines.md`](./protocols/routines.md) | The Routine manifest (v0) — protocol binding, risk tier, owner and Phase 2 status per Routine. Timing is **not** here; see below. |
 | [`schedules.md`](./protocols/schedules.md) | The Schedules schema (v0) — the Brain's `config/schedules.md` is the sole source of truth for timing (ADR-0030), read by Heartbeat for cadence and by the Scheduler Adapter to generate launchd Jobs. |
