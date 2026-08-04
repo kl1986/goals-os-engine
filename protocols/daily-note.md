@@ -83,7 +83,7 @@ It bumps its own "Close daily note" row in `config/routine-state.md`. Note expli
 
 ## Waiting For section
 
-Computed by the same Daily-note generation skill. One more scan of `people/*.md` (the same source `dashboard.py`'s `_open_waiting_for()` already scans, per `protocols/people-tracking.md`). 
+Computed by the same Daily-note generation skill. One more scan of `people/*.md` (the same source `dashboard.py`'s `_open_waiting_for()` already scans, per `protocols/people-tracking.md`).
 
 Read-only, no write-back, and no `daily-note-src` comment ever. `people-tracking.md`'s existing rule ("a hub is the only place a delegation ever gets logged — never a second file, never the Dashboard") applies here too; the daily note is exactly such a second surface.
 

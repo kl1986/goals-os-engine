@@ -96,6 +96,14 @@ The `discard` group is **pinned below every other group** in a Plan, whatever it
 
 Noise Rows are **not pre-ticked**. "Default to noise" means classified as noise, not approved as noise — every Row still needs an explicit `[x]`, and pre-ticking would make Triage's write an approval on the user's behalf, which is graduation (Phase 5), not classification.
 
+## Instructions section
+
+Every Triage Plan features a stable final `## Instructions` section at the foot of the document (ranked after destination headings and `## Stop asking me about these`). The user can write free-text commands under this heading for bulk approval with exclusions (e.g. `approve all except #2`), rerouting (e.g. `reroute #3 to areas/work/_inbox.md`), or rule proposals (e.g. `rule: bin all from jobalerts-noreply@linkedin.com`).
+
+- Commands are parsed strictly from the dedicated user-text region under `## Instructions`, never from Row previews or untrusted capture bodies (Principle 10).
+- Ambiguity or invalid row references produce zero side effects and leave instruction lines unconsumed.
+- Applied instructions persist exact resolution markers (e.g. `(resolved — <exact effect>)` / `(proposed — <exact proposal>)`), maintaining strict idempotency across re-runs.
+
 ## Idempotency
 
 Re-running Triage never duplicates a Row, even across a day boundary: `write_triage_plan()` checks the capture wikilink of *every still-open* plan for that source (`inbox/triage/*-{source}.md`, any date — executed plans have already moved to `archive/triage/`) and only adds genuinely new captures. That check matches on the `[[inbox/raw/...]]` wikilink and is format-agnostic, so it held across the ADR-0031 conversion. A capture that's still un-executed the next day doesn't get a second Row in tomorrow's plan just because Triage ran again. Existing Rows — including any Pass-B edits or ticks already made — are left untouched. A new Row is inserted under its own `## <destination>` heading, which is created if it does not exist yet, rather than appended at end-of-file, and the whole Plan is re-grouped before it is written, so a Plan whose Rows were re-routed by hand converges instead of accumulating Rows under stale headings.

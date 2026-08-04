@@ -55,7 +55,7 @@ ADDRESS_RE = re.compile(r'<([^>]+)>')
 CHECKBOX_RE = re.compile(
     r'^- (?P<tick>\[[ x]\])\s+⚡️\s+Always bin\s+\*\*(?P<name>[^*]+)\*\*\s+'
     r'`(?P<address>[^`]+)`(?P<tally>[^()\n]*?)'
-    r'(?P<marker>\s+\(proposed\))?\s*$'
+    r'(?P<marker>\s+\(proposed[^\n]*\))?\s*$'
 )
 # Rows whose destination still costs a decision. A Row already routed to a real
 # destination by a rule is not a candidate — its sender is handled.
@@ -76,12 +76,15 @@ def _capture_sender(brain_path: Path, capture: str):
     match = FROM_RE.search(path.read_text(encoding="utf-8"))
     if not match:
         return None
-    raw = match.group(1)
+    raw = match.group(1).strip()
     address_match = ADDRESS_RE.search(raw)
-    if not address_match:
-        return None
-    name = triage._sanitize(ADDRESS_RE.sub("", raw)).strip('" ').strip()
-    return (name or address_match.group(1), address_match.group(1).strip())
+    if address_match:
+        address = address_match.group(1).strip()
+        name = triage._sanitize(ADDRESS_RE.sub("", raw)).strip('" ').strip()
+        return (name or address, address)
+    elif raw:
+        return (raw, raw)
+    return None
 
 
 def candidates(brain_path: Path, text: str) -> list:
@@ -211,9 +214,119 @@ def apply_section(brain_path: Path, text: str) -> tuple:
             evidence_links=evidence,
             evidence_basis="sender-marked-noise",
         )
-        lines[i] = line + " (proposed)"
+        desc = f"{name} ({address})" if name != address else address
+        lines[i] = line + f" (proposed — rule for {desc})"
         proposed.append(name)
     return "\n".join(lines) + "\n", proposed, skipped
+
+
+def propose_rule_from_instruction(
+    brain_path: Path | None, text: str, sender_target: str, why_text: str = None
+) -> tuple[bool, str]:
+    """Validate and propose a sender rule from an instruction line.
+
+    Reuses existing triage_sender_rules validation:
+      - Real sender/capture evidence from `brain_path / capture`
+      - Requires exactly one exact candidate match (address or domain); substring/name/first-match selection is rejected
+      - Minimum evidence threshold (>= 2 real captures for that sender/domain in this Plan)
+      - Duplicate check via `rule_learning.is_duplicate()`
+      - No fabricated evidence / dummy path
+
+    Returns `(success: bool, detail: str)`.
+    """
+    if not brain_path or not brain_path.is_dir():
+        return False, "Brain path required to validate evidence"
+
+    query_clean = sender_target.strip("`\"' ").lower()
+    if query_clean.startswith("@"):
+        query_clean = query_clean[1:]
+    if not query_clean:
+        return False, "Empty sender target"
+
+    # Map unresolved rows in plan text to real sender evidence in brain_path
+    seen = {}
+    for row in execute.parse_plan_rows(text):
+        if row["destination"].strip().lower() not in UNRESOLVED:
+            continue
+        sender = _capture_sender(brain_path, row["capture"])
+        if not sender:
+            continue
+        name, address = sender
+        entry = seen.setdefault(address, {"name": name, "count": 0, "captures": []})
+        entry["count"] += 1
+        entry["captures"].append(row["capture"])
+
+    if not seen:
+        return False, f"no real capture evidence found for {sender_target!r}"
+
+    # Collect exact address candidates and domain candidates from evidence in Plan
+    address_candidates = {}
+    domain_candidates = {}
+
+    for address, entry in seen.items():
+        domain = address.rpartition("@")[2].lower()
+        address_candidates[address.lower()] = {
+            "match_on": address,
+            "name": entry["name"],
+            "address": address,
+            "domain": domain,
+            "captures": entry["captures"],
+        }
+
+        if domain not in domain_candidates:
+            domain_candidates[domain] = {
+                "match_on": domain,
+                "name": entry["name"],
+                "address": domain,
+                "domain": domain,
+                "captures": [],
+            }
+
+    # Populate domain captures (aggregate across all addresses in that domain)
+    for address, entry in seen.items():
+        domain = address.rpartition("@")[2].lower()
+        domain_candidates[domain]["captures"].extend(entry["captures"])
+
+    # Find matching candidates using EXACT match on candidate address or domain ONLY.
+    # Substring matching, display name matching, and first-match selection are explicitly forbidden.
+    matched_candidates = []
+
+    for addr_lower, candidate in address_candidates.items():
+        if query_clean == addr_lower:
+            matched_candidates.append(candidate)
+
+    for domain_lower, candidate in domain_candidates.items():
+        if query_clean == domain_lower:
+            matched_candidates.append(candidate)
+
+    if len(matched_candidates) == 0:
+        return False, f"no real capture evidence found for {sender_target!r}"
+    if len(matched_candidates) > 1:
+        return False, f"ambiguous sender selection for {sender_target!r}: matches multiple candidates"
+
+    match_entry = matched_candidates[0]
+    match_on = match_entry["match_on"]
+    evidence = match_entry["captures"]
+    if len(evidence) < 2:
+        return False, f"insufficient evidence: only {len(evidence)} capture(s) found (requires >= 2)"
+
+    name = match_entry["name"]
+    desc = f"{name} ({match_on})" if name != match_on else match_on
+    block = rule_block_for(match_on)
+
+    if rule_learning.is_duplicate(brain_path, RULESET, block):
+        return False, f"rule for {desc} is already covered"
+
+    slug = re.sub(r'[^a-z0-9]+', "-", name.lower()).strip("-") + "-is-noise"
+    rule_learning.write_diff(
+        brain_path, RULESET,
+        slug=slug,
+        rule_block=block,
+        why=why_text or f"User instruction in Triage Plan: bin all from {sender_target}",
+        evidence_links=evidence,
+        evidence_basis="triage-instruction",
+    )
+    return True, f"rule for {desc}"
 
 
 def run(brain_path: Path, apply: bool = False, dry_run: bool = False) -> dict:

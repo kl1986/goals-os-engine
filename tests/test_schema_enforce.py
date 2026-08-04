@@ -11,7 +11,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
+try:
+    import pytest
+except ImportError:
+    import unittest
+    raise unittest.SkipTest("pytest is not installed")
+
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import schema_enforce as se  # noqa: E402

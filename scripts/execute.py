@@ -84,6 +84,12 @@ OPTION_LINE_RE = re.compile(
 # to find and rebuild the section. Named here because this module owns Plan
 # layout; nothing else should hardcode the string.
 SENDER_RULES_HEADING = "Stop asking me about these"
+INSTRUCTIONS_HEADING = "Instructions"
+DEFAULT_INSTRUCTIONS_PROSE = (
+    "Write free-text instructions below (e.g. `approve all`, `approve all except #2`, "
+    "`reroute #1 to areas/work/_inbox.md`, `rule: bin all from sender@example.com`).\n\n"
+    "<!-- Write instructions here -->"
+)
 # A continuation line of the Row above it: indented, non-blank. A blank line,
 # a heading, or the next Row all end the block.
 ROW_CONTINUATION_RE = re.compile(r'^[ \t]+(?P<text>\S.*?)[ \t]*$')
@@ -555,15 +561,19 @@ def regroup_plan(text: str) -> str:
     #   2  the sender-rules section — read *after* the noise it summarises,
     #      and the last thing on the page because it is optional on any given
     #      morning (ADR-0035)
+    #   3  the instructions section — stable final Plan section for free-text
+    #      instructions
     def group_key(destination):
         position = first_row_line.get(destination, heading_line.get(destination))
-        if destination == SENDER_RULES_HEADING:
+        if destination == INSTRUCTIONS_HEADING:
+            rank = 3
+        elif destination == SENDER_RULES_HEADING:
             rank = 2
         elif action_type_for(destination) == "discard-capture":
             rank = 1
         else:
             rank = 0
-        return (rank, position)
+        return (rank, position if position is not None else 999999)
 
     ordered = sorted(
         group_order + [h for h in heading_order if h not in groups],
@@ -572,7 +582,14 @@ def regroup_plan(text: str) -> str:
     for destination in ordered:
         prose = section_prose.get(destination, [])
         blocks = groups.get(destination, [])
-        if not prose and not blocks:
+        if destination == INSTRUCTIONS_HEADING:
+            prose_str = "\n".join(prose)
+            if "<!-- Write instructions here -->" not in prose_str:
+                if prose:
+                    prose = [DEFAULT_INSTRUCTIONS_PROSE] + prose
+                else:
+                    prose = [DEFAULT_INSTRUCTIONS_PROSE]
+        if not prose and not blocks and destination != INSTRUCTIONS_HEADING:
             continue  # heading emptied by a re-route — dropped, not preserved
         out = out.rstrip("\n") + f"\n\n## {destination}\n"
         if prose:
@@ -608,35 +625,32 @@ def resolve_library_path(explicit: str | None = None) -> Path:
     return engine_repo_root.parent / "goals-os-library"
 
 
+
 def _run_source_execute_hook(
     source: str, raw_path: Path, outcome: str, destination: str,
-    config_dir: Path, library_path: Path,
+    config_dir: Path, library_path: Path, brain_path: Path | None = None,
 ) -> None:
     """Optional per-source side effect, run only if that source's plugin
     folder defines execute_hook.py (e.g. email/execute_hook.py — ticket 14:
     Gmail archiving fires only once a Triage row is actually filed or
     discarded, never at sweep time). A no-op for every source without one.
     A hook failure is logged but never blocks Execute — the capture's own
-    file-write/archive-move has already happened by this point.
-
-    `destination` is the Triage row's own destination cell, forwarded as
-    `--destination` so a hook can honour the answer the user already gave by
-    ticking the row instead of re-deriving it and producing a second,
-    uncoordinated answer (execute.md v1.3). It is always passed — the caller
-    substitutes the literal `discard` for a discard row — so a hook may read
-    it unconditionally rather than branching on its absence. Forwarding a
-    string Execute has already parsed gives Execute no source-specific
-    knowledge."""
+    file-write/archive-move has already happened by this point."""
     hook = library_path / "plugins" / "claude-code" / "skills" / source / "execute_hook.py"
     if not hook.exists():
         return
+    cmd = [
+        sys.executable, str(hook),
+        "--config-dir", str(config_dir),
+        "--raw-capture", str(raw_path),
+        "--outcome", outcome,
+        "--destination", destination,
+    ]
+    if brain_path is not None:
+        cmd.extend(["--brain-path", str(brain_path)])
     try:
         subprocess.run(
-            [sys.executable, str(hook),
-             "--config-dir", str(config_dir),
-             "--raw-capture", str(raw_path),
-             "--outcome", outcome,
-             "--destination", destination],
+            cmd,
             check=False,
         )
     except OSError as e:
@@ -677,6 +691,8 @@ def _insert_before_next_heading(text: str, heading: str, entry_line: str) -> str
 
 
 def _file_capture(brain_path: Path, destination_rel: str, entry_line: str):
+    if not is_safe_destination(destination_rel, brain_path=brain_path):
+        raise ExecuteError(f"Unsafe destination: {destination_rel!r}")
     file_rel, heading = split_destination(destination_rel)
     dest_path = brain_path / file_rel
 
@@ -728,6 +744,363 @@ def _file_capture_today(brain_path: Path, date_str: str, entry_line: str):
     note_path.write_text(new_text)
 
 
+EXCLUSIONS_GRAMMAR_RE = re.compile(
+    r'^\s*#[1-9]\d*(?:\s*,\s*#[1-9]\d*)*\s*$'
+)
+
+
+def is_safe_destination(dest: str, brain_path: Path | None = None) -> bool:
+    """Validate a reroute destination against safe in-Brain destination grammar.
+    Rejects absolute paths, path traversal (containing '..'), empty/blank paths,
+    control characters, or escaping the Brain (including symlinked directories).
+    """
+    if not dest or not isinstance(dest, str):
+        return False
+    d = dest.strip("` ")
+    if not d:
+        return False
+    if '`' in d or '\0' in d or '\r' in d or '\n' in d:
+        return False
+
+    cleaned = d.lower()
+    if cleaned in ("discard", "unmatched", "?", "today"):
+        return True
+    if cleaned.startswith("agent:"):
+        return len(d) > 6 and d[6:].strip() != ""
+
+    # Split file path and optional heading anchor
+    file_part, _, _ = d.partition("#")
+    file_part = file_part.strip()
+    if not file_part:
+        return False
+
+    if file_part.startswith("/") or file_part.startswith("\\") or file_part.startswith("~"):
+        return False
+
+    norm = file_part.replace("\\", "/")
+    if norm.startswith("/"):
+        return False
+
+    parts = [p for p in norm.split("/") if p]
+    if any(p == ".." for p in parts):
+        return False
+
+    if re.match(r'^[a-zA-Z]:', norm):
+        return False
+
+    try:
+        base = Path("/brain_root")
+        resolved = (base / norm).resolve()
+        if not (resolved == base or base in resolved.parents):
+            return False
+    except Exception:
+        return False
+
+    p = Path(norm)
+    if p.is_absolute():
+        return False
+
+    if brain_path is not None:
+        try:
+            resolved_brain = brain_path.resolve()
+            target_path = brain_path / norm
+
+            curr = target_path
+            while not curr.exists() and curr != curr.parent and curr != brain_path:
+                curr = curr.parent
+
+            resolved_curr = curr.resolve()
+            try:
+                resolved_curr.relative_to(resolved_brain)
+            except ValueError:
+                return False
+        except Exception:
+            return False
+
+    return True
+
+
+def process_instructions(
+    brain_path: Path | None,
+    text: str,
+    plan_path: Path | None = None,
+    now: dt.datetime | None = None,
+) -> tuple[str, bool]:
+    """Parse commands only from the `## Instructions` section of a Triage Plan.
+
+    Supported instructions:
+    - Bulk approval: `approve all`, `approve all except #2, #3`, `bin all`, `approve discard`, `approve unmatched`
+    - Rerouting: `reroute #1 to areas/work/_inbox.md`, `reroute 1 -> areas/work/_inbox.md`
+    - Rule proposal: `rule: bin all from <sender>`, `always bin <sender>`
+
+    Ambiguous, malformed, or unresolvable instructions create a clear no-side-effect refusal
+    naming what needs clarification, persisted in the Plan without becoming executable on rerun.
+    Persists resolution/refusal markers `(resolved)`, `(proposed)`, `(refused — <reason>)`.
+    Creates Action Log entries for processed instructions linking the Triage Plan.
+    """
+    lines = text.splitlines()
+
+    inst_start = -1
+    for i, line in enumerate(lines):
+        hm = HEADING_RE.match(line)
+        if hm and hm.group("heading").strip() == INSTRUCTIONS_HEADING:
+            inst_start = i
+            break
+
+    if inst_start == -1:
+        return text, False
+
+    inst_indices = []
+    i = inst_start + 1
+    while i < len(lines):
+        if HEADING_RE.match(lines[i]):
+            break
+        line_str = lines[i].strip()
+        if line_str:
+            if line_str.startswith("<!--") or line_str.startswith("Write free-text instructions") or line_str.startswith("Write instructions"):
+                i += 1
+                continue
+            if any(m in line_str for m in ("(resolved", "(applied", "(proposed", "(done", "(refused")):
+                i += 1
+                continue
+            inst_indices.append(i)
+        i += 1
+
+    if not inst_indices:
+        return text, False
+
+    new_lines = list(lines)
+    changed = False
+    now_dt = now or dt.datetime.now()
+    date_str = now_dt.strftime("%Y-%m-%d")
+
+    input_link = "—"
+    if plan_path:
+        if brain_path:
+            try:
+                input_link = str(plan_path.resolve().relative_to(brain_path.resolve()))
+            except Exception:
+                input_link = str(plan_path)
+        else:
+            input_link = str(plan_path)
+
+    def log_instruction_action(action_clean: str, outcome_str: str):
+        if brain_path and brain_path.is_dir():
+            log_id = uuid.uuid4().hex[:8]
+            entry = log_action.build_entry(
+                actor="EA",
+                trigger="Triage Instruction",
+                action_type="triage-instruction",
+                action=f"Interpreted instruction: {action_clean}",
+                confidence="High",
+                outcome=outcome_str,
+                input_link=input_link,
+                entry_id=log_id,
+            )
+            log_action.append_entry(brain_path, date_str, entry)
+
+    for idx in inst_indices:
+        raw_line = new_lines[idx].strip()
+        clean = re.sub(r'^- \[[ x]\]\s*', '', raw_line)
+        clean = re.sub(r'^- \s*', '', clean).strip()
+        clean_lower = clean.lower()
+
+        current_text = "\n".join(new_lines)
+        blocks = _scan_blocks(current_text)
+
+        # 1. Bulk approval with optional exclusions
+        if clean_lower.startswith(("approve", "bin", "discard")):
+            m_bulk = re.match(
+                r'^(?P<verb>approve|bin|discard)\s+(?P<target>all|discard|unmatched)(?:\s+except\s+(?P<exclusions>.+))?$',
+                clean, re.IGNORECASE
+            )
+            if not m_bulk:
+                refusal_reason = "malformed bulk approval syntax"
+                new_lines[idx] = raw_line + f" (refused — {refusal_reason})"
+                changed = True
+                log_instruction_action(clean, f"Refused — {refusal_reason}")
+                continue
+
+            verb = m_bulk.group("verb").lower()
+            target = m_bulk.group("target").lower()
+            excl_raw = m_bulk.group("exclusions")
+            excluded = set()
+            refusal_reason = None
+
+            if excl_raw:
+                if not EXCLUSIONS_GRAMMAR_RE.match(excl_raw):
+                    refusal_reason = f"invalid exclusion syntax: {excl_raw!r} (expected comma-separated row numbers like '#1, #2')"
+                else:
+                    nums = re.findall(r'\b\d+\b', excl_raw)
+                    if not nums:
+                        refusal_reason = f"invalid exclusion syntax: {excl_raw!r}"
+                    else:
+                        excluded = {int(n) for n in nums}
+
+            if not refusal_reason and excluded:
+                out_of_bounds = [n for n in excluded if n < 1 or n > len(blocks)]
+                if out_of_bounds:
+                    refusal_reason = f"exclusion row #{out_of_bounds[0]} out of bounds; plan has {len(blocks)} row(s)"
+
+            if refusal_reason:
+                new_lines[idx] = raw_line + f" (refused — {refusal_reason})"
+                changed = True
+                log_instruction_action(clean, f"Refused — {refusal_reason}")
+                continue
+
+            modified = False
+            approved_ids = []
+            for row_num, (start, end, row_dict, prob) in enumerate(blocks, start=1):
+                if prob or row_num in excluded:
+                    continue
+                if row_dict["approve"].startswith("[x]") and "(done)" in row_dict["approve"]:
+                    continue
+
+                dest = row_dict["destination"].strip().lower()
+                if target == "discard" and dest != "discard":
+                    continue
+                if target == "unmatched" and dest not in ("unmatched", "?"):
+                    continue
+
+                target_row_dest = dest
+                if verb in ("bin", "discard") or target == "discard":
+                    if dest in ("unmatched", "?"):
+                        target_row_dest = "discard"
+
+                if not is_safe_destination(target_row_dest, brain_path=brain_path):
+                    continue
+
+                task_line = new_lines[start]
+                if verb in ("bin", "discard") or target == "discard":
+                    if dest in ("unmatched", "?"):
+                        task_line = re.sub(r'→\s*`[^`]+`', '→ `discard`', task_line)
+
+                if not task_line.startswith("- [x]"):
+                    task_line = re.sub(r'^- \[\ \]', '- [x]', task_line)
+                    new_lines[start] = task_line
+                    modified = True
+                    approved_ids.append(row_num)
+
+            if modified:
+                approved_str = ", ".join(f"#{r}" for r in approved_ids)
+                if excluded:
+                    excl_str = ", ".join(f"#{r}" for r in sorted(excluded))
+                    detail = f"approved {approved_str}; excluded {excl_str}"
+                else:
+                    detail = f"approved {approved_str}"
+
+                new_lines[idx] = raw_line + f" (resolved — {detail})"
+                changed = True
+                log_instruction_action(clean, f"Resolved — {detail}")
+            else:
+                refusal_reason = "no matching un-executed rows found to approve"
+                new_lines[idx] = raw_line + f" (refused — {refusal_reason})"
+                changed = True
+                log_instruction_action(clean, f"Refused — {refusal_reason}")
+            continue
+
+        # 2. Rerouting
+        if clean_lower.startswith(("reroute", "route", "move")) or re.search(r'#?\d+\s*(to|->)', clean, re.IGNORECASE):
+            m_route = re.match(
+                r'^(?:reroute|route|move)?\s*#?(?P<num>\d+)\s*(?:to|->)\s*(?P<dest>`[^`]+`|\S+)\s*$',
+                clean, re.IGNORECASE
+            )
+            if not m_route:
+                refusal_reason = "malformed reroute syntax (expected 'reroute #<N> to <path>')"
+                new_lines[idx] = raw_line + f" (refused — {refusal_reason})"
+                changed = True
+                log_instruction_action(clean, f"Refused — {refusal_reason}")
+                continue
+
+            target_num = int(m_route.group("num"))
+            target_dest = m_route.group("dest").strip("` ")
+
+            if target_num < 1 or target_num > len(blocks):
+                refusal_reason = f"row #{target_num} out of bounds; plan has {len(blocks)} row(s)"
+                new_lines[idx] = raw_line + f" (refused — {refusal_reason})"
+                changed = True
+                log_instruction_action(clean, f"Refused — {refusal_reason}")
+                continue
+
+            start, end, row_dict, prob = blocks[target_num - 1]
+            if prob:
+                refusal_reason = f"row #{target_num} is malformed: {prob}"
+                new_lines[idx] = raw_line + f" (refused — {refusal_reason})"
+                changed = True
+                log_instruction_action(clean, f"Refused — {refusal_reason}")
+                continue
+
+            if row_dict["approve"].startswith("[x]") and "(done)" in row_dict["approve"]:
+                refusal_reason = f"row #{target_num} is already executed"
+                new_lines[idx] = raw_line + f" (refused — {refusal_reason})"
+                changed = True
+                log_instruction_action(clean, f"Refused — {refusal_reason}")
+                continue
+
+            if not is_safe_destination(target_dest, brain_path=brain_path):
+                refusal_reason = f"unsafe reroute destination: {target_dest!r}"
+                new_lines[idx] = raw_line + f" (refused — {refusal_reason})"
+                changed = True
+                log_instruction_action(clean, f"Refused — {refusal_reason}")
+                continue
+
+            task_line = new_lines[start]
+            task_line = re.sub(r'^- \[\ \]', '- [x]', task_line)
+            task_line = re.sub(r'→\s*`[^`]+`', f'→ `{target_dest}`', task_line)
+            new_lines[start] = task_line
+
+            if end > start + 1:
+                for sub_i in range(start + 1, end):
+                    new_lines[sub_i] = "CLEARED_LINE"
+
+            new_lines[idx] = raw_line + f" (resolved — rerouted #{target_num} to `{target_dest}`)"
+            changed = True
+            log_instruction_action(clean, f"Resolved — rerouted #{target_num} to `{target_dest}`")
+            continue
+
+        # 3. Rule proposal
+        if clean_lower.startswith(("rule:", "always bin", "bin all from", "bin")):
+            m_rule = re.match(
+                r'^(?:rule:\s*)?(?:always\s+bin|bin\s+all\s+from|bin)\s+(?P<sender>\S+)\s*$',
+                clean, re.IGNORECASE
+            )
+            if not m_rule:
+                refusal_reason = "malformed rule proposal syntax"
+                new_lines[idx] = raw_line + f" (refused — {refusal_reason})"
+                changed = True
+                log_instruction_action(clean, f"Refused — {refusal_reason}")
+                continue
+
+            sender = m_rule.group("sender").strip("`\"'")
+            import triage_sender_rules
+            ok, detail = triage_sender_rules.propose_rule_from_instruction(
+                brain_path, current_text, sender, why_text=f"User instruction in Triage Plan: {clean}"
+            )
+            if ok:
+                new_lines[idx] = raw_line + f" (proposed — {detail})"
+                changed = True
+                log_instruction_action(clean, f"Proposed — {detail}")
+            else:
+                new_lines[idx] = raw_line + f" (refused — {detail})"
+                changed = True
+                log_instruction_action(clean, f"Refused — {detail}")
+            continue
+
+        # 4. Unrecognized or ambiguous instruction line
+        refusal_reason = f"unrecognized or ambiguous instruction: {clean!r}"
+        new_lines[idx] = raw_line + f" (refused — {refusal_reason})"
+        changed = True
+        log_instruction_action(clean, f"Refused — {refusal_reason}")
+
+    if not changed:
+        return text, False
+
+    final_lines = [l for l in new_lines if l != "CLEARED_LINE"]
+    res_text = "\n".join(final_lines)
+    res_text = regroup_plan(res_text)
+    return res_text, True
+
+
 def execute_plan(
     brain_path: Path, plan_path: Path, now: dt.datetime = None,
     config_dir: Path = None, library_path: Path = None,
@@ -737,6 +1110,10 @@ def execute_plan(
     library_path = Path(library_path) if library_path else resolve_library_path(None)
     date_str = now.strftime("%Y-%m-%d")
     text = plan_path.read_text()
+
+    text, changed = process_instructions(brain_path, text, plan_path=plan_path, now=now)
+    if changed:
+        plan_path.write_text(text, encoding="utf-8")
 
     if requires_migration(text):
         raise ExecuteError(
@@ -836,7 +1213,7 @@ def execute_plan(
             hook_destination = "discard" if action_type == "discard-capture" else destination
             _run_source_execute_hook(
                 source, archived_capture_path, outcome_kind, hook_destination,
-                config_dir, library_path,
+                config_dir, library_path, brain_path=brain_path,
             )
 
         # `rule` is always present in the groupdict (ROW_RE has no `?` on

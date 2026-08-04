@@ -71,7 +71,7 @@ class TestSenderRules(unittest.TestCase):
         text = text.replace("- [ ] ⚡️", "- [x] ⚡️")
         new_text, proposed, skipped = tsr.apply_section(self.brain, text)
         self.assertEqual(proposed, ["A"])
-        self.assertIn("(proposed)", new_text)
+        self.assertIn("(proposed — rule for A (a@x.com))", new_text)
         batch = next((self.brain / "inbox" / "rule-diffs").glob("*.md")).read_text()
         self.assertIn("then: discard", batch)
         self.assertIn("evidence-basis: sender-marked-noise", batch)

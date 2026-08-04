@@ -446,13 +446,18 @@ def write_triage_plan(brain_path: Path, source: str, match_result: dict, date_st
         n += 1
         added += 1
 
-    if not added:
+    if not plan_exists and not added:
         return plan_path
 
     if pass_a_additions:
         text = _update_frontmatter_rules(text, pass_a_additions)
 
-    plan_path.write_text(execute.regroup_plan(text))
+    if f"## {execute.INSTRUCTIONS_HEADING}" not in text:
+        text = text.rstrip("\n") + f"\n\n## {execute.INSTRUCTIONS_HEADING}\n\n{execute.DEFAULT_INSTRUCTIONS_PROSE}\n"
+
+    new_text = execute.regroup_plan(text)
+    if not plan_exists or new_text != plan_path.read_text():
+        plan_path.write_text(new_text)
     return plan_path
 
 

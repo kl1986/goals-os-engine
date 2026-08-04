@@ -25,6 +25,10 @@ Execute also reads the Triage Plan's frontmatter `rules` field (`triage.md`): fo
 
 For `file-capture` and `discard-capture` cases: move the Raw Capture from `inbox/raw/<source>/` to `archive/inbox/<source>/` (collision-safe). `agent-dispatched` cases leave the Raw Capture in place for the Reviewer gate. For all cases, append an Action Log entry (`log_action.build_entry`/`append_entry`, dogfooding `action-log-schema.md`). Every run — whether or not any row was ticked — also bumps Execute's own row in `config/routine-state.md` (`heartbeat.bump`), so its Last-run state is accurate even though Execute is event-triggered and outside Heartbeat's overdue-checking (`routines.md`).
 
+Execute passes `--brain-path` along with `--config-dir`, `--raw-capture`, `--outcome` and `--destination` when calling per-source hooks (`_run_source_execute_hook`).
+
+Execute also processes any unconsumed instructions written in the Plan's `## Instructions` section before evaluating row ticks — supporting bulk approval with exclusions, rerouting, and rule proposals without changing row-based execution gates or action types.
+
 ## Row state machine
 
 A Triage Plan Row is a single-line markdown task list item (`- [ ] preview → \`destination\` [[capture_path]]`, ADR-0036), and its approve box has three states:
