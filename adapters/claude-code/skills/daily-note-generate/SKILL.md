@@ -1,6 +1,6 @@
 ---
 name: daily-note-generate
-description: Create or additively refresh <brain>/YYYY-MM-DD.md — today's daily note (Today's tasks, Project next actions, Waiting for, Proposed from meetings, Notes). A brand-new day always gets a fresh file, with any still-unchecked Today's-tasks lines carried forward from the most recent archived note. Re-running the same day only adds new rows; it never touches or reorders existing lines. Use each morning, or whenever the user wants their daily note (re)generated.
+description: Create or additively refresh <brain>/YYYY-MM-DD.md — today's daily note (Critical, Available time, Now, Call Companion, Drafts to review and send, Later today, Tomorrow candidates, Today's tasks, Daily priorities, Project next actions, Waiting for, Proposed from meetings, Notes). A brand-new day always gets a fresh file, with any still-unchecked lines under Today's tasks, Now, and Later today carried forward from the most recent archived note into Today's tasks. Re-running the same day only adds new rows; it never touches or reorders existing lines. Use each morning, or whenever the user wants their daily note (re)generated.
 allowed-tools:
   - Bash
 triggers:
@@ -11,7 +11,7 @@ triggers:
 
 # daily-note-generate
 
-The Claude Code binding for the "Daily note" Routine in `protocols/daily-note.md`. All the logic — the five-section schema, additive-only same-day refresh, carry-forward of unchecked tasks, the Project-next-actions scan (ADR-0018, ADR-0025: `tasks/projects/*/` + `tasks/areas/*/` tickets with active statuses `prioritised`, `in-progress`, `awaiting-review`, etc., one row per matching ticket, Project tickets gated on the parent Project note's `status: Active`, Area tickets unconditional), the Waiting For scan (reusing `dashboard.py`'s `_open_waiting_for`), and the Proposed-from-meetings scan (reusing `dashboard.py`'s `_open_proposed_items`, additive-only and deduped on the exact rendered line) — lives in `scripts/daily_note.py`'s `generate_daily_note`. This skill only calls it and relays the result.
+The Claude Code binding for the "Daily note" Routine in `protocols/daily-note.md`. All the logic — the 13-section schema, embedded Base views, additive-only same-day refresh, carry-forward of unchecked tasks under Today's tasks, Now, and Later today into Today's tasks (deduplicated across those three sections but never within one), the Project-next-actions scan (ADR-0018, ADR-0025: `tasks/projects/*/` + `tasks/areas/*/` tickets with active statuses `prioritised`, `in-progress`, `awaiting-review`, etc., one row per matching ticket, Project tickets gated on the parent Project note's `status: Active`, Area tickets unconditional), the Waiting For scan (reusing `dashboard.py`'s `_open_waiting_for`), and the Proposed-from-meetings scan (reusing `dashboard.py`'s `_open_proposed_items`, additive-only and deduped on the exact rendered line) — lives in `scripts/daily_note.py`'s `generate_daily_note`. This skill only calls it and relays the result.
 
 ## What to do
 
@@ -26,4 +26,5 @@ python3 <path-to-goals-os-engine>/scripts/daily_note.py --brain "<path-to-brain>
 
 ## Contract this Adapter fulfils (ADR-0002)
 
-The Protocol defines the schema, the additive-only refresh rule, and what may vs. may not be carried forward; `scripts/daily_note.py` is the portable implementation; this file is only the Claude Code binding. This skill never hand-edits `<brain>/YYYY-MM-DD.md` itself and never invents a sixth section. It never ticks, edits, or moves a meeting note — `## Proposed from meetings` is a read-only mirror rendered as plain bullets, and approving a proposed item always happens in the meeting note itself. Each Project-next-actions row links directly to its source ticket via a plain `[[ticket file]]` wikilink (ADR-0018) — no `daily-note-src` comment exists in this schema at all; the wikilink itself is the stable reference the "Close daily note" Routine's write-back relies on.
+The Protocol defines the schema, the additive-only refresh rule, and what may vs. may not be carried forward; `scripts/daily_note.py` is the portable implementation; this file is only the Claude Code binding. This skill never hand-edits `<brain>/YYYY-MM-DD.md` itself. It never ticks, edits, or moves a meeting note — `## Proposed from meetings` is a read-only mirror rendered as plain bullets, and approving a proposed item always happens in the meeting note itself. Each Project-next-actions row links directly to its source ticket via a plain `[[ticket file]]` wikilink (ADR-0018) — no `daily-note-src` comment exists in this schema at all; the wikilink itself is the stable reference the "Close daily note" Routine's write-back relies on.
+

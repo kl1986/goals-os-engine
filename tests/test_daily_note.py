@@ -105,26 +105,33 @@ class TestGenerateFreshCreation(unittest.TestCase):
         text = path.read_text()
         self.assertIn("# Monday, 13 July 2026\n", text)
 
-    def test_sections_in_order_with_daily_priorities_embed_and_empty_state_rendering(self):
+    def test_sections_in_order_with_embeds_and_empty_state_rendering(self):
         path = daily_note.generate_daily_note(self.brain_path, now=MONDAY)
         text = path.read_text()
-        for heading in (
+        expected_headings = (
+            "## Critical",
+            "## Available time",
+            "## Now",
+            "## Call Companion",
+            "## Drafts to review and send",
+            "## Later today",
+            "## Tomorrow candidates",
             "## Today's tasks",
             "## Daily priorities",
             "## Project next actions",
             "## Waiting for",
+            "## Proposed from meetings",
             "## Notes",
-        ):
+        )
+        for heading in expected_headings:
             self.assertIn(heading, text)
         # Order
-        positions = [text.index(h) for h in (
-            "## Today's tasks",
-            "## Daily priorities",
-            "## Project next actions",
-            "## Waiting for",
-            "## Notes",
-        )]
+        positions = [text.index(h) for h in expected_headings]
         self.assertEqual(positions, sorted(positions))
+        self.assertEqual(text.count("![[tasks/all-tickets.base#Critical work]]"), 1)
+        self.assertEqual(text.count("![[tasks/all-tickets.base#Today]]"), 1)
+        self.assertEqual(text.count("![[tasks/all-tickets.base#Call Companion]]"), 1)
+        self.assertEqual(text.count("![[tasks/all-tickets.base#Tomorrow candidates]]"), 1)
         self.assertEqual(text.count("![[tasks/all-tickets.base#Daily priorities]]"), 1)
         # Empty-state: bare placeholder checkbox, no source projects/people yet
         self.assertIn("## Today's tasks\n- [ ]\n", text)
@@ -211,6 +218,71 @@ class TestCarryForward(unittest.TestCase):
         text = path.read_text()
         self.assertIn("From the 12th", text)
         self.assertNotIn("From the 1st", text)
+
+    def test_carry_forward_now_and_later_today_to_todays_tasks(self):
+        (self.archive_dir / "2026-07-12.md").write_text(
+            "---\ntype: daily-note\ndate: 2026-07-12\ntags:\n  - daily-note\n---\n\n"
+            "# Sunday, 12 July 2026\n\n"
+            "## Critical\n![[tasks/all-tickets.base#Critical work]]\n- [ ] Critical item\n\n"
+            "## Available time\n- [ ] Available item\n\n"
+            "## Now\n![[tasks/all-tickets.base#Today]]\n- [ ] Unchecked from Now\n\n"
+            "## Call Companion\n![[tasks/all-tickets.base#Call Companion]]\n- [ ] Call item\n\n"
+            "## Drafts to review and send\n- [ ] Draft item\n\n"
+            "## Later today\n- [ ] Unchecked from Later today\n\n"
+            "## Tomorrow candidates\n![[tasks/all-tickets.base#Tomorrow candidates]]\n- [ ] Tomorrow item\n\n"
+            "## Today's tasks\n- [ ] Unchecked from Today's tasks\n\n"
+            "## Daily priorities\n![[tasks/all-tickets.base#Daily priorities]]\n\n"
+            "## Project next actions\n\n"
+            "## Waiting for\n\n"
+            "## Proposed from meetings\n\n"
+            "## Notes\n"
+        )
+        path = daily_note.generate_daily_note(self.brain_path, now=MONDAY)
+        text = path.read_text()
+        section = text.split("## Today's tasks\n", 1)[1].split("\n## ", 1)[0]
+        lines = [ln.strip() for ln in section.splitlines() if ln.strip()]
+        self.assertEqual(
+            lines,
+            [
+                "- [ ] Unchecked from Today's tasks",
+                "- [ ] Unchecked from Now",
+                "- [ ] Unchecked from Later today",
+            ]
+        )
+        self.assertNotIn("Critical item", text)
+        self.assertNotIn("Available item", text)
+        self.assertNotIn("Call item", text)
+        self.assertNotIn("Draft item", text)
+        self.assertNotIn("Tomorrow item", text)
+
+    def test_carry_forward_deduplicates_across_sections(self):
+        (self.archive_dir / "2026-07-12.md").write_text(
+            "---\ntype: daily-note\ndate: 2026-07-12\ntags:\n  - daily-note\n---\n\n"
+            "# Sunday, 12 July 2026\n\n"
+            "## Today's tasks\n- [ ] shared task\n\n"
+            "## Now\n- [ ] shared task\n\n"
+            "## Later today\n"
+        )
+        path = daily_note.generate_daily_note(self.brain_path, now=MONDAY)
+        text = path.read_text()
+        section = text.split("## Today's tasks\n", 1)[1].split("\n## ", 1)[0]
+        lines = [ln.strip() for ln in section.splitlines() if ln.strip()]
+        self.assertEqual(lines, ["- [ ] shared task"])
+
+    def test_carry_forward_preserves_duplicates_within_single_section(self):
+        (self.archive_dir / "2026-07-12.md").write_text(
+            "---\ntype: daily-note\ndate: 2026-07-12\ntags:\n  - daily-note\n---\n\n"
+            "# Sunday, 12 July 2026\n\n"
+            "## Today's tasks\n- [ ] duplicate task\n- [ ] duplicate task\n\n"
+            "## Now\n\n"
+            "## Later today\n"
+        )
+        path = daily_note.generate_daily_note(self.brain_path, now=MONDAY)
+        text = path.read_text()
+        section = text.split("## Today's tasks\n", 1)[1].split("\n## ", 1)[0]
+        lines = [ln.strip() for ln in section.splitlines() if ln.strip()]
+        self.assertEqual(lines, ["- [ ] duplicate task", "- [ ] duplicate task"])
+
 
 
 class TestProjectNextActions(unittest.TestCase):
@@ -400,7 +472,17 @@ class TestAdditiveSameDayRefresh(unittest.TestCase):
         second_text = (self.brain_path / "2026-07-13.md").read_text()
         self.assertEqual(first_text, second_text)
 
-    def test_rerun_adds_missing_daily_priorities_embed_once_before_project_actions(self):
+    def test_embed_idempotence_on_repeat_generation(self):
+        daily_note.generate_daily_note(self.brain_path, now=MONDAY)
+        daily_note.generate_daily_note(self.brain_path, now=MONDAY)
+        text = (self.brain_path / "2026-07-13.md").read_text()
+        self.assertEqual(text.count("![[tasks/all-tickets.base#Critical work]]"), 1)
+        self.assertEqual(text.count("![[tasks/all-tickets.base#Today]]"), 1)
+        self.assertEqual(text.count("![[tasks/all-tickets.base#Call Companion]]"), 1)
+        self.assertEqual(text.count("![[tasks/all-tickets.base#Tomorrow candidates]]"), 1)
+        self.assertEqual(text.count("![[tasks/all-tickets.base#Daily priorities]]"), 1)
+
+    def test_upgrade_path_old_schema_note_gains_all_headings_and_embeds_verbatim(self):
         note_path = self.brain_path / "2026-07-13.md"
         note_path.write_text(
             "---\ntype: daily-note\ndate: 2026-07-13\n---\n\n"
@@ -416,11 +498,53 @@ class TestAdditiveSameDayRefresh(unittest.TestCase):
         daily_note.generate_daily_note(self.brain_path, now=MONDAY)
         second_text = note_path.read_text()
 
+        expected_headings = (
+            "## Critical",
+            "## Available time",
+            "## Now",
+            "## Call Companion",
+            "## Drafts to review and send",
+            "## Later today",
+            "## Tomorrow candidates",
+            "## Today's tasks",
+            "## Daily priorities",
+            "## Project next actions",
+            "## Waiting for",
+            "## Proposed from meetings",
+            "## Notes",
+        )
+        for heading in expected_headings:
+            self.assertIn(heading, first_text)
+        positions = [first_text.index(h) for h in expected_headings]
+        self.assertEqual(positions, sorted(positions))
+
+        self.assertEqual(first_text.count("![[tasks/all-tickets.base#Critical work]]"), 1)
+        self.assertEqual(first_text.count("![[tasks/all-tickets.base#Today]]"), 1)
+        self.assertEqual(first_text.count("![[tasks/all-tickets.base#Call Companion]]"), 1)
+        self.assertEqual(first_text.count("![[tasks/all-tickets.base#Tomorrow candidates]]"), 1)
         self.assertEqual(first_text.count("![[tasks/all-tickets.base#Daily priorities]]"), 1)
-        self.assertLess(first_text.index("## Daily priorities"), first_text.index("## Project next actions"))
         self.assertIn("- [ ] Keep this", first_text)
         self.assertIn("Keep this too.", first_text)
         self.assertEqual(first_text, second_text)
+
+    def test_refresh_preserves_manual_planning_content(self):
+        path = daily_note.generate_daily_note(self.brain_path, now=MONDAY)
+        text = path.read_text()
+        text = text.replace(
+            "## Available time\n",
+            "## Available time\n| 09:00 - 10:00 | Deep work |\n"
+        )
+        text = text.replace(
+            "## Now\n![[tasks/all-tickets.base#Today]]\n",
+            "## Now\n![[tasks/all-tickets.base#Today]]\n- [ ] Hand typed item under Now\n- [x] Ticked item under Now\n"
+        )
+        path.write_text(text)
+
+        daily_note.generate_daily_note(self.brain_path, now=MONDAY)
+        refreshed_text = path.read_text()
+        self.assertIn("| 09:00 - 10:00 | Deep work |", refreshed_text)
+        self.assertIn("- [ ] Hand typed item under Now", refreshed_text)
+        self.assertIn("- [x] Ticked item under Now", refreshed_text)
 
     def test_rerun_same_day_replaces_changed_waiting_for_text_instead_of_duplicating(self):
         # Waiting For is a pure read-only mirror (decision 7) — no checkbox,
@@ -558,6 +682,35 @@ class TestCloseDailyNote(unittest.TestCase):
         daily_note.close_daily_note(self.brain_path, now=MONDAY)
         state_text = (self.brain_path / "config" / "routine-state.md").read_text()
         self.assertIn("| Close daily note | 2026-07-13 08:00 |", state_text)
+
+    def test_close_moves_archive_with_all_sections_intact_and_ticked_now_is_noop(self):
+        daily_note.generate_daily_note(self.brain_path, now=MONDAY)
+        note = self.brain_path / "2026-07-13.md"
+        text = note.read_text().replace(
+            "## Now\n![[tasks/all-tickets.base#Today]]\n",
+            "## Now\n![[tasks/all-tickets.base#Today]]\n- [x] Ticked item under Now\n"
+        )
+        note.write_text(text)
+        summary = daily_note.close_daily_note(self.brain_path, now=MONDAY)
+        archived = self.brain_path / "archive" / "daily-notes" / "2026-07-13.md"
+        self.assertTrue(archived.exists())
+        archived_text = archived.read_text()
+        self.assertIn("## Critical", archived_text)
+        self.assertIn("- [x] Ticked item under Now", archived_text)
+
+    def test_tomorrow_candidate_ticket_byte_identical_after_close_and_generate(self):
+        ticket_path = _write_ticket(
+            self.brain_path, "projects", "clear-the-garage", "tomorrow-ticket",
+            "Tomorrow candidate ticket", "prioritised",
+            planned_for="2026-07-14", planning_lane="tomorrow-candidate"
+        )
+        ticket_file = self.brain_path / ticket_path
+        original_ticket_content = ticket_file.read_text()
+
+        daily_note.close_daily_note(self.brain_path, now=MONDAY)
+        daily_note.generate_daily_note(self.brain_path, now=MONDAY)
+
+        self.assertEqual(ticket_file.read_text(), original_ticket_content)
 
 
 if __name__ == "__main__":

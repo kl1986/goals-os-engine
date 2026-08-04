@@ -35,7 +35,27 @@ def _render_section(heading: str, content_lines: list) -> str:
 _SECTION_BODY = md_sections.SECTION_BODY
 
 
+_CRITICAL_EMBED = "![[tasks/all-tickets.base#Critical work]]"
+_NOW_EMBED = "![[tasks/all-tickets.base#Today]]"
+_CALL_COMPANION_EMBED = "![[tasks/all-tickets.base#Call Companion]]"
+_TOMORROW_CANDIDATES_EMBED = "![[tasks/all-tickets.base#Tomorrow candidates]]"
 _DAILY_PRIORITIES_EMBED = "![[tasks/all-tickets.base#Daily priorities]]"
+
+SECTIONS_ORDER = (
+    "Critical",
+    "Available time",
+    "Now",
+    "Call Companion",
+    "Drafts to review and send",
+    "Later today",
+    "Tomorrow candidates",
+    "Today's tasks",
+    "Daily priorities",
+    "Project next actions",
+    "Waiting for",
+    "Proposed from meetings",
+    "Notes",
+)
 
 
 def _append_new_lines_to_section(text: str, heading: str, existing_ok: callable, new_candidates: list) -> str:
@@ -63,9 +83,9 @@ def _append_new_lines_to_section(text: str, heading: str, existing_ok: callable,
     return text[:match.start(1)] + new_body + text[match.end(1):]
 
 
-def _ensure_section(text: str, heading: str, before_heading: str) -> str:
-    """Insert an empty `## {heading}` section before `## {before_heading}` if it
-    isn't already present, appending at the end if that anchor is missing too.
+def _ensure_section(text: str, heading: str, before_heading: str | list | tuple = None) -> str:
+    """Insert an empty `## {heading}` section before the first matching anchor in
+    `before_heading` if it isn't already present, appending at the end if no anchor is found.
 
     Needed because a daily note generated before a new section existed has no
     such heading, and `_append_new_lines_to_section` is a no-op without one —
@@ -75,10 +95,17 @@ def _ensure_section(text: str, heading: str, before_heading: str) -> str:
     if re.search(rf"^## {re.escape(heading)}\s*$", text, re.MULTILINE):
         return text
 
-    anchor = re.search(rf"^## {re.escape(before_heading)}\s*$", text, re.MULTILINE)
+    if isinstance(before_heading, str):
+        anchors = [before_heading]
+    elif before_heading:
+        anchors = list(before_heading)
+    else:
+        anchors = []
 
-    if anchor:
-        return text[:anchor.start()] + f"## {heading}\n\n" + text[anchor.start():]
+    for anchor_name in anchors:
+        anchor = re.search(rf"^## {re.escape(anchor_name)}\s*$", text, re.MULTILINE)
+        if anchor:
+            return text[:anchor.start()] + f"## {heading}\n\n" + text[anchor.start():]
 
     if not text.endswith("\n"):
         text += "\n"
@@ -292,23 +319,12 @@ def _render_proposed_lines(items: list) -> list:
     return [f"- {item['text']} — [[{item['path'].stem}]]" for item in items]
 
 
-def _carry_forward_tasks(brain_path: Path) -> list:
-    archive_dir = brain_path / "archive" / "daily-notes"
-    if not archive_dir.is_dir():
-        return []
-    
-    files = sorted(archive_dir.glob("*.md"))
-    if not files:
-        return []
-        
-    latest_file = files[-1]
-    text = latest_file.read_text()
+def _extract_unchecked_tasks(text: str, heading: str) -> list:
     section_match = re.search(
-        _SECTION_BODY.format(re.escape("Today's tasks")), text, re.MULTILINE | re.DOTALL
+        _SECTION_BODY.format(re.escape(heading)), text, re.MULTILINE | re.DOTALL
     )
     if not section_match:
         return []
-        
     carried = []
     for line in section_match.group(1).splitlines():
         task_match = re.match(r"^- \[ \] (.+)$", line)
@@ -316,6 +332,28 @@ def _carry_forward_tasks(brain_path: Path) -> list:
             verbatim = task_match.group(1).strip()
             if verbatim:
                 carried.append(line)
+    return carried
+
+
+def _carry_forward_tasks(brain_path: Path) -> list:
+    archive_dir = brain_path / "archive" / "daily-notes"
+    if not archive_dir.is_dir():
+        return []
+
+    files = sorted(archive_dir.glob("*.md"))
+    if not files:
+        return []
+
+    latest_file = files[-1]
+    text = latest_file.read_text()
+    carried = []
+    seen = set()
+    for heading in ("Today's tasks", "Now", "Later today"):
+        tasks = _extract_unchecked_tasks(text, heading)
+        for line in tasks:
+            if line.strip() not in seen:
+                carried.append(line)
+        seen.update(line.strip() for line in tasks)
     return carried
 
 
@@ -347,10 +385,17 @@ def generate_daily_note(brain_path: Path, now: dt.datetime = None) -> Path:
     if not note_path.exists():
         carried_tasks = _carry_forward_tasks(brain_path)
         today_lines = carried_tasks if carried_tasks else ["- [ ]"]
-        
+
         heading_str = f"{now.strftime('%A')}, {now.day} {now.strftime('%B')} {now.year}"
-        
+
         body_sections = [
+            _render_section("Critical", [_CRITICAL_EMBED]),
+            _render_section("Available time", []),
+            _render_section("Now", [_NOW_EMBED]),
+            _render_section("Call Companion", [_CALL_COMPANION_EMBED]),
+            _render_section("Drafts to review and send", []),
+            _render_section("Later today", []),
+            _render_section("Tomorrow candidates", [_TOMORROW_CANDIDATES_EMBED]),
             _render_section("Today's tasks", today_lines),
             _render_section("Daily priorities", [_DAILY_PRIORITIES_EMBED]),
             _render_section("Project next actions", project_lines),
@@ -358,7 +403,7 @@ def generate_daily_note(brain_path: Path, now: dt.datetime = None) -> Path:
             _render_section("Proposed from meetings", proposed_lines),
             _render_section("Notes", []),
         ]
-        
+
         content = (
             "---\n"
             "type: daily-note\n"
@@ -375,7 +420,10 @@ def generate_daily_note(brain_path: Path, now: dt.datetime = None) -> Path:
     else:
         text = note_path.read_text()
         original_text = text
-        
+
+        def literal_existing_ok(candidate_line: str, existing_lines: list) -> bool:
+            return candidate_line.strip() in {line.strip() for line in existing_lines}
+
         def project_existing_ok(candidate_line: str, existing_lines: list) -> bool:
             # The `[[ticket file]]` wikilink is the stable identity now (no
             # daily-note-src comment) — dedupe on that, not the visible
@@ -390,7 +438,7 @@ def generate_daily_note(brain_path: Path, now: dt.datetime = None) -> Path:
                 if m and m.group(1).strip() == cand_target:
                     return True
             return False
-            
+
         def proposed_existing_ok(candidate_line: str, existing_lines: list) -> bool:
             # Exact-line match. Unlike a ticket, a proposed item has no stable
             # identity beyond its own text — several items share one meeting
@@ -398,21 +446,31 @@ def generate_daily_note(brain_path: Path, now: dt.datetime = None) -> Path:
             # into one and suppress every item after the first.
             return candidate_line.strip() in {line.strip() for line in existing_lines}
 
-        text = _ensure_section(text, "Daily priorities", "Project next actions")
-        text = _append_new_lines_to_section(
-            text,
-            "Daily priorities",
-            lambda candidate_line, existing_lines: candidate_line in existing_lines,
-            [_DAILY_PRIORITIES_EMBED],
-        )
+        for i, heading in enumerate(SECTIONS_ORDER):
+            before_headings = SECTIONS_ORDER[i + 1:]
+            text = _ensure_section(text, heading, before_headings)
+
+        embed_map = {
+            "Critical": _CRITICAL_EMBED,
+            "Now": _NOW_EMBED,
+            "Call Companion": _CALL_COMPANION_EMBED,
+            "Tomorrow candidates": _TOMORROW_CANDIDATES_EMBED,
+            "Daily priorities": _DAILY_PRIORITIES_EMBED,
+        }
+        for heading, embed_str in embed_map.items():
+            text = _append_new_lines_to_section(
+                text,
+                heading,
+                literal_existing_ok,
+                [embed_str],
+            )
+
         text = _append_new_lines_to_section(text, "Project next actions", project_existing_ok, project_lines)
         text = _replace_section(text, "Waiting for", waiting_lines)
         # Additive-only, unlike Waiting For's wholesale replace: the ticket
         # requires rows be added for items not already present and existing
         # lines never touched or reordered.
-        text = _ensure_section(text, "Proposed from meetings", "Notes")
         text = _append_new_lines_to_section(text, "Proposed from meetings", proposed_existing_ok, proposed_lines)
-
 
         if text != original_text:
             note_path.write_text(text)
