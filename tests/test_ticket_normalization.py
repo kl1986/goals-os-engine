@@ -62,6 +62,21 @@ class TestTicketNormalization(unittest.TestCase):
         for key in ("priority", "component", "parent", "assignee", "github", "goal", "created", "resolved"):
             self.assertRegex(text, rf"(?m)^{key}:\s*$")
 
+    def test_preserves_optional_planning_metadata_on_backfill(self):
+        self._write(
+            "tasks/projects/clear-the-garage/bye.md",
+            "---\nstatus: in-progress\nplanned_for: 2026-08-04\nplanning_lane: now\nestimate_minutes: 30\ncall_suitable: true\ncritical: true\n---\n\n# Order shelves\n",
+        )
+        ticket_normalization.normalize(self.brain_path, now=TODAY)
+        candidates = list((self.brain_path / "tasks" / "projects" / "clear-the-garage").glob("*.md"))
+        self.assertEqual(len(candidates), 1)
+        text = candidates[0].read_text()
+        self.assertIn("planned_for: 2026-08-04", text)
+        self.assertIn("planning_lane: now", text)
+        self.assertIn("estimate_minutes: 30", text)
+        self.assertIn("call_suitable: true", text)
+        self.assertIn("critical: true", text)
+
     def test_logs_one_action_log_entry_per_file_modified(self):
         self._write(
             "tasks/projects/clear-the-garage/bye.md",

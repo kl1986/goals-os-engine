@@ -1,6 +1,6 @@
 ---
 name: daily-note-close
-description: Close out today's daily note — reconcile every ticked "## Project next actions" line back to its source ticket (parse the [[ticket file]] wikilink, write status: done + resolved: <today> directly into that ticket's frontmatter, or log a miss if the ticket can't be found), then archive <brain>/YYYY-MM-DD.md to <brain>/archive/daily-notes/YYYY-MM-DD.md. Use in the evening, or whenever the user wants their daily note wrapped up for the day.
+description: Close out today's daily note — reconcile every ticked "## Project next actions" line back to its source ticket (parse the [[ticket file]] wikilink, write status: done + resolved: <today> directly into that ticket's frontmatter, clearing temporary planning metadata and criticality, or log a miss if the ticket can't be found), then archive <brain>/YYYY-MM-DD.md to <brain>/archive/daily-notes/YYYY-MM-DD.md. Use in the evening, or whenever the user wants their daily note wrapped up for the day.
 allowed-tools:
   - Bash
 triggers:
@@ -11,7 +11,7 @@ triggers:
 
 # daily-note-close
 
-The Claude Code binding for the "Close daily note" Routine in `protocols/daily-note.md`. All the logic — parsing ticked `## Project next actions` lines, resolving each line's `[[ticket file]]` wikilink to the ticket file under `tasks/**/` (ADR-0018), the write-back (`status: done` + `resolved: <today, ISO YYYY-MM-DD>` written straight into that ticket's own frontmatter) or the miss (Action Log entry, checkbox left as-is), and the archive move — lives in `scripts/daily_note.py`'s `close_daily_note`. This skill only calls it and relays the result.
+The Claude Code binding for the "Close daily note" Routine in `protocols/daily-note.md`. All the logic — parsing ticked `## Project next actions` lines, resolving each line's `[[ticket file]]` wikilink to the ticket file under `tasks/**/` (ADR-0018), the write-back (`status: done` + `resolved: <today, ISO YYYY-MM-DD>` written straight into that ticket's own frontmatter, clearing temporary planning metadata and criticality) or the miss (Action Log entry, checkbox left as-is), and the archive move — lives in `scripts/daily_note.py`'s `close_daily_note`. This skill only calls it and relays the result.
 
 ## What to do
 

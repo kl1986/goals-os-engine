@@ -475,6 +475,58 @@ class TestCloseDailyNote(unittest.TestCase):
         self.assertIn("resolved: 2026-07-13", ticket_text)
         self.assertNotIn("status: prioritised", ticket_text)
 
+    def test_clears_planning_metadata_and_criticality_on_completion(self):
+        ticket_path = _write_ticket(
+            self.brain_path, "projects", "clear-the-garage", "planning-ticket",
+            "Planning ticket", "prioritised",
+            planned_for="2026-07-13", planning_lane="now", estimate_minutes="15",
+            call_suitable="true", critical="true",
+        )
+        note = self.brain_path / "2026-07-13.md"
+        text = note.read_text().replace(
+            "## Project next actions\n",
+            "## Project next actions\n- [x] Planning ticket — [[planning-ticket]]\n"
+        )
+        note.write_text(text)
+        daily_note.close_daily_note(self.brain_path, now=MONDAY)
+        ticket_text = (self.brain_path / ticket_path).read_text()
+        self.assertIn("status: done", ticket_text)
+        self.assertIn("resolved: 2026-07-13", ticket_text)
+        self.assertNotIn("planned_for:", ticket_text)
+        self.assertNotIn("planning_lane:", ticket_text)
+        self.assertNotIn("estimate_minutes:", ticket_text)
+        self.assertNotIn("call_suitable:", ticket_text)
+        self.assertNotIn("critical:", ticket_text)
+
+    def test_clears_multiline_planning_metadata_on_completion(self):
+        ticket = self.brain_path / "tasks" / "projects" / "clear-the-garage" / "multiline-ticket.md"
+        ticket.write_text(
+            "---\nstatus: prioritised\nplanned_for: |\n  2026-07-13\n  continuation line\nplanning_lane: |\n  now\ncritical: |\n  true\n---\n\n# Multiline ticket\n"
+        )
+        note = self.brain_path / "2026-07-13.md"
+        text = note.read_text().replace(
+            "## Project next actions\n",
+            "## Project next actions\n- [x] Multiline ticket — [[multiline-ticket]]\n"
+        )
+        note.write_text(text)
+        daily_note.close_daily_note(self.brain_path, now=MONDAY)
+        ticket_text = ticket.read_text()
+        self.assertIn("status: done", ticket_text)
+        self.assertIn("resolved: 2026-07-13", ticket_text)
+        self.assertNotIn("planned_for:", ticket_text)
+        self.assertNotIn("planning_lane:", ticket_text)
+        self.assertNotIn("critical:", ticket_text)
+        self.assertNotIn("continuation line", ticket_text)
+
+    def test_action_log_entry_on_completion_mentions_clearing_planning_metadata(self):
+        daily_note.close_daily_note(self.brain_path, now=MONDAY)
+        log_text = (self.brain_path / "log" / "2026-07-13.md").read_text()
+        self.assertIn(
+            "Written back — status set to done in ticket frontmatter, temporary planning metadata and criticality cleared",
+            log_text
+        )
+
+
     def test_miss_path_does_not_crash_and_does_not_touch_ticked_state(self):
         summary = daily_note.close_daily_note(self.brain_path, now=MONDAY)
         self.assertEqual(summary["reconciled"], 1)
@@ -681,3 +733,39 @@ class TestEmptySectionDoesNotSwallowFollowingSections(unittest.TestCase):
 
         daily_note.generate_daily_note(self.brain_path, now=self.now)
         self.assertIn("- my hand-written note", note_path.read_text())
+
+
+class TestFrontmatterBlockScalarAndDuplicateCleanup(unittest.TestCase):
+    def test_completion_clears_multiline_block_scalars_with_internal_and_leading_blank_lines(self):
+        text = (
+            "---\n"
+            "status: in-progress\n"
+            "planned_for: |\n"
+            "\n"
+            "  2026-08-04\n"
+            "planning_lane: |\n"
+            "  now\n"
+            "\n"
+            "  later\n"
+            "---\n\n"
+            "# Ticket\n"
+        )
+        updated = daily_note._update_frontmatter(text, {"status": "done"})
+        self.assertIn("status: done", updated)
+        self.assertNotIn("planned_for", updated)
+        self.assertNotIn("planning_lane", updated)
+        self.assertNotIn("2026-08-04", updated)
+        self.assertNotIn("later", updated)
+
+    def test_completion_clears_duplicate_planning_keys(self):
+        text = (
+            "---\n"
+            "status: in-progress\n"
+            "planned_for: 2026-08-04\n"
+            "planned_for: 2026-08-10\n"
+            "---\n\n"
+            "# Ticket\n"
+        )
+        updated = daily_note._update_frontmatter(text, {"status": "done"})
+        self.assertIn("status: done", updated)
+        self.assertNotIn("planned_for", updated)

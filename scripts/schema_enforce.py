@@ -13,7 +13,11 @@ own:
 ADR-0015 key set, `status` is in the ADR-0025 vocabulary, `type` is in the
 ADR-0015 vocabulary, and any non-blank `created`/`resolved` is a valid ISO
 date. `kanban_order` is Base Board-managed and is never read for
-conformance, never written, and never normalised.
+conformance, never written, and never normalised. Tickets whose frontmatter status
+is already canonical `done` (`status: done`) are explicitly exempted from schema
+enforcement. Non-canonical status aliases (e.g. `complete`, `closed`) are not
+exempted; they are reported and repaired to `done`, clearing any planning
+metadata in the process.
 
 **(b) Folder/naming traceability** — a Project/Area slug is the same string
 in `projects/<slug>/`, `tasks/projects/<slug>/`, `Code/projects/<name>/`
@@ -255,9 +259,95 @@ def block_keys(text: str) -> set:
     return blocks
 
 
-def set_frontmatter_value(text: str, key: str, value: str) -> str:
+PLANNING_LANE_VALUES = ("now", "later", "call", "tomorrow-candidate")
+PLANNING_LANE_ALIASES = {
+    "tomorrow_candidate": "tomorrow-candidate",
+    "tomorrow candidate": "tomorrow-candidate",
+    "tomorrow": "tomorrow-candidate",
+}
+
+BOOLEAN_VALUES = ("true", "false")
+BOOLEAN_ALIASES = {
+    "yes": "true",
+    "no": "false",
+    "y": "true",
+    "n": "false",
+    "true": "true",
+    "false": "false",
+}
+
+
+PLANNING_KEYS = (
+    "planned_for", "planning_lane", "estimate_minutes", "call_suitable", "critical"
+)
+
+CONTROLLED_KEYS = tuple(REQUIRED_KEYS) + tuple(PLANNING_KEYS)
+
+
+def _is_continuation_line(lines: list, idx: int) -> bool:
+    if idx >= len(lines):
+        return False
+    line = lines[idx]
+    if line.startswith(" ") or line.startswith("\t"):
+        return True
+    if not line.strip():
+        for k in range(idx + 1, len(lines)):
+            if lines[k].startswith(" ") or lines[k].startswith("\t"):
+                return True
+            if tn.FRONTMATTER_KEY_RE.match(lines[k]):
+                return False
+    return False
+
+
+def block_keys(text: str) -> set:
+    """Frontmatter keys whose value continues onto following indented lines.
+
+    `status:\\n  - backlog` is a perfectly good YAML block sequence, but this
+    module's frontmatter helpers are line-based: rewriting the `status:` line
+    alone would strand the `- backlog` item and leave unparseable YAML. Such
+    keys are reported and never rewritten.
+    """
+    m = tn.FRONTMATTER_RE.match(text)
+    if not m:
+        return set()
+    lines = m.group(2).splitlines()
+    blocks = set()
+    for i, line in enumerate(lines):
+        key_match = tn.FRONTMATTER_KEY_RE.match(line)
+        if not key_match:
+            continue
+        if _is_continuation_line(lines, i + 1):
+            blocks.add(key_match.group(1))
+    return blocks
+
+
+def _normalise_estimate(raw: str):
+    stripped = raw.strip().strip("\"'")
+    m_digits = re.match(r"^([0-9]+)$", stripped)
+    if m_digits:
+        try:
+            val = int(m_digits.group(1))
+            if val > 0:
+                return str(val)
+        except ValueError:
+            return None
+    m = re.match(r"^([0-9]+)\s*(?:mins?|m)?$", stripped, re.IGNORECASE)
+    if m:
+        try:
+            val = int(m.group(1))
+            if val > 0:
+                return str(val)
+        except ValueError:
+            return None
+    return None
+
+
+def set_frontmatter_value(text: str, key: str, value: str | None) -> str:
     """Rewrite one existing frontmatter key's value, leaving every other
     line — `kanban_order` included — byte-identical.
+    If value is None, the line is removed from frontmatter.
+    Removes all duplicate occurrences of `key` and their continuation lines.
+    Atomically clears planning fields if `key == "status"` and `value == "done"`.
 
     Refuses (returns `text` unchanged) when the key's value continues onto
     following indented lines; see `block_keys`.
@@ -267,15 +357,37 @@ def set_frontmatter_value(text: str, key: str, value: str) -> str:
         return text
     if key in block_keys(text):
         return text
+
+    if key in PLANNING_KEYS and parse_frontmatter(text).get("status") == "done":
+        value = None
+
+    keys_to_clear = {key}
+    if key == "status" and value == "done":
+        keys_to_clear.update(PLANNING_KEYS)
+
     lines = m.group(2).splitlines()
-    for i, line in enumerate(lines):
+    new_lines = []
+    emitted = False
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         key_match = tn.FRONTMATTER_KEY_RE.match(line)
-        if key_match and key_match.group(1) == key:
-            lines[i] = f"{key}: {value}".rstrip()
-            break
-    else:
-        return text
-    return text[: m.start(2)] + "\n".join(lines) + text[m.end(2):]
+        if key_match and key_match.group(1) in keys_to_clear:
+            matched_key = key_match.group(1)
+            if matched_key == key and value is not None and not emitted:
+                new_lines.append(f"{key}: {value}".rstrip())
+                emitted = True
+            i += 1
+            while _is_continuation_line(lines, i):
+                i += 1
+        else:
+            new_lines.append(line)
+            i += 1
+
+    if value is not None and not emitted:
+        new_lines.append(f"{key}: {value}".rstrip())
+
+    return text[: m.start(2)] + "\n".join(new_lines) + text[m.end(2):]
 
 
 def _normalise_enum(raw: str, allowed, aliases):
@@ -321,6 +433,73 @@ def check_tickets(brain_path: Path) -> list:
         rel = path.relative_to(brain_path).as_posix()
         text = path.read_text()
 
+        m = tn.FRONTMATTER_RE.match(text)
+        if not m:
+            continue
+        fm_lines = m.group(2).splitlines()
+
+        status_lines = []
+        for line in fm_lines:
+            km = tn.FRONTMATTER_KEY_RE.match(line)
+            if km and km.group(1) == "status":
+                status_lines.append(line.split(":", 1)[1].strip())
+
+        if len(status_lines) == 1 and status_lines[0] == "done":
+            continue
+
+        values = parse_frontmatter(text)
+
+        duplicate_handled_keys = set()
+        key_occurrences = {}
+        for line in fm_lines:
+            km = tn.FRONTMATTER_KEY_RE.match(line)
+            if km and km.group(1) in CONTROLLED_KEYS:
+                k = km.group(1)
+                v = line.split(":", 1)[1].strip()
+                key_occurrences.setdefault(k, []).append(v)
+
+        for key, raw_vals in key_occurrences.items():
+            if len(raw_vals) > 1:
+                duplicate_handled_keys.add(key)
+                unique_non_blank = list(dict.fromkeys(v for v in raw_vals if v.strip()))
+
+                normalized_vals = []
+                for v in unique_non_blank:
+                    norm = v
+                    if key == "status":
+                        norm = _normalise_enum(v, STATUS_VALUES, STATUS_ALIASES) or v
+                    elif key == "type":
+                        norm = _normalise_enum(v, TYPE_VALUES, TYPE_ALIASES) or v
+                    elif key in DATE_KEYS or key == "planned_for":
+                        norm = _normalise_date(v) or v
+                    elif key == "planning_lane":
+                        norm = _normalise_enum(v, PLANNING_LANE_VALUES, PLANNING_LANE_ALIASES) or v
+                    elif key == "estimate_minutes":
+                        norm = _normalise_estimate(v) or v
+                    elif key in ("call_suitable", "critical"):
+                        norm = _normalise_enum(v, BOOLEAN_VALUES, BOOLEAN_ALIASES) or v
+                    normalized_vals.append(norm)
+
+                unique_normalized = list(dict.fromkeys(normalized_vals))
+                if len(unique_normalized) > 1:
+                    findings.append(Finding(
+                        "a", f"duplicate-{key}", rel,
+                        f"`{key}` has duplicate contradictory values: {raw_vals}",
+                        fixable=False,
+                        blocked_reason=f"duplicate key `{key}` has contradictory values: {raw_vals}",
+                    ))
+                else:
+                    canonical_val = unique_normalized[0] if unique_normalized else ""
+                    if not canonical_val and key in BLANK_DEFAULTS:
+                        canonical_val = BLANK_DEFAULTS[key]
+                    findings.append(Finding(
+                        "a", f"duplicate-{key}", rel,
+                        f"`{key}` has duplicate occurrences",
+                        fixable=True,
+                        fix_desc=f"canonicalise duplicate {key}",
+                        fix_args={"key": key, "value": canonical_val if canonical_val else None},
+                    ))
+
         missing = tn.missing_keys(text)
         if missing:
             findings.append(Finding(
@@ -330,21 +509,21 @@ def check_tickets(brain_path: Path) -> list:
                 fix_desc=f"backfill {len(missing)} key(s) blank (type -> task)",
             ))
 
-        values = parse_frontmatter(text)
         blocks = block_keys(text)
-        for key in sorted(blocks & (set(("status", "type")) | set(DATE_KEYS))):
+        for key in sorted(blocks & (set(("status", "type")) | set(DATE_KEYS) | set(PLANNING_KEYS))):
             findings.append(Finding(
                 "a", f"multiline-{key}", rel,
                 f"`{key}` is a multi-line YAML value",
                 blocked_reason="its value continues onto indented lines — rewriting "
                                "the key line alone would produce invalid YAML",
             ))
+
         for key, allowed, aliases in (
             ("status", STATUS_VALUES, STATUS_ALIASES),
             ("type", TYPE_VALUES, TYPE_ALIASES),
         ):
-            if key not in values or key in blocks:
-                continue  # already reported as a missing/multi-line key
+            if key not in values or key in blocks or key in duplicate_handled_keys:
+                continue
             raw = values[key]
             if not raw.strip():
                 findings.append(Finding(
@@ -366,12 +545,12 @@ def check_tickets(brain_path: Path) -> list:
                 fix_args={"key": key, "value": fixed} if fixed else None,
             ))
 
-        for key in DATE_KEYS:
-            if key in blocks:
+        for key in DATE_KEYS + ("planned_for",):
+            if key in blocks or key in duplicate_handled_keys:
                 continue
             raw = values.get(key, "")
             if not raw.strip():
-                continue  # blank is legitimate (an unresolved ticket)
+                continue
             if ISO_DATE_RE.match(raw.strip()) and _normalise_date(raw):
                 continue
             fixed = _normalise_date(raw)
@@ -383,6 +562,58 @@ def check_tickets(brain_path: Path) -> list:
                 blocked_reason=None if fixed else "cannot be parsed as a date",
                 fix_args={"key": key, "value": fixed} if fixed else None,
             ))
+
+        if "planning_lane" in values and "planning_lane" not in blocks and "planning_lane" not in duplicate_handled_keys:
+            raw = values["planning_lane"]
+            if raw.strip():
+                if raw.strip() not in PLANNING_LANE_VALUES:
+                    fixed = _normalise_enum(raw, PLANNING_LANE_VALUES, PLANNING_LANE_ALIASES)
+                    findings.append(Finding(
+                        "a", "invalid-planning_lane", rel,
+                        f"`planning_lane: {raw}` is not in the vocabulary {list(PLANNING_LANE_VALUES)}",
+                        fixable=fixed is not None,
+                        fix_desc=f"set planning_lane: {fixed}" if fixed else None,
+                        blocked_reason=None if fixed else "no unambiguous vocabulary value to map it onto",
+                        fix_args={"key": "planning_lane", "value": fixed} if fixed else None,
+                    ))
+
+        if "estimate_minutes" in values and "estimate_minutes" not in blocks and "estimate_minutes" not in duplicate_handled_keys:
+            raw = values["estimate_minutes"]
+            if raw.strip():
+                is_valid = False
+                stripped = raw.strip().strip("\"'")
+                if re.match(r"^[0-9]+$", stripped):
+                    try:
+                        if int(stripped) > 0:
+                            is_valid = True
+                    except ValueError:
+                        pass
+                if not is_valid:
+                    fixed = _normalise_estimate(raw)
+                    findings.append(Finding(
+                        "a", "invalid-estimate_minutes", rel,
+                        f"`estimate_minutes: {raw}` is not a positive integer",
+                        fixable=fixed is not None,
+                        fix_desc=f"set estimate_minutes: {fixed}" if fixed else None,
+                        blocked_reason=None if fixed else "cannot be parsed as a positive integer",
+                        fix_args={"key": "estimate_minutes", "value": fixed} if fixed else None,
+                    ))
+
+        for bool_key in ("call_suitable", "critical"):
+            if bool_key in values and bool_key not in blocks and bool_key not in duplicate_handled_keys:
+                raw = values[bool_key]
+                if raw.strip():
+                    if raw.strip().lower() not in BOOLEAN_VALUES:
+                        fixed = _normalise_enum(raw, BOOLEAN_VALUES, BOOLEAN_ALIASES)
+                        findings.append(Finding(
+                            "a", f"invalid-{bool_key}", rel,
+                            f"`{bool_key}: {raw}` is not a boolean",
+                            fixable=fixed is not None,
+                            fix_desc=f"set {bool_key}: {fixed}" if fixed else None,
+                            blocked_reason=None if fixed else "cannot be parsed as a boolean",
+                            fix_args={"key": bool_key, "value": fixed} if fixed else None,
+                        ))
+
     return findings
 
 

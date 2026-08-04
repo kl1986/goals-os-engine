@@ -14,6 +14,44 @@ status, type, priority, component, parent, assignee, github, goal, created, reso
 
 `kanban_order` is deliberately excluded from this check — it's Base-Board-managed (the board writes it on drag; nothing here should ever touch it) and isn't part of what makes a ticket's frontmatter "complete" for this Routine's purposes.
 
+Optional Ticket planning metadata (`planned_for`, `planning_lane`, `estimate_minutes`, `call_suitable`, `critical`) is preserved by normalisation and schema enforcement. `schema_enforce` ignores tickets already `status: done`; Engine-owned completion paths clear temporary planning metadata and criticality on completion.
+
+### Optional Planning Metadata Validation & Canonicalisation Rules
+
+When optional planning metadata is present on active tickets, `schema_enforce` validates and canonicalises field values according to the following rules:
+
+- **Planned Date (`planned_for`):**
+  - **Canonical format:** ISO YYYY-MM-DD (e.g. `2026-08-04`).
+  - **Canonicalisation:** Valid UK date formats (`DD/MM/YYYY` or `D/M/YYYY`) are canonicalised to ISO YYYY-MM-DD.
+  - **Validation:** Blank values are valid. Non-blank values that cannot be parsed as valid calendar dates are flagged as invalid (not fixable).
+
+- **Planning Lanes (`planning_lane`):**
+  - **Canonical vocabulary:** `now`, `later`, `call`, `tomorrow-candidate`.
+  - **Aliases:** `tomorrow`, `tomorrow_candidate`, and `tomorrow candidate` are canonicalised to `tomorrow-candidate`.
+  - **Validation:** Blank values are valid. Unrecognised lane strings are flagged as invalid (not fixable).
+
+- **Estimates (`estimate_minutes`):**
+  - **Canonical format:** Positive integer string (e.g. `30`).
+  - **Canonicalisation:** Minute suffix strings (e.g. `30m`, `30 min`, `30 mins`) are canonicalised to plain positive integer strings.
+  - **Validation:** Must be a positive integer (`> 0`). Zero (`0`), negative values (e.g. `-5`), or non-numeric strings are flagged as invalid (not fixable).
+
+- **Boolean Flags (`call_suitable`, `critical`):**
+  - **Canonical vocabulary:** `true`, `false`.
+  - **Aliases:** `yes` and `y` are canonicalised to `true`; `no` and `n` are canonicalised to `false`.
+  - **Validation:** Blank values are valid. Unrecognised strings (e.g. `maybe`, `high`) are flagged as invalid (not fixable).
+
+- **Duplicate Controlled Keys:**
+  - Identical or single-value duplicates of controlled keys are canonicalised into a single entry.
+  - Duplicate occurrences with contradictory or conflicting values are flagged as unfixable.
+
+- **Multiline & Block Values:**
+  - Multiline or block scalar planning values (and other controlled keys) are reported as unfixable, as line-level automated repair would produce invalid YAML.
+
+- **Lifecycle Status & Atomicity:**
+  - Tickets with a single canonical `status: done` are deliberately ignored by `schema_enforce` even if planning metadata or criticality remains.
+  - When schema enforcement repairs a non-canonical status alias (`complete`, `completed`, `closed`) to `done`, all planning metadata is atomically cleared.
+  - Stale queued planning-field normalisations must never restore temporary metadata onto a ticket whose status is or has been repaired to `done`.
+
 A file with every one of those ten keys already present — even if some values are blank — is **fully conforming** and is left completely untouched: no backfill, no rename, no Action Log entry. This is what makes the Routine idempotent — a ticket this Routine (or `scripts/migrate_next_actions.py`) already normalized has nothing missing on the next pass, so it's simply skipped.
 
 ## What it does, per non-conforming file

@@ -740,3 +740,230 @@ def test_a_real_caveat_is_still_found_on_a_line_containing_inline_code(brain, ro
         ticket=DONE_TICKET,
     )
     assert _kinds(_run(brain, roots, tmp_path)["findings"], "d") == ["caveat-expired"]
+
+
+# --------------------------------------------------------------------------
+# Planning metadata optional fields and done status
+# --------------------------------------------------------------------------
+
+def test_valid_planning_metadata_is_accepted(brain, roots, tmp_path):
+    ticket = brain / "tasks" / "projects" / "goals-os" / "planning-ticket.md"
+    _write(ticket, CONFORMING_TICKET.replace(
+        "status: backlog",
+        "status: in-progress\nplanned_for: 2026-08-04\nplanning_lane: now\nestimate_minutes: 30\ncall_suitable: true\ncritical: false"
+    ))
+    _git_commit_all(brain)
+    assert _kinds(_run(brain, roots, tmp_path)["findings"], "a") == []
+
+
+def test_invalid_planning_metadata_reported_and_normalised(brain, roots, tmp_path):
+    ticket = brain / "tasks" / "projects" / "goals-os" / "invalid-planning.md"
+    _write(ticket, CONFORMING_TICKET.replace(
+        "status: backlog",
+        "status: in-progress\nplanned_for: 04/08/2026\nplanning_lane: tomorrow candidate\nestimate_minutes: 30 mins\ncall_suitable: yes\ncritical: yes"
+    ))
+    _git_commit_all(brain)
+    findings = _run(brain, roots, tmp_path)["findings"]
+    kinds = _kinds(findings, "a")
+    assert "invalid-date-planned_for" in kinds
+    assert "invalid-planning_lane" in kinds
+    assert "invalid-estimate_minutes" in kinds
+    assert "invalid-call_suitable" in kinds
+    assert "invalid-critical" in kinds
+
+    _run(brain, roots, tmp_path, apply=True)
+    values = se.parse_frontmatter(ticket.read_text())
+    assert values["planned_for"] == "2026-08-04"
+    assert values["planning_lane"] == "tomorrow-candidate"
+    assert values["estimate_minutes"] == "30"
+    assert values["call_suitable"] == "true"
+    assert values["critical"] == "true"
+
+
+def test_unfixable_invalid_planning_metadata(brain, roots, tmp_path):
+    ticket = brain / "tasks" / "projects" / "goals-os" / "bad-planning.md"
+    _write(ticket, CONFORMING_TICKET.replace(
+        "status: backlog",
+        "status: in-progress\nplanning_lane: invalid_lane\nestimate_minutes: -5\ncall_suitable: maybe\ncritical: high"
+    ))
+    _git_commit_all(brain)
+    findings = [f for f in _run(brain, roots, tmp_path)["findings"] if f.check == "a"]
+    by_kind = {f.kind: f for f in findings}
+    assert not by_kind["invalid-planning_lane"].fixable
+    assert not by_kind["invalid-estimate_minutes"].fixable
+    assert not by_kind["invalid-call_suitable"].fixable
+    assert not by_kind["invalid-critical"].fixable
+
+
+def test_schema_enforce_ignores_status_done_tickets(brain, roots, tmp_path):
+    ticket = brain / "tasks" / "projects" / "goals-os" / "done-with-planning.md"
+    _write(ticket, CONFORMING_TICKET.replace(
+        "status: backlog",
+        "status: done\nresolved: 2026-08-04\nplanned_for: invalid-date\nplanning_lane: invalid-lane"
+    ))
+    _git_commit_all(brain)
+    findings = [f for f in _run(brain, roots, tmp_path)["findings"] if f.check == "a"]
+    assert findings == []
+
+
+def test_schema_enforce_exemption_only_for_canonical_done_status(brain, roots, tmp_path):
+    """Aliases like 'complete' or 'closed' must not be exempted; they must be reported and fixed to 'done'."""
+    ticket = brain / "tasks" / "projects" / "goals-os" / "complete-alias.md"
+    _write(ticket, CONFORMING_TICKET.replace(
+        "status: backlog",
+        "status: complete\nplanned_for: 04/08/2026"
+    ))
+    _git_commit_all(brain)
+    findings = [f for f in _run(brain, roots, tmp_path)["findings"] if f.check == "a"]
+    kinds = [f.kind for f in findings]
+    assert "invalid-status" in kinds
+
+    _run(brain, roots, tmp_path, apply=True)
+    values = se.parse_frontmatter(ticket.read_text())
+    assert values["status"] == "done"
+
+
+def test_multiline_planning_metadata_reported_as_unfixable(brain, roots, tmp_path):
+    ticket = brain / "tasks" / "projects" / "goals-os" / "multiline-planning.md"
+    _write(ticket, CONFORMING_TICKET.replace(
+        "status: backlog",
+        "status: in-progress\nplanned_for: |\n  2026-08-04\nplanning_lane: |\n  now\nestimate_minutes: |\n  30\ncall_suitable: |\n  true\ncritical: |\n  true"
+    ))
+    _git_commit_all(brain)
+    findings = [f for f in _run(brain, roots, tmp_path)["findings"] if f.check == "a"]
+    kinds = [f.kind for f in findings]
+    assert "multiline-planned_for" in kinds
+    assert "multiline-planning_lane" in kinds
+    assert "multiline-estimate_minutes" in kinds
+    assert "multiline-call_suitable" in kinds
+    assert "multiline-critical" in kinds
+    for f in findings:
+        if f.kind.startswith("multiline-"):
+            assert not f.fixable
+            assert f.blocked_reason is not None
+
+
+def test_unicode_numeric_estimate_does_not_crash(brain, roots, tmp_path):
+    ticket = brain / "tasks" / "projects" / "goals-os" / "unicode-estimate.md"
+    _write(ticket, CONFORMING_TICKET.replace(
+        "status: backlog",
+        "status: in-progress\nestimate_minutes: ¹²³"
+    ))
+    _git_commit_all(brain)
+    findings = [f for f in _run(brain, roots, tmp_path)["findings"] if f.check == "a"]
+    kinds = [f.kind for f in findings]
+    assert "invalid-estimate_minutes" in kinds
+    f = [f for f in findings if f.kind == "invalid-estimate_minutes"][0]
+    assert not f.fixable
+
+
+def test_multiline_block_scalar_with_leading_blank_line_detected(brain, roots, tmp_path):
+    ticket = brain / "tasks" / "projects" / "goals-os" / "multiline-leading-blank.md"
+    _write(ticket, CONFORMING_TICKET.replace(
+        "status: backlog",
+        "status: in-progress\nplanned_for: |\n\n  2026-08-04"
+    ))
+    _git_commit_all(brain)
+    findings = [f for f in _run(brain, roots, tmp_path)["findings"] if f.check == "a"]
+    kinds = [f.kind for f in findings]
+    assert "multiline-planned_for" in kinds
+    f = [f for f in findings if f.kind == "multiline-planned_for"][0]
+    assert not f.fixable
+
+
+def test_status_alias_repair_to_done_clears_planning_metadata(brain, roots, tmp_path):
+    """Finding N1: Repairing a lifecycle alias like 'complete' to 'done' must atomically clear planning metadata."""
+    ticket = brain / "tasks" / "projects" / "goals-os" / "complete-with-planning.md"
+    _write(ticket, CONFORMING_TICKET.replace(
+        "status: backlog",
+        "status: complete\nplanned_for: 2026-08-04\nplanning_lane: now\nestimate_minutes: 30\ncall_suitable: true\ncritical: true"
+    ))
+    _git_commit_all(brain)
+    findings = [f for f in _run(brain, roots, tmp_path)["findings"] if f.check == "a"]
+    assert "invalid-status" in [f.kind for f in findings]
+
+    _run(brain, roots, tmp_path, apply=True)
+    text = ticket.read_text()
+    values = se.parse_frontmatter(text)
+    assert values["status"] == "done"
+    assert "planned_for" not in values
+    assert "planning_lane" not in values
+    assert "estimate_minutes" not in values
+    assert "call_suitable" not in values
+    assert "critical" not in values
+
+
+def test_status_alias_repair_to_done_with_invalid_planning_metadata_never_restores_metadata(brain, roots, tmp_path):
+    """Finding N1: When schema enforcement repairs an alias status (complete/completed/closed) to done, stale queued planning-field normalisations must never restore temporary metadata."""
+    ticket = brain / "tasks" / "projects" / "goals-os" / "complete-with-invalid-planning.md"
+    _write(ticket, CONFORMING_TICKET.replace(
+        "status: backlog",
+        "status: complete\nplanned_for: 04/08/2026\nplanning_lane: tomorrow\nestimate_minutes: 30 mins\ncall_suitable: yes\ncritical: yes"
+    ))
+    _git_commit_all(brain)
+    findings = [f for f in _run(brain, roots, tmp_path)["findings"] if f.check == "a"]
+    kinds = [f.kind for f in findings]
+    assert "invalid-status" in kinds
+    assert "invalid-date-planned_for" in kinds
+    assert "invalid-planning_lane" in kinds
+    assert "invalid-estimate_minutes" in kinds
+    assert "invalid-call_suitable" in kinds
+    assert "invalid-critical" in kinds
+
+    _run(brain, roots, tmp_path, apply=True)
+    text = ticket.read_text()
+    values = se.parse_frontmatter(text)
+    assert values["status"] == "done"
+    assert "planned_for" not in values
+    assert "planning_lane" not in values
+    assert "estimate_minutes" not in values
+    assert "call_suitable" not in values
+    assert "critical" not in values
+
+
+def test_duplicate_controlled_keys_canonicalised_when_identical_or_single_value(brain, roots, tmp_path):
+    """Finding N2: Duplicate controlled keys with identical or single non-blank values are canonicalised."""
+    ticket = brain / "tasks" / "projects" / "goals-os" / "duplicate-planning.md"
+    _write(ticket, CONFORMING_TICKET.replace(
+        "status: backlog",
+        "status: in-progress\nplanned_for: 2026-08-04\nplanned_for: 2026-08-04"
+    ))
+    _git_commit_all(brain)
+    findings = [f for f in _run(brain, roots, tmp_path)["findings"] if f.check == "a"]
+    assert "duplicate-planned_for" in [f.kind for f in findings]
+    dup_f = [f for f in findings if f.kind == "duplicate-planned_for"][0]
+    assert dup_f.fixable
+
+    _run(brain, roots, tmp_path, apply=True)
+    text = ticket.read_text()
+    assert text.count("planned_for:") == 1
+    assert "planned_for: 2026-08-04" in text
+
+
+def test_duplicate_controlled_keys_rejected_when_contradictory(brain, roots, tmp_path):
+    """Finding N2: Duplicate controlled keys with contradictory values are rejected (not fixable)."""
+    ticket = brain / "tasks" / "projects" / "goals-os" / "contradictory-planning.md"
+    _write(ticket, CONFORMING_TICKET.replace(
+        "status: backlog",
+        "status: in-progress\nplanned_for: 2026-08-04\nplanned_for: 2026-08-10"
+    ))
+    _git_commit_all(brain)
+    findings = [f for f in _run(brain, roots, tmp_path)["findings"] if f.check == "a"]
+    assert "duplicate-planned_for" in [f.kind for f in findings]
+    dup_f = [f for f in findings if f.kind == "duplicate-planned_for"][0]
+    assert not dup_f.fixable
+    assert "contradictory" in dup_f.blocked_reason
+
+
+def test_duplicate_status_keys_not_exempted_as_canonical_done(brain, roots, tmp_path):
+    """Finding N2 / N3: Duplicate status keys (e.g. status: in-progress and status: done) are not exempted."""
+    ticket = brain / "tasks" / "projects" / "goals-os" / "duplicate-status.md"
+    _write(ticket, CONFORMING_TICKET.replace(
+        "status: backlog",
+        "status: in-progress\nstatus: done"
+    ))
+    _git_commit_all(brain)
+    findings = [f for f in _run(brain, roots, tmp_path)["findings"] if f.check == "a"]
+    assert "duplicate-status" in [f.kind for f in findings]
+    dup_f = [f for f in findings if f.kind == "duplicate-status"][0]
+    assert not dup_f.fixable
