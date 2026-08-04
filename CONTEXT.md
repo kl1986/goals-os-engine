@@ -159,6 +159,9 @@ The periodic external-research cycle that scans new releases/approaches, distils
 **AFK ratio**:
 Share of actions executed autonomously rather than confirm-first — the primary fitness metric, alongside cycle time, goal progress, and review debt/correction rate.
 
+**Call Companion curation**:
+A bounded, interactive planning flow that reads unclassified active Tickets, proposes `call_suitable` and `estimate_minutes`, and writes frontmatter only upon explicit user confirmation.
+
 ## Scheduling
 
 **Schedule**:
