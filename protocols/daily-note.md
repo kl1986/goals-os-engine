@@ -1,4 +1,4 @@
-# Protocol: Daily note (v4)
+# Protocol: Daily note (v5)
 
 A single, once-daily "command centre" note at the Brain root. Distinct from the pure-derivation Dashboard, the daily note is additive-only within a day and accumulates edits (ticked checkboxes) the user makes during the day. It is governed by two Routines: "Daily note" (generation, morning) and "Close daily note" (reconciliation + archive, evening).
 
@@ -22,6 +22,24 @@ Body, in this exact order:
 ```markdown
 # <Weekday, D Month YYYY>
 
+## Critical
+![[tasks/all-tickets.base#Critical work]]
+
+## Available time
+
+## Now
+![[tasks/all-tickets.base#Today]]
+
+## Call Companion
+![[tasks/all-tickets.base#Call Companion]]
+
+## Drafts to review and send
+
+## Later today
+
+## Tomorrow candidates
+![[tasks/all-tickets.base#Tomorrow candidates]]
+
 ## Today's tasks
 - [ ]
 
@@ -41,14 +59,17 @@ v3 (meeting-processing) adds `## Proposed from meetings`. It gets its own headin
 
 v4 adds `## Daily priorities` immediately after `## Today's tasks`. It is a static named-view embed of the Brain's shared `tasks/all-tickets.base#Daily priorities` Base Board view, not a second task store: dragging a card writes its `status` directly to the source ticket's frontmatter. Generation ensures the one fixed embed is present on new and pre-existing daily notes without duplicating it or touching any other user-authored content.
 
+v5 extends the daily note into Today by introducing availability-led Today sections (`## Critical`, `## Available time`, `## Now`, `## Call Companion`, `## Drafts to review and send`, `## Later today`, `## Tomorrow candidates`) with embedded shared Base views (`Critical work`, `Today`, `Call Companion`, `Tomorrow candidates`) while retaining existing source and archive semantics.
+
 ## Daily note Routine (Generation & refresh)
 
 The generation Routine (risk tier internal & reversible, owner EA; Schedule *fixed-interval*, a morning clock time — heartbeat-checkable daily — in the Brain's `config/schedules.md`) uses `scripts/daily_note.py`'s `generate_daily_note` plus an Adapter skill.
 
 - Each new calendar day always gets a brand-new file. There is no cross-day continuation of the same file.
 - Re-invoking generation within the same day is **additive only**. It only ever adds rows for anything not already present (new project next-actions, new triaged captures filed via the `today` destination, new Waiting For items, new proposed items from meetings). It never touches, reorders, or removes an existing line. This is different from `dashboard.md`, which fully overwrites every run.
-- A note generated before a section existed has no such heading, and appending into a missing heading is a silent no-op. Generation therefore **inserts** a missing `## Daily priorities` heading (immediately before `## Project next actions`) and `## Proposed from meetings` heading (immediately before `## Notes`) rather than skipping either section for the day. Inserting a heading is still additive-only: it adds lines and touches, reorders and removes none.
-- **Carry-forward:** Generation scans the most recently archived note (`archive/daily-notes/`, picking the lexicographically-latest filename) for any still-unchecked `## Today's tasks` line, and copies it verbatim into the new day's `## Today's tasks`. This is origin-blind: a manually-typed task and a capture-derived task carry forward identically. This is the **only** section needing carry-forward. `## Project next actions` and `## Waiting for` are live mirrors of an external source (project notes, person hubs), so an unresolved item naturally persists at the source without carry-forward logic here.
+- A note generated before a section existed has no such heading, and appending into a missing heading is a silent no-op. Generation therefore **inserts** missing section headings in exact order (via an anchor chain) rather than skipping sections for the day. Inserting a heading is still additive-only: it adds lines and touches, reorders and removes none.
+- **Carry-forward:** Generation scans the most recently archived note (`archive/daily-notes/`, picking the lexicographically-latest filename) for any still-unchecked lines under `## Today's tasks`, `## Now`, and `## Later today`, and copies them verbatim into the new day's `## Today's tasks` (appended after `## Today's tasks` carried lines, in that order). Carried lines are deduplicated **across** the three source sections but never **within** one: a line the user pulled into `## Now` while leaving the original row under `## Today's tasks` carries once, while a line genuinely typed twice inside a single section still carries twice. `## Tomorrow candidates`, `## Available time`, `## Critical`, `## Call Companion`, and `## Drafts to review and send` carry nothing.
+- **Tomorrow candidates never become commitments:** Neither generate nor close writes, rewrites, or promotes `planning_lane` or `planned_for` on any Ticket. A Ticket-backed Tomorrow candidate persists only because the Base view still matches it.
 
 On completion, it bumps its own "Daily note" row in `config/routine-state.md` (`heartbeat.bump`), matching every other Routine.
 
