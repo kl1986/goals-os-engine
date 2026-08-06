@@ -18,9 +18,10 @@ The `## Drafts to review and send` section of the daily note carries unresolved 
 
 3. **Carry-forward & archiving**:
    - `close_daily_note` rewrites yesterday's unresolved `draft` items to `carried-forward` (`- [ ] [carried-forward] ...` and `- [x] Carry forward`) before moving the file to `archive/daily-notes/`, ensuring archived daily notes are faithful history.
-   - Next day's `generate_daily_note` scans yesterday's archived note and copies unresolved drafts (`draft` or `carried-forward`) verbatim into the new day's `## Drafts to review and send` section as fresh `[carried-forward]` or `[draft]` items with clear sub-checkboxes (not into `## Today's tasks`).
+   - Next day's `generate_daily_note` scans yesterday's archived note and copies unresolved drafts (`draft` or `carried-forward`) verbatim into the new day's `## Drafts to review and send` section as `[carried-forward]` items with clear sub-checkboxes (not into `## Today's tasks`).
    - `sent` and `discarded` drafts never carry forward.
-   - Same-day refresh is additive-only, deduplicating on stable draft identity (wikilink).
+   - **Draft identity**: A draft's identity is represented by a trailing block-id marker (`^d<YYYYMMDD>-<ordinal>`). Carried drafts retain their original origin marker across multi-day carries. When stamping an unmarked draft from source day D, the engine allocates the lowest positive integer ordinal not already claimed by any `dD-*` marker present in that source file. Stamping occurs when a draft is first carried into today's note; archived files are never rewritten after close.
+   - **Deduplication rationale**: Deduplicating on `wikilink` alone was rejected because two distinct unresolved drafts targeting the same Person Hub collapsed into one, losing drafts. Deduplicating on `(description, wikilink)` was rejected because editing a draft's text mid-day caused refresh to duplicate the draft. Deduplicating on origin marker (`^d...`) preserves both multiple distinct drafts to the same hub and mid-day text edits on refresh.
 
 4. **Review = docs only**: A "Review" subsection in `protocols/daily-note.md` specifies that review prompts carry no workflow state, link only to the Action Log `feedback:` field (`protocols/feedback-capture.md`), and never write that field. No code, no new protocol file, and no `## Review` section heading is added to the daily note schema.
 

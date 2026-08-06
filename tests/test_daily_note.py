@@ -2,6 +2,7 @@ import datetime as dt
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
@@ -1319,6 +1320,266 @@ class TestDraftLifecycle(unittest.TestCase):
             drafts = daily_note.parse_drafts(text)
             self.assertEqual(len(drafts), 1)
             self.assertEqual(drafts[0].tag, tag)
+
+    def test_two_distinct_drafts_same_wikilink_carry_and_survive_refresh(self):
+        (self.archive_dir / "2026-07-12.md").write_text(
+            "---\ntype: daily-note\ndate: 2026-07-12\ntags:\n  - daily-note\n---\n\n"
+            "## Drafts to review and send\n"
+            "- [ ] [draft] First draft for Sam — [[Sam Patel]]\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n"
+            "- [ ] [draft] Second draft for Sam — [[Sam Patel]]\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n"
+        )
+        monday = dt.datetime(2026, 7, 13, 10, 0)
+        path = daily_note.generate_daily_note(self.brain_path, now=monday)
+        text = path.read_text()
+        self.assertIn("First draft for Sam", text)
+        self.assertIn("Second draft for Sam", text)
+
+        # Refresh daily note on Monday
+        path_refreshed = daily_note.generate_daily_note(self.brain_path, now=monday)
+        text_refreshed = path_refreshed.read_text()
+        self.assertIn("First draft for Sam", text_refreshed)
+        self.assertIn("Second draft for Sam", text_refreshed)
+        self.assertEqual(text_refreshed.count("First draft for Sam"), 1)
+        self.assertEqual(text_refreshed.count("Second draft for Sam"), 1)
+
+    def test_draft_carried_across_three_days_preserves_original_marker(self):
+        (self.archive_dir / "2026-07-12.md").write_text(
+            "---\ntype: daily-note\ndate: 2026-07-12\ntags:\n  - daily-note\n---\n\n"
+            "## Drafts to review and send\n"
+            "- [ ] [draft] Persistent draft — [[Sam Patel]]\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n"
+        )
+        day2 = dt.datetime(2026, 7, 13, 10, 0)
+        d2_path = daily_note.generate_daily_note(self.brain_path, now=day2)
+        d2_text = d2_path.read_text()
+        self.assertIn("^d20260712-1", d2_text)
+        daily_note.close_daily_note(self.brain_path, now=day2)
+
+        day3 = dt.datetime(2026, 7, 14, 10, 0)
+        d3_path = daily_note.generate_daily_note(self.brain_path, now=day3)
+        d3_text = d3_path.read_text()
+        self.assertIn("^d20260712-1", d3_text)
+        self.assertNotIn("^d20260713", d3_text)
+
+    def test_editing_carried_draft_text_then_refreshing_does_not_duplicate(self):
+        (self.archive_dir / "2026-07-12.md").write_text(
+            "---\ntype: daily-note\ndate: 2026-07-12\ntags:\n  - daily-note\n---\n\n"
+            "## Drafts to review and send\n"
+            "- [ ] [draft] Initial draft text — [[Sam Patel]]\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n"
+        )
+        monday = dt.datetime(2026, 7, 13, 10, 0)
+        mon_path = daily_note.generate_daily_note(self.brain_path, now=monday)
+        text = mon_path.read_text()
+
+        edited_text = text.replace("Initial draft text", "Edited draft text by user")
+        mon_path.write_text(edited_text)
+
+        daily_note.generate_daily_note(self.brain_path, now=monday)
+        refreshed_text = mon_path.read_text()
+        self.assertIn("Edited draft text by user", refreshed_text)
+        self.assertNotIn("Initial draft text", refreshed_text)
+        self.assertEqual(refreshed_text.count("Edited draft text by user"), 1)
+
+    def test_legacy_draft_line_with_no_marker_parses_carries_and_gains_marker(self):
+        legacy_text = (
+            "## Drafts to review and send\n"
+            "- [ ] [draft] Legacy draft without marker — [[Sam Patel]]\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n"
+        )
+        drafts = daily_note.parse_drafts(legacy_text)
+        self.assertEqual(len(drafts), 1)
+        self.assertIsNone(drafts[0].origin_marker)
+
+        (self.archive_dir / "2026-07-12.md").write_text(
+            "---\ntype: daily-note\ndate: 2026-07-12\ntags:\n  - daily-note\n---\n\n"
+            + legacy_text
+        )
+        monday = dt.datetime(2026, 7, 13, 10, 0)
+        mon_path = daily_note.generate_daily_note(self.brain_path, now=monday)
+        gen_text = mon_path.read_text()
+        self.assertIn("Legacy draft without marker", gen_text)
+        self.assertIn("^d20260712-1", gen_text)
+
+    def test_round_trip_parse_and_render_marked_draft_line(self):
+        marked_text = (
+            "## Drafts to review and send\n"
+            "- [ ] [carried-forward] Draft TWO about the contract — [[Sam Patel]] ^d20260712-2\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n"
+        )
+        drafts = daily_note.parse_drafts(marked_text)
+        self.assertEqual(len(drafts), 1)
+        rendered_lines = drafts[0].render()
+        expected_lines = [
+            "- [ ] [carried-forward] Draft TWO about the contract — [[Sam Patel]] ^d20260712-2",
+            "    - [ ] Send",
+            "    - [ ] Discard",
+            "    - [ ] Carry forward",
+        ]
+        self.assertEqual(rendered_lines, expected_lines)
+
+    def test_marker_collision_drops_live_draft_after_same_day_close_then_regenerate(self):
+        # 1. close_daily_note(2026-07-13) archives a note holding one unmarked draft Alpha
+        d1 = dt.datetime(2026, 7, 13, 9, 0)
+        note_13 = self.brain_path / "2026-07-13.md"
+        note_13.write_text(
+            "---\ntype: daily-note\ndate: 2026-07-13\ntags:\n  - daily-note\n---\n\n"
+            "# Monday, 13 July 2026\n\n"
+            "## Drafts to review and send\n"
+            "- [ ] [draft] Alpha — [[Sam Patel]]\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n\n"
+        )
+        daily_note.close_daily_note(self.brain_path, now=d1)
+
+        # 2. generate_daily_note(2026-07-13) same evening -> Alpha carried in as ^d20260713-1
+        daily_note.generate_daily_note(self.brain_path, now=d1)
+        gen13_text = note_13.read_text()
+        self.assertIn("Alpha — [[Sam Patel]] ^d20260713-1", gen13_text)
+
+        # 3. User hand-writes a new draft BRAND NEW above Alpha; close again -> archive holds
+        # [BRAND NEW (unmarked, idx 1), Alpha ^d20260713-1 (idx 2)]
+        note_13.write_text(
+            "---\ntype: daily-note\ndate: 2026-07-13\ntags:\n  - daily-note\n---\n\n"
+            "# Monday, 13 July 2026\n\n"
+            "## Drafts to review and send\n"
+            "- [ ] [draft] BRAND NEW — [[Ticket 1]]\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n"
+            "- [ ] [carried-forward] Alpha — [[Sam Patel]] ^d20260713-1\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n\n"
+        )
+        daily_note.close_daily_note(self.brain_path, now=d1)
+
+        # 4. generate_daily_note(2026-07-14) -> assert both drafts are present and distinctly marked
+        d2 = dt.datetime(2026, 7, 14, 9, 0)
+        note_14 = daily_note.generate_daily_note(self.brain_path, now=d2)
+        gen14_text = note_14.read_text()
+
+        self.assertIn("BRAND NEW — [[Ticket 1]] ^d20260713-2", gen14_text)
+        self.assertIn("Alpha — [[Sam Patel]] ^d20260713-1", gen14_text)
+
+    def test_stray_archive_filename_filtered_out_by_shared_helper(self):
+        (self.archive_dir / "2026-07-11.md").write_text(
+            "---\ntype: daily-note\ndate: 2026-07-11\ntags:\n  - daily-note\n---\n\n"
+            "## Drafts to review and send\n"
+            "- [ ] [draft] Beta — [[Ticket 2]]\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n\n"
+            "## Today's tasks\n"
+            "- [ ] Valid task from 11th\n"
+        )
+        # Create a sync conflict copy in archive
+        (self.archive_dir / "2026-07-12 (conflict).md").write_text(
+            "---\ntype: daily-note\ndate: 2026-07-12\ntags:\n  - daily-note\n---\n\n"
+            "## Drafts to review and send\n"
+            "- [ ] [draft] Alpha — [[Sam Patel]]\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n\n"
+            "## Today's tasks\n"
+            "- [ ] Conflict task from 12th\n"
+        )
+
+        d_now = dt.datetime(2026, 7, 13, 9, 0)
+        note_13 = daily_note.generate_daily_note(self.brain_path, now=d_now)
+        text_13 = note_13.read_text()
+
+        self.assertNotIn("(conflict)", text_13)
+        self.assertIn("Beta — [[Ticket 2]] ^d20260711-1", text_13)
+        self.assertIn("Valid task from 11th", text_13)
+
+    def test_source_archive_edit_warns_on_collision_or_gap(self):
+        import io
+        (self.archive_dir / "2026-07-11.md").write_text(
+            "---\ntype: daily-note\ndate: 2026-07-11\ntags:\n  - daily-note\n---\n\n"
+            "## Drafts to review and send\n"
+            "- [ ] [draft] First — [[Ticket 1]] ^d20260711-1\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n"
+            "- [ ] [draft] Second — [[Ticket 2]] ^d20260711-1\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n"
+        )
+        d_now = dt.datetime(2026, 7, 12, 9, 0)
+        stderr_trap = io.StringIO()
+        with unittest.mock.patch("sys.stderr", stderr_trap):
+            daily_note.generate_daily_note(self.brain_path, now=d_now)
+        self.assertIn("Warning: Duplicate draft origin marker 'd20260711-1' detected in archive.", stderr_trap.getvalue())
+
+        (self.brain_path / "2026-07-12.md").unlink(missing_ok=True)
+        (self.archive_dir / "2026-07-12.md").write_text(
+            "---\ntype: daily-note\ndate: 2026-07-12\ntags:\n  - daily-note\n---\n\n"
+            "## Drafts to review and send\n"
+            "- [ ] [draft] One — [[Ticket 1]] ^d20260712-1\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n"
+            "- [ ] [draft] Three — [[Ticket 3]] ^d20260712-3\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n"
+        )
+        d_now2 = dt.datetime(2026, 7, 13, 9, 0)
+        stderr_trap2 = io.StringIO()
+        with unittest.mock.patch("sys.stderr", stderr_trap2):
+            daily_note.generate_daily_note(self.brain_path, now=d_now2)
+        self.assertIn("Warning: Gap detected in draft origin markers for '20260712': missing [2].", stderr_trap2.getvalue())
+
+    def test_adr_0041_reflects_carried_forward_only_and_lowest_free_ordinal_rule(self):
+        adr_path = Path(__file__).parent.parent / "docs" / "adr" / "0041-draft-lifecycle-and-carry-forward-in-the-daily-note.md"
+        adr_text = adr_path.read_text()
+        self.assertNotIn("or [draft]", adr_text)
+        self.assertIn("lowest positive integer ordinal", adr_text)
+
+    def test_skill_descriptions_mention_origin_markers(self):
+        gen_skill = Path(__file__).parent.parent / "adapters" / "claude-code" / "skills" / "daily-note-generate" / "SKILL.md"
+        close_skill = Path(__file__).parent.parent / "adapters" / "claude-code" / "skills" / "daily-note-close" / "SKILL.md"
+        self.assertIn("origin marker", gen_skill.read_text())
+        self.assertIn("origin marker", close_skill.read_text())
+
+    def test_daily_note_imports_unittest_mock(self):
+        test_file = Path(__file__)
+        content = test_file.read_text()
+        top_imports = "\n".join(content.splitlines()[:20])
+        self.assertTrue(
+            "import unittest.mock" in top_imports or "from unittest import mock" in top_imports,
+            "tests/test_daily_note.py must explicitly import unittest.mock at top",
+        )
+
+    def test_protocol_draft_identity_wording(self):
+        protocol_path = Path(__file__).parent.parent / "protocols" / "daily-note.md"
+        protocol_text = protocol_path.read_text()
+        self.assertNotIn("1-based ordinal position in that day's Drafts section", protocol_text)
+        self.assertIn("lowest positive integer ordinal", protocol_text)
+
+
+
+
+
+
+
 
 
 

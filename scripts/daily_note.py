@@ -257,7 +257,7 @@ def _render_proposed_lines(items: list) -> list:
 
 
 _DRAFT_HEADER_RE = re.compile(
-    r"^- \[(?P<check>[ xX])\] \[(?P<tag>draft|sent|discarded|carried-forward)\] (?P<desc>.+?) [—–-] \[\[(?P<link>[^\]]+)\]\]$"
+    r"^- \[(?P<check>[ xX])\] \[(?P<tag>draft|sent|discarded|carried-forward)\] (?P<desc>.+?) [—–-] \[\[(?P<link>[^\]]+)\]\](?:\s+\^(?P<marker>[a-zA-Z0-9-]+))?$"
 )
 _DRAFT_SUBCHECK_RE = re.compile(
     r"^[ \t]+- \[(?P<check>[ xX])\] (?P<label>Send|Discard|Carry forward)$"
@@ -275,6 +275,7 @@ class Draft:
         checked_option: str | None = None,
         raw_lines: list = None,
         extra_lines: list = None,
+        origin_marker: str | None = None,
     ):
         self.description = description
         self.wikilink = wikilink
@@ -284,10 +285,15 @@ class Draft:
         self.checked_option = checked_option
         self.raw_lines = raw_lines or []
         self.extra_lines = extra_lines or []
+        if origin_marker and origin_marker.startswith("^"):
+            self.origin_marker = origin_marker[1:]
+        else:
+            self.origin_marker = origin_marker
 
     def render(self) -> list:
+        marker_str = f" ^{self.origin_marker}" if self.origin_marker else ""
         res = [
-            f"- [ ] [{self.state}] {self.description} — [[{self.wikilink}]]",
+            f"- [ ] [{self.state}] {self.description} — [[{self.wikilink}]]{marker_str}",
             "    - [ ] Send",
             "    - [ ] Discard",
             "    - [ ] Carry forward",
@@ -301,8 +307,9 @@ class Draft:
         send_chk = "x" if self.state == "sent" else " "
         disc_chk = "x" if self.state == "discarded" else " "
         carry_chk = "x" if self.state == "carried-forward" else " "
+        marker_str = f" ^{self.origin_marker}" if self.origin_marker else ""
         res = [
-            f"- [{check_str}] [{self.state}] {self.description} — [[{self.wikilink}]]",
+            f"- [{check_str}] [{self.state}] {self.description} — [[{self.wikilink}]]{marker_str}",
             f"    - [{send_chk}] Send",
             f"    - [{disc_chk}] Discard",
             f"    - [{carry_chk}] Carry forward",
@@ -323,6 +330,7 @@ def _parse_draft_lines(lines: list) -> list:
             tag = header_match.group("tag")
             desc = header_match.group("desc").strip()
             link = header_match.group("link").strip()
+            marker = header_match.group("marker")
             block_lines = [line]
 
             checked_options = []
@@ -373,6 +381,7 @@ def _parse_draft_lines(lines: list) -> list:
                     checked_option=checked_option,
                     raw_lines=block_lines,
                     extra_lines=extra_lines,
+                    origin_marker=marker,
                 )
             )
         i += 1
@@ -427,6 +436,7 @@ def _rewrite_closed_drafts(text: str) -> str:
                 wikilink=d.wikilink,
                 state=final_state,
                 extra_lines=d.extra_lines,
+                origin_marker=d.origin_marker,
             )
             new_lines.extend(archived_draft.render_archived())
 
@@ -442,27 +452,89 @@ def _rewrite_closed_drafts(text: str) -> str:
     return text[:match.start(1)] + new_body + text[match.end(1):]
 
 
-def _carry_forward_drafts(brain_path: Path) -> list:
+_DATE_FILE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _get_daily_note_archive_files(brain_path: Path) -> list:
     archive_dir = brain_path / "archive" / "daily-notes"
     if not archive_dir.is_dir():
         return []
+    return [
+        f for f in sorted(archive_dir.glob("????-??-??.md"))
+        if _DATE_FILE_RE.match(f.stem)
+    ]
 
-    files = sorted(archive_dir.glob("*.md"))
+
+def _carry_forward_drafts(brain_path: Path, today_text: str | None = None) -> list:
+    files = _get_daily_note_archive_files(brain_path)
     if not files:
         return []
 
     latest_file = files[-1]
+    source_date_str = latest_file.stem.replace("-", "")
     text = latest_file.read_text()
     drafts = parse_drafts(text)
+
+    existing_markers = set()
+    if today_text is not None:
+        today_drafts = parse_drafts(today_text)
+        existing_markers = {d.origin_marker for d in today_drafts if d.origin_marker}
+
+    seen_markers_in_source = set()
+    claimed_ordinals = set()
+    marker_pattern = re.compile(rf"^d{re.escape(source_date_str)}-(\d+)$")
+    for d in drafts:
+        if d.origin_marker:
+            if d.origin_marker in seen_markers_in_source:
+                sys.stderr.write(
+                    f"Warning: Duplicate draft origin marker '{d.origin_marker}' detected in archive.\n"
+                )
+            else:
+                seen_markers_in_source.add(d.origin_marker)
+
+            m = marker_pattern.match(d.origin_marker)
+            if m:
+                claimed_ordinals.add(int(m.group(1)))
+
+    if claimed_ordinals:
+        max_ord = max(claimed_ordinals)
+        expected_ordinals = set(range(1, max_ord + 1))
+        missing_ordinals = sorted(expected_ordinals - claimed_ordinals)
+        if missing_ordinals:
+            sys.stderr.write(
+                f"Warning: Gap detected in draft origin markers for '{source_date_str}': missing {missing_ordinals}.\n"
+            )
+
     carried_lines = []
-    seen = set()
+
+    seen = set(existing_markers)
     for d in drafts:
         if d.state in ("draft", "carried-forward"):
-            key = d.wikilink
-            if key not in seen:
-                seen.add(key)
-                carried_lines.extend(d.render())
+            if d.origin_marker:
+                marker = d.origin_marker
+            else:
+                cand = 1
+                while cand in claimed_ordinals:
+                    cand += 1
+                claimed_ordinals.add(cand)
+                marker = f"d{source_date_str}-{cand}"
+
+            if marker not in seen:
+                seen.add(marker)
+                d_carried = Draft(
+                    description=d.description,
+                    wikilink=d.wikilink,
+                    state="carried-forward" if d.state == "draft" else d.state,
+                    header_check=d.header_check,
+                    tag=d.tag,
+                    checked_option=d.checked_option,
+                    raw_lines=d.raw_lines,
+                    extra_lines=d.extra_lines,
+                    origin_marker=marker,
+                )
+                carried_lines.extend(d_carried.render())
     return carried_lines
+
 
 
 
@@ -483,15 +555,12 @@ def _extract_unchecked_tasks(text: str, heading: str) -> list:
 
 
 def _carry_forward_tasks(brain_path: Path) -> list:
-    archive_dir = brain_path / "archive" / "daily-notes"
-    if not archive_dir.is_dir():
-        return []
-
-    files = sorted(archive_dir.glob("*.md"))
+    files = _get_daily_note_archive_files(brain_path)
     if not files:
         return []
 
     latest_file = files[-1]
+
     text = latest_file.read_text()
     carried = []
     seen = set()
@@ -614,19 +683,11 @@ def generate_daily_note(brain_path: Path, now: dt.datetime = None) -> Path:
                 [embed_str],
             )
 
-        carried_draft_lines = _carry_forward_drafts(brain_path)
+        carried_draft_lines = _carry_forward_drafts(brain_path, today_text=text)
         if carried_draft_lines:
-            existing_drafts = parse_drafts(text)
-            existing_wikilinks = {d.wikilink for d in existing_drafts}
-            carried_drafts = _parse_draft_lines(carried_draft_lines)
-            new_draft_lines = []
-            for d in carried_drafts:
-                if d.wikilink not in existing_wikilinks:
-                    new_draft_lines.extend(d.render())
-            if new_draft_lines:
-                text = _append_new_lines_to_section(
-                    text, "Drafts to review and send", lambda line, existing: False, new_draft_lines
-                )
+            text = _append_new_lines_to_section(
+                text, "Drafts to review and send", lambda line, existing: False, carried_draft_lines
+            )
 
 
         text = _append_new_lines_to_section(text, "Project next actions", project_existing_ok, project_lines)
