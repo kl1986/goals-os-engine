@@ -1,4 +1,4 @@
-# Protocol: Daily note (v5)
+# Protocol: Daily note (v6)
 
 A single, once-daily "command centre" note at the Brain root. Distinct from the pure-derivation Dashboard, the daily note is additive-only within a day and accumulates edits (ticked checkboxes) the user makes during the day. It is governed by two Routines: "Daily note" (generation, morning) and "Close daily note" (reconciliation + archive, evening).
 
@@ -61,6 +61,8 @@ v4 adds `## Daily priorities` immediately after `## Today's tasks`. It is a stat
 
 v5 extends the daily note into Today by introducing availability-led Today sections (`## Critical`, `## Available time`, `## Now`, `## Call Companion`, `## Drafts to review and send`, `## Later today`, `## Tomorrow candidates`) with embedded shared Base views (`Critical work`, `Today`, `Call Companion`, `Tomorrow candidates`) while retaining existing source and archive semantics.
 
+v6 defines the Draft lifecycle (`draft`, `sent`, `discarded`, `carried-forward`) and carry-forward rules for `## Drafts to review and send` (ADR-0041). A draft's state is set by sub-checkboxes or by ticking the top-level draft checkbox (`- [x] [...]` evaluates to `sent`). Carried draft lines carry an optional trailing origin block-id marker (`^d<YYYYMMDD>-<ordinal>`), identifying the draft by its source day and lowest positive integer ordinal not already claimed in that source file.
+
 ## Daily note Routine (Generation & refresh)
 
 The generation Routine (risk tier internal & reversible, owner EA; Schedule *fixed-interval*, a morning clock time — heartbeat-checkable daily — in the Brain's `config/schedules.md`) uses `scripts/daily_note.py`'s `generate_daily_note` plus an Adapter skill.
@@ -68,7 +70,7 @@ The generation Routine (risk tier internal & reversible, owner EA; Schedule *fix
 - Each new calendar day always gets a brand-new file. There is no cross-day continuation of the same file.
 - Re-invoking generation within the same day is **additive only**. It only ever adds rows for anything not already present (new project next-actions, new triaged captures filed via the `today` destination, new Waiting For items, new proposed items from meetings). It never touches, reorders, or removes an existing line. This is different from `dashboard.md`, which fully overwrites every run.
 - A note generated before a section existed has no such heading, and appending into a missing heading is a silent no-op. Generation therefore **inserts** missing section headings in exact order (via an anchor chain) rather than skipping sections for the day. Inserting a heading is still additive-only: it adds lines and touches, reorders and removes none.
-- **Carry-forward:** Generation scans the most recently archived note (`archive/daily-notes/`, picking the lexicographically-latest filename) for any still-unchecked lines under `## Today's tasks`, `## Now`, and `## Later today`, and copies them verbatim into the new day's `## Today's tasks` (appended after `## Today's tasks` carried lines, in that order). Carried lines are deduplicated **across** the three source sections but never **within** one: a line the user pulled into `## Now` while leaving the original row under `## Today's tasks` carries once, while a line genuinely typed twice inside a single section still carries twice. `## Tomorrow candidates`, `## Available time`, `## Critical`, `## Call Companion`, and `## Drafts to review and send` carry nothing.
+- **Carry-forward:** Generation scans the most recently archived note (`archive/daily-notes/`, picking the lexicographically-latest filename) for any still-unchecked lines under `## Today's tasks`, `## Now`, and `## Later today`, and copies them verbatim into the new day's `## Today's tasks` (appended after `## Today's tasks` carried lines, in that order). Carried lines are deduplicated **across** the three source sections but never **within** one. `## Drafts to review and send` carries unresolved drafts (`draft` or `carried-forward`) into the new day's `## Drafts to review and send` section (not `## Today's tasks`); `sent` and `discarded` drafts never carry. Carried drafts retain their original `^d<YYYYMMDD>-<ordinal>` origin marker across consecutive carries. Refresh and generate deduplicate on origin marker (carrying source drafts whose marker is absent in today's note), preserving distinct drafts targeting the same wikilink and preserving mid-day text edits on refresh without duplication. `## Tomorrow candidates`, `## Available time`, `## Critical`, and `## Call Companion` carry nothing.
 - **Tomorrow candidates never become commitments:** Neither generate nor close writes, rewrites, or promotes `planning_lane` or `planned_for` on any Ticket. A Ticket-backed Tomorrow candidate persists only because the Base view still matches it.
 
 On completion, it bumps its own "Daily note" row in `config/routine-state.md` (`heartbeat.bump`), matching every other Routine.
@@ -98,9 +100,10 @@ A thin, mechanical bookend Routine (risk tier internal & reversible, owner EA; S
 
 What it does, in order, nothing more:
 1. Runs the write-back reconciliation above over every ticked `## Project next actions` line (parses the `[[ticket file]]` wikilink, locates the ticket under `tasks/**/`, writes `status: done` + `resolved:` to its frontmatter, or logs the miss per-line — no separate summary log entry on top of the per-line ones).
-2. Moves `<brain>/YYYY-MM-DD.md` to `<brain>/archive/daily-notes/YYYY-MM-DD.md`.
+2. Rewrites yesterday's unresolved `draft` items to `carried-forward` (`- [ ] [carried-forward] ...` and `- [x] Carry forward`) in the note text so the archive records faithful history (ADR-0041).
+3. Moves `<brain>/YYYY-MM-DD.md` to `<brain>/archive/daily-notes/YYYY-MM-DD.md`.
 
-It bumps its own "Close daily note" row in `config/routine-state.md`. Note explicitly: carry-forward (scanning yesterday's archive for unchecked Today's-tasks lines) is **NOT** this routine's job — that is the *next morning's* generation step reading backward. Close-daily-note is a thin, mechanical bookend with no new judgement calls.
+It bumps its own "Close daily note" row in `config/routine-state.md`. Note explicitly: carry-forward (scanning yesterday's archive for unchecked Today's-tasks lines and unresolved Drafts) is **NOT** this routine's job — that is the *next morning's* generation step reading backward. Close-daily-note is a thin, mechanical bookend with no new judgement calls.
 
 ## Waiting For section
 
@@ -119,6 +122,10 @@ Computed by the same generation scan, reusing `dashboard._open_proposed_items()`
 - **Additive-only**, unlike Waiting For's wholesale replace. Rows are added for items not already present and existing lines are never touched or reordered. Dedupe is on the **exact rendered line**, not the `[[note]]` wikilink — several items share one meeting note, so deduping on the link would collapse them and suppress every item after the first.
 - **Read-only, no write-back.** The scan never ticks, edits, or moves a meeting note, and nothing here ever writes back to one. The same rule `people-tracking.md` states for delegations applies: the note is the only place an item is ever resolved, and the daily note is exactly such a second surface.
 
+## Review (v6)
+
+Review prompts carry no workflow state, link only to the Action Log `feedback:` field (`protocols/feedback-capture.md:7-20`) and existing close behaviour, and never write that field (`protocols/feedback-capture.md:17-20` allows two write paths; `:22-24` forbids a derived surface as write target). There is no standalone `## Review` section heading in the daily note schema.
+
 ## Triage / Execute destination
 
 A new `today` destination literal (parallel to the existing `discard` literal) produces action type `file-capture-today`. Full mechanics are documented in [`execute.md`](./execute.md); do not duplicate them here.
@@ -136,3 +143,4 @@ See [`adapters/claude-code/skills/daily-note-generate/`](../adapters/claude-code
 - No cross-day continuation of the same file (a new day is always a new file, carry-forward is copy-only).
 - No metrics/AFK ratio (later Routine, Phase 6, same as Dashboard's non-goal).
 - No rename of the `## Project next actions` heading, despite it now also carrying Area tickets — flagged as a candidate follow-up only (ADR-0018), not actioned here.
+

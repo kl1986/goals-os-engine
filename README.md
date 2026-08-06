@@ -91,6 +91,7 @@ See [`docs/adr/`](./docs/adr/) for the architecture decision records this repo w
 | 0028 | Meetings are a fourth content layer structured by an Execute hook |
 | 0029 | Durable, immutable-source Wiki feedback |
 | 0030 | Cadence ownership moves from the Engine manifest to the Brain's `config/schedules.md` (lives in the Brain's `docs/adr/`) |
+| 0041 | Draft lifecycle (`draft`, `sent`, `discarded`, `carried-forward`) and carry-forward in the daily note |
 
 ## Status
 

@@ -256,6 +256,288 @@ def _render_proposed_lines(items: list) -> list:
     return [f"- {item['text']} — [[{item['path'].stem}]]" for item in items]
 
 
+_DRAFT_HEADER_RE = re.compile(
+    r"^- \[(?P<check>[ xX])\] \[(?P<tag>draft|sent|discarded|carried-forward)\] (?P<desc>.+?) [—–-] \[\[(?P<link>[^\]]+)\]\](?:\s+\^(?P<marker>[a-zA-Z0-9-]+))?$"
+)
+_DRAFT_SUBCHECK_RE = re.compile(
+    r"^[ \t]+- \[(?P<check>[ xX])\] (?P<label>Send|Discard|Carry forward)$"
+)
+
+
+class Draft:
+    def __init__(
+        self,
+        description: str,
+        wikilink: str,
+        state: str = "draft",
+        header_check: str = " ",
+        tag: str = "draft",
+        checked_option: str | None = None,
+        raw_lines: list = None,
+        extra_lines: list = None,
+        origin_marker: str | None = None,
+    ):
+        self.description = description
+        self.wikilink = wikilink
+        self.state = state  # "draft", "sent", "discarded", "carried-forward"
+        self.header_check = header_check
+        self.tag = tag
+        self.checked_option = checked_option
+        self.raw_lines = raw_lines or []
+        self.extra_lines = extra_lines or []
+        if origin_marker and origin_marker.startswith("^"):
+            self.origin_marker = origin_marker[1:]
+        else:
+            self.origin_marker = origin_marker
+
+    def render(self) -> list:
+        marker_str = f" ^{self.origin_marker}" if self.origin_marker else ""
+        res = [
+            f"- [ ] [{self.state}] {self.description} — [[{self.wikilink}]]{marker_str}",
+            "    - [ ] Send",
+            "    - [ ] Discard",
+            "    - [ ] Carry forward",
+        ]
+        if self.extra_lines:
+            res.extend(self.extra_lines)
+        return res
+
+    def render_archived(self) -> list:
+        check_str = "x" if self.state in ("sent", "discarded") else " "
+        send_chk = "x" if self.state == "sent" else " "
+        disc_chk = "x" if self.state == "discarded" else " "
+        carry_chk = "x" if self.state == "carried-forward" else " "
+        marker_str = f" ^{self.origin_marker}" if self.origin_marker else ""
+        res = [
+            f"- [{check_str}] [{self.state}] {self.description} — [[{self.wikilink}]]{marker_str}",
+            f"    - [{send_chk}] Send",
+            f"    - [{disc_chk}] Discard",
+            f"    - [{carry_chk}] Carry forward",
+        ]
+        if self.extra_lines:
+            res.extend(self.extra_lines)
+        return res
+
+
+def _parse_draft_lines(lines: list) -> list:
+    drafts = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        header_match = _DRAFT_HEADER_RE.match(line)
+        if header_match:
+            header_check = header_match.group("check")
+            tag = header_match.group("tag")
+            desc = header_match.group("desc").strip()
+            link = header_match.group("link").strip()
+            marker = header_match.group("marker")
+            block_lines = [line]
+
+            checked_options = []
+            extra_lines = []
+            j = i + 1
+            while j < len(lines):
+                if lines[j].startswith(" ") or lines[j].startswith("\t"):
+                    block_lines.append(lines[j])
+                    sub_match = _DRAFT_SUBCHECK_RE.match(lines[j])
+                    if sub_match:
+                        if sub_match.group("check").lower() == "x":
+                            checked_options.append(sub_match.group("label"))
+                    else:
+                        extra_lines.append(lines[j])
+                    j += 1
+                else:
+                    break
+            i = j - 1
+
+            checked_option = None
+            if len(checked_options) > 1:
+                sys.stderr.write(
+                    f"Warning: Multiple draft options checked for '{desc}': {', '.join(checked_options)}. Using '{checked_options[0]}'.\n"
+                )
+                checked_option = checked_options[0]
+            elif len(checked_options) == 1:
+                checked_option = checked_options[0]
+
+            if checked_option == "Send":
+                state = "sent"
+            elif checked_option == "Discard":
+                state = "discarded"
+            elif checked_option == "Carry forward":
+                state = "carried-forward"
+            elif header_check.lower() == "x":
+                state = "sent"
+                checked_option = "Send"
+            else:
+                state = tag
+
+            drafts.append(
+                Draft(
+                    description=desc,
+                    wikilink=link,
+                    state=state,
+                    header_check=header_check,
+                    tag=tag,
+                    checked_option=checked_option,
+                    raw_lines=block_lines,
+                    extra_lines=extra_lines,
+                    origin_marker=marker,
+                )
+            )
+        i += 1
+    return drafts
+
+
+def _parse_draft_blocks(text: str) -> list:
+    match = re.search(
+        _SECTION_BODY.format(re.escape("Drafts to review and send")),
+        text,
+        re.MULTILINE | re.DOTALL,
+    )
+    if not match:
+        return []
+
+    section_body = match.group(1)
+    return _parse_draft_lines(section_body.splitlines())
+
+
+def parse_drafts(text: str) -> list:
+    return _parse_draft_blocks(text)
+
+
+def _rewrite_closed_drafts(text: str) -> str:
+    match = re.search(
+        _SECTION_BODY.format(re.escape("Drafts to review and send")),
+        text,
+        re.MULTILINE | re.DOTALL,
+    )
+    if not match:
+        return text
+
+    section_body = match.group(1)
+    drafts = _parse_draft_blocks(text)
+    if not drafts:
+        return text
+
+    new_lines = []
+    lines = section_body.splitlines()
+    i = 0
+    draft_idx = 0
+    while i < len(lines):
+        line = lines[i]
+        header_match = _DRAFT_HEADER_RE.match(line)
+        if header_match:
+            d = drafts[draft_idx]
+            draft_idx += 1
+
+            final_state = "carried-forward" if d.state in ("draft", "carried-forward") else d.state
+            archived_draft = Draft(
+                description=d.description,
+                wikilink=d.wikilink,
+                state=final_state,
+                extra_lines=d.extra_lines,
+                origin_marker=d.origin_marker,
+            )
+            new_lines.extend(archived_draft.render_archived())
+
+            j = i + 1
+            while j < len(lines) and (lines[j].startswith(" ") or lines[j].startswith("\t")):
+                j += 1
+            i = j - 1
+        else:
+            new_lines.append(line)
+        i += 1
+
+    new_body = "".join(f"{line}\n" for line in new_lines)
+    return text[:match.start(1)] + new_body + text[match.end(1):]
+
+
+_DATE_FILE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _get_daily_note_archive_files(brain_path: Path) -> list:
+    archive_dir = brain_path / "archive" / "daily-notes"
+    if not archive_dir.is_dir():
+        return []
+    return [
+        f for f in sorted(archive_dir.glob("????-??-??.md"))
+        if _DATE_FILE_RE.match(f.stem)
+    ]
+
+
+def _carry_forward_drafts(brain_path: Path, today_text: str | None = None) -> list:
+    files = _get_daily_note_archive_files(brain_path)
+    if not files:
+        return []
+
+    latest_file = files[-1]
+    source_date_str = latest_file.stem.replace("-", "")
+    text = latest_file.read_text()
+    drafts = parse_drafts(text)
+
+    existing_markers = set()
+    if today_text is not None:
+        today_drafts = parse_drafts(today_text)
+        existing_markers = {d.origin_marker for d in today_drafts if d.origin_marker}
+
+    seen_markers_in_source = set()
+    claimed_ordinals = set()
+    marker_pattern = re.compile(rf"^d{re.escape(source_date_str)}-(\d+)$")
+    for d in drafts:
+        if d.origin_marker:
+            if d.origin_marker in seen_markers_in_source:
+                sys.stderr.write(
+                    f"Warning: Duplicate draft origin marker '{d.origin_marker}' detected in archive.\n"
+                )
+            else:
+                seen_markers_in_source.add(d.origin_marker)
+
+            m = marker_pattern.match(d.origin_marker)
+            if m:
+                claimed_ordinals.add(int(m.group(1)))
+
+    if claimed_ordinals:
+        max_ord = max(claimed_ordinals)
+        expected_ordinals = set(range(1, max_ord + 1))
+        missing_ordinals = sorted(expected_ordinals - claimed_ordinals)
+        if missing_ordinals:
+            sys.stderr.write(
+                f"Warning: Gap detected in draft origin markers for '{source_date_str}': missing {missing_ordinals}.\n"
+            )
+
+    carried_lines = []
+
+    seen = set(existing_markers)
+    for d in drafts:
+        if d.state in ("draft", "carried-forward"):
+            if d.origin_marker:
+                marker = d.origin_marker
+            else:
+                cand = 1
+                while cand in claimed_ordinals:
+                    cand += 1
+                claimed_ordinals.add(cand)
+                marker = f"d{source_date_str}-{cand}"
+
+            if marker not in seen:
+                seen.add(marker)
+                d_carried = Draft(
+                    description=d.description,
+                    wikilink=d.wikilink,
+                    state="carried-forward" if d.state == "draft" else d.state,
+                    header_check=d.header_check,
+                    tag=d.tag,
+                    checked_option=d.checked_option,
+                    raw_lines=d.raw_lines,
+                    extra_lines=d.extra_lines,
+                    origin_marker=marker,
+                )
+                carried_lines.extend(d_carried.render())
+    return carried_lines
+
+
+
+
 def _extract_unchecked_tasks(text: str, heading: str) -> list:
     section_match = re.search(
         _SECTION_BODY.format(re.escape(heading)), text, re.MULTILINE | re.DOTALL
@@ -273,15 +555,12 @@ def _extract_unchecked_tasks(text: str, heading: str) -> list:
 
 
 def _carry_forward_tasks(brain_path: Path) -> list:
-    archive_dir = brain_path / "archive" / "daily-notes"
-    if not archive_dir.is_dir():
-        return []
-
-    files = sorted(archive_dir.glob("*.md"))
+    files = _get_daily_note_archive_files(brain_path)
     if not files:
         return []
 
     latest_file = files[-1]
+
     text = latest_file.read_text()
     carried = []
     seen = set()
@@ -323,6 +602,8 @@ def generate_daily_note(brain_path: Path, now: dt.datetime = None) -> Path:
         carried_tasks = _carry_forward_tasks(brain_path)
         today_lines = carried_tasks if carried_tasks else ["- [ ]"]
 
+        carried_draft_lines = _carry_forward_drafts(brain_path)
+
         heading_str = f"{now.strftime('%A')}, {now.day} {now.strftime('%B')} {now.year}"
 
         body_sections = [
@@ -330,7 +611,7 @@ def generate_daily_note(brain_path: Path, now: dt.datetime = None) -> Path:
             _render_section("Available time", []),
             _render_section("Now", [_NOW_EMBED]),
             _render_section("Call Companion", [_CALL_COMPANION_EMBED]),
-            _render_section("Drafts to review and send", []),
+            _render_section("Drafts to review and send", carried_draft_lines),
             _render_section("Later today", []),
             _render_section("Tomorrow candidates", [_TOMORROW_CANDIDATES_EMBED]),
             _render_section("Today's tasks", today_lines),
@@ -401,6 +682,13 @@ def generate_daily_note(brain_path: Path, now: dt.datetime = None) -> Path:
                 literal_existing_ok,
                 [embed_str],
             )
+
+        carried_draft_lines = _carry_forward_drafts(brain_path, today_text=text)
+        if carried_draft_lines:
+            text = _append_new_lines_to_section(
+                text, "Drafts to review and send", lambda line, existing: False, carried_draft_lines
+            )
+
 
         text = _append_new_lines_to_section(text, "Project next actions", project_existing_ok, project_lines)
         text = _replace_section(text, "Waiting for", waiting_lines)
@@ -491,6 +779,10 @@ def close_daily_note(brain_path: Path, now: dt.datetime = None) -> dict:
                 )
                 log_action.append_entry(brain_path, date_str, entry)
                 summary["misses"].append({"ticket_file": ticket_file})
+
+    text = note_path.read_text()
+    text = _rewrite_closed_drafts(text)
+    note_path.write_text(text)
 
     archive_dir = brain_path / "archive" / "daily-notes"
     archive_dir.mkdir(parents=True, exist_ok=True)
