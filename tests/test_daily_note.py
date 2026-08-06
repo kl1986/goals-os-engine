@@ -227,7 +227,7 @@ class TestCarryForward(unittest.TestCase):
             "## Available time\n- [ ] Available item\n\n"
             "## Now\n![[tasks/all-tickets.base#Today]]\n- [ ] Unchecked from Now\n\n"
             "## Call Companion\n![[tasks/all-tickets.base#Call Companion]]\n- [ ] Call item\n\n"
-            "## Drafts to review and send\n- [ ] Draft item\n\n"
+            "## Drafts to review and send\n- [ ] [draft] Draft item — [[Sam Patel]]\n    - [ ] Send\n    - [ ] Discard\n    - [ ] Carry forward\n\n"
             "## Later today\n- [ ] Unchecked from Later today\n\n"
             "## Tomorrow candidates\n![[tasks/all-tickets.base#Tomorrow candidates]]\n- [ ] Tomorrow item\n\n"
             "## Today's tasks\n- [ ] Unchecked from Today's tasks\n\n"
@@ -252,7 +252,7 @@ class TestCarryForward(unittest.TestCase):
         self.assertNotIn("Critical item", text)
         self.assertNotIn("Available item", text)
         self.assertNotIn("Call item", text)
-        self.assertNotIn("Draft item", text)
+        self.assertIn("Draft item", text)
         self.assertNotIn("Tomorrow item", text)
 
     def test_carry_forward_deduplicates_across_sections(self):
@@ -922,3 +922,409 @@ class TestFrontmatterBlockScalarAndDuplicateCleanup(unittest.TestCase):
         updated = daily_note._update_frontmatter(text, {"status": "done"})
         self.assertIn("status: done", updated)
         self.assertNotIn("planned_for", updated)
+
+
+class TestDraftLifecycle(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.brain_path = Path(self.temp_dir.name)
+        self.archive_dir = self.brain_path / "archive" / "daily-notes"
+        self.archive_dir.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_draft_parsing_and_states(self):
+        text = (
+            "## Drafts to review and send\n"
+            "- [ ] [draft] Follow up with Sam — [[Sam Patel]]\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n"
+            "- [ ] [draft] Send quote — [[Ticket 12]]\n"
+            "    - [x] Send\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n"
+            "- [ ] [draft] Trash this — [[Ticket 13]]\n"
+            "    - [ ] Send\n"
+            "    - [x] Discard\n"
+            "    - [ ] Carry forward\n"
+            "- [ ] [draft] Push to tomorrow — [[Ticket 14]]\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [x] Carry forward\n"
+        )
+        drafts = daily_note.parse_drafts(text)
+        self.assertEqual(len(drafts), 4)
+        self.assertEqual(drafts[0].state, "draft")
+        self.assertEqual(drafts[1].state, "sent")
+        self.assertEqual(drafts[2].state, "discarded")
+        self.assertEqual(drafts[3].state, "carried-forward")
+
+    def test_close_rewrites_unresolved_drafts_to_carried_forward(self):
+        note_date = dt.datetime(2026, 7, 12, 10, 0)
+        note_path = self.brain_path / "2026-07-12.md"
+        note_path.write_text(
+            "---\ntype: daily-note\ndate: 2026-07-12\ntags:\n  - daily-note\n---\n\n"
+            "# Sunday, 12 July 2026\n\n"
+            "## Drafts to review and send\n"
+            "- [ ] [draft] Unresolved draft — [[Sam Patel]]\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n"
+            "- [ ] [draft] Sent draft — [[Ticket 1]]\n"
+            "    - [x] Send\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n\n"
+            "## Project next actions\n\n"
+        )
+        daily_note.close_daily_note(self.brain_path, now=note_date)
+        archived_path = self.archive_dir / "2026-07-12.md"
+        self.assertTrue(archived_path.exists())
+        archived_text = archived_path.read_text()
+        self.assertIn("- [ ] [carried-forward] Unresolved draft — [[Sam Patel]]", archived_text)
+        self.assertIn("    - [x] Carry forward", archived_text)
+        self.assertIn("- [x] [sent] Sent draft — [[Ticket 1]]", archived_text)
+
+    def test_generate_carries_forward_only_unresolved_drafts(self):
+        (self.archive_dir / "2026-07-12.md").write_text(
+            "---\ntype: daily-note\ndate: 2026-07-12\ntags:\n  - daily-note\n---\n\n"
+            "# Sunday, 12 July 2026\n\n"
+            "## Drafts to review and send\n"
+            "- [ ] [carried-forward] Unresolved draft — [[Sam Patel]]\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [x] Carry forward\n"
+            "- [ ] [draft] Sent draft — [[Ticket 1]]\n"
+            "    - [x] Send\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n"
+            "- [ ] [draft] Discarded draft — [[Ticket 2]]\n"
+            "    - [ ] Send\n"
+            "    - [x] Discard\n"
+            "    - [ ] Carry forward\n\n"
+        )
+        monday = dt.datetime(2026, 7, 13, 10, 0)
+        path = daily_note.generate_daily_note(self.brain_path, now=monday)
+        text = path.read_text()
+        section = text.split("## Drafts to review and send\n", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("- [ ] [carried-forward] Unresolved draft — [[Sam Patel]]", section)
+
+        self.assertNotIn("Sent draft", section)
+        self.assertNotIn("Discarded draft", section)
+
+    def test_refresh_deduplicates_drafts(self):
+        (self.archive_dir / "2026-07-12.md").write_text(
+            "---\ntype: daily-note\ndate: 2026-07-12\ntags:\n  - daily-note\n---\n\n"
+            "## Drafts to review and send\n"
+            "- [ ] [carried-forward] Draft 1 — [[Sam Patel]]\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [x] Carry forward\n"
+        )
+        monday = dt.datetime(2026, 7, 13, 10, 0)
+        path = daily_note.generate_daily_note(self.brain_path, now=monday)
+        # Refresh again
+        path = daily_note.generate_daily_note(self.brain_path, now=monday)
+        text = path.read_text()
+        self.assertEqual(text.count("Draft 1"), 1)
+
+    def test_prove_no_external_send(self):
+        import sys
+        import subprocess
+        import socket
+
+        # (a) No networking module in sys.modules after a clean import of daily_note
+        cmd = [
+            sys.executable,
+            "-c",
+            "import sys; from pathlib import Path; sys.path.insert(0, str(Path('scripts').resolve())); "
+            "import daily_note; "
+            "banned = ['socket', 'requests', 'httpx', 'urllib.request', 'smtplib']; "
+            "loaded = [m for m in banned if m in sys.modules]; "
+            "assert not loaded, f'Networking modules loaded: {loaded}'"
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, cwd=str(Path(__file__).parent.parent))
+        self.assertEqual(res.returncode, 0, f"Clean import check failed: {res.stderr}")
+
+        # (b) Monkeypatch subprocess.run and socket.socket to raise, then drive draft transitions
+        def block_socket(*args, **kwargs):
+            raise RuntimeError("Network call attempted via socket")
+
+        def block_subprocess(*args, **kwargs):
+            raise RuntimeError("Subprocess call attempted")
+
+        original_socket = socket.socket
+        original_run = subprocess.run
+        try:
+            socket.socket = block_socket
+            subprocess.run = block_subprocess
+
+            # Drive draft through generate -> user transition (draft -> sent) -> close
+            note_date = dt.datetime(2026, 7, 12, 10, 0)
+            (self.archive_dir / "2026-07-11.md").write_text(
+                "---\ntype: daily-note\ndate: 2026-07-11\ntags:\n  - daily-note\n---\n\n"
+                "## Drafts to review and send\n"
+                "- [ ] [draft] Follow up with Sam — [[Sam Patel]]\n"
+                "    - [ ] Send\n"
+                "    - [ ] Discard\n"
+                "    - [ ] Carry forward\n"
+            )
+            note_path = daily_note.generate_daily_note(self.brain_path, now=note_date)
+            text = note_path.read_text()
+            self.assertIn("Follow up with Sam", text)
+
+            # User marks Send in markdown
+            updated_text = text.replace(
+                "    - [ ] Send",
+                "    - [x] Send"
+            )
+            note_path.write_text(updated_text)
+
+            # Close daily note
+            summary = daily_note.close_daily_note(self.brain_path, now=note_date)
+            self.assertTrue(summary["archived_to"].exists())
+        finally:
+            socket.socket = original_socket
+            subprocess.run = original_run
+
+    def test_finding_1_parse_drafts_absent_section(self):
+        text = (
+            "# Sunday, 12 July 2026\n\n"
+            "## Project next actions\n"
+            "- [ ] [draft] Ship the pricing model — [[goals-os-14]]\n"
+            "- [x] Done action — [[goals-os-15]]\n"
+        )
+        drafts = daily_note.parse_drafts(text)
+        self.assertEqual(drafts, [])
+
+    def test_finding_2_close_preserves_ticked_header(self):
+        note_date = dt.datetime(2026, 7, 12, 10, 0)
+        note_path = self.brain_path / "2026-07-12.md"
+        note_path.write_text(
+            "---\ntype: daily-note\ndate: 2026-07-12\ntags:\n  - daily-note\n---\n\n"
+            "# Sunday, 12 July 2026\n\n"
+            "## Drafts to review and send\n"
+            "- [x] [draft] Follow up with Sam — [[Sam Patel]]\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n\n"
+        )
+        daily_note.close_daily_note(self.brain_path, now=note_date)
+        archived_path = self.archive_dir / "2026-07-12.md"
+        self.assertTrue(archived_path.exists())
+        archived_text = archived_path.read_text()
+        self.assertIn("- [x] [sent] Follow up with Sam — [[Sam Patel]]", archived_text)
+        self.assertIn("    - [x] Send", archived_text)
+
+        monday = dt.datetime(2026, 7, 13, 10, 0)
+        mon_path = daily_note.generate_daily_note(self.brain_path, now=monday)
+        self.assertNotIn("Follow up with Sam", mon_path.read_text())
+
+    def test_finding_3_unified_parser(self):
+        # Verify parse_drafts and _rewrite_closed_drafts produce consistent draft parsing
+        text = (
+            "## Drafts to review and send\n"
+            "- [x] [draft] Follow up — [[Sam Patel]]\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n"
+        )
+        drafts = daily_note.parse_drafts(text)
+        self.assertEqual(len(drafts), 1)
+        self.assertEqual(drafts[0].state, "sent")
+        rewritten = daily_note._rewrite_closed_drafts(text)
+        self.assertIn("- [x] [sent] Follow up — [[Sam Patel]]", rewritten)
+
+    def test_finding_4_refresh_dedupes_edited_drafts_by_wikilink(self):
+        (self.archive_dir / "2026-07-12.md").write_text(
+            "---\ntype: daily-note\ndate: 2026-07-12\ntags:\n  - daily-note\n---\n\n"
+            "## Drafts to review and send\n"
+            "- [ ] [carried-forward] Follow up with Sam — [[Sam Patel]]\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [x] Carry forward\n"
+        )
+        monday = dt.datetime(2026, 7, 13, 10, 0)
+        path = daily_note.generate_daily_note(self.brain_path, now=monday)
+        # User edits the description of the draft in Monday's note
+        edited_text = path.read_text().replace(
+            "Follow up with Sam",
+            "Follow up with Sam on pricing"
+        )
+        path.write_text(edited_text)
+
+        # Refresh daily note on same day
+        path = daily_note.generate_daily_note(self.brain_path, now=monday)
+        text = path.read_text()
+        self.assertEqual(text.count("[[Sam Patel]]"), 1)
+        self.assertIn("Follow up with Sam on pricing", text)
+
+    def test_finding_5_carried_forward_state_preserved_on_carry(self):
+        (self.archive_dir / "2026-07-12.md").write_text(
+            "---\ntype: daily-note\ndate: 2026-07-12\ntags:\n  - daily-note\n---\n\n"
+            "## Drafts to review and send\n"
+            "- [ ] [carried-forward] Follow up — [[Sam Patel]]\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [x] Carry forward\n"
+        )
+        monday = dt.datetime(2026, 7, 13, 10, 0)
+        path = daily_note.generate_daily_note(self.brain_path, now=monday)
+        text = path.read_text()
+        self.assertIn("- [ ] [carried-forward] Follow up — [[Sam Patel]]", text)
+
+    def test_finding_6_sent_and_discarded_written_to_archive_tag(self):
+        text = (
+            "## Drafts to review and send\n"
+            "- [ ] [draft] Send item — [[Ticket 1]]\n"
+            "    - [x] Send\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n"
+            "- [ ] [draft] Discard item — [[Ticket 2]]\n"
+            "    - [ ] Send\n"
+            "    - [x] Discard\n"
+            "    - [ ] Carry forward\n"
+        )
+        rewritten = daily_note._rewrite_closed_drafts(text)
+        self.assertIn("- [x] [sent] Send item — [[Ticket 1]]", rewritten)
+        self.assertIn("- [x] [discarded] Discard item — [[Ticket 2]]", rewritten)
+
+    def test_finding_7_interleaved_lines_no_duplicate_subcheckboxes(self):
+        text = (
+            "## Drafts to review and send\n"
+            "- [ ] [draft] Item with note — [[Sam Patel]]\n"
+            "    - [ ] Send\n"
+            "    Note: check details first\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n"
+        )
+        rewritten = daily_note._rewrite_closed_drafts(text)
+        self.assertEqual(rewritten.count("Discard"), 1)
+        self.assertEqual(rewritten.count("Carry forward"), 1)
+
+    def test_finding_8_multiple_options_ticked_diagnostic(self):
+        import io
+        import sys
+        text = (
+            "## Drafts to review and send\n"
+            "- [ ] [draft] Conflicting draft — [[Sam Patel]]\n"
+            "    - [x] Send\n"
+            "    - [x] Discard\n"
+            "    - [ ] Carry forward\n"
+        )
+        stderr_trap = io.StringIO()
+        orig_stderr = sys.stderr
+        try:
+            sys.stderr = stderr_trap
+            drafts = daily_note.parse_drafts(text)
+        finally:
+            sys.stderr = orig_stderr
+        self.assertEqual(drafts[0].state, "sent")
+        self.assertIn("Multiple draft options checked", stderr_trap.getvalue())
+
+    def test_finding_9_adr0041_matches_canonical_template(self):
+        adr_path = Path(__file__).parent.parent / "docs" / "adr" / "0041-draft-lifecycle-and-carry-forward-in-the-daily-note.md"
+        self.assertTrue(adr_path.exists())
+        adr_text = adr_path.read_text()
+        self.assertNotIn("Deciders:", adr_text)
+        self.assertIn("Decided ", adr_text)
+        self.assertTrue(adr_text.startswith("# Draft lifecycle and carry-forward in the daily note\n"))
+
+    def test_refresh_carries_draft_into_preexisting_note(self):
+        (self.archive_dir / "2026-07-12.md").write_text(
+            "---\ntype: daily-note\ndate: 2026-07-12\ntags:\n  - daily-note\n---\n\n"
+            "## Drafts to review and send\n"
+            "- [ ] [carried-forward] Carried draft from yesterday — [[Sam Patel]]\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [x] Carry forward\n"
+        )
+        monday = dt.datetime(2026, 7, 13, 10, 0)
+        # Pre-create Monday's note without any drafts section or drafts
+        mon_path = self.brain_path / "2026-07-13.md"
+        mon_path.write_text(
+            "---\ntype: daily-note\ndate: 2026-07-13\ntags:\n  - daily-note\n---\n\n"
+            "# Monday, 13 July 2026\n\n"
+            "## Today's tasks\n"
+            "- [ ] Existing task\n"
+        )
+
+        # Refresh daily note on Monday
+        daily_note.generate_daily_note(self.brain_path, now=monday)
+        text = mon_path.read_text()
+        self.assertIn("## Drafts to review and send", text)
+        self.assertIn("- [ ] [carried-forward] Carried draft from yesterday — [[Sam Patel]]", text)
+
+    def test_ticked_carried_forward_header_archives_as_sent(self):
+        note_date = dt.datetime(2026, 7, 12, 10, 0)
+        note_path = self.brain_path / "2026-07-12.md"
+        note_path.write_text(
+            "---\ntype: daily-note\ndate: 2026-07-12\ntags:\n  - daily-note\n---\n\n"
+            "# Sunday, 12 July 2026\n\n"
+            "## Drafts to review and send\n"
+            "- [x] [carried-forward] Follow up with Sam — [[Sam Patel]]\n"
+            "    - [ ] Send\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n\n"
+        )
+        daily_note.close_daily_note(self.brain_path, now=note_date)
+        archived_path = self.archive_dir / "2026-07-12.md"
+        self.assertTrue(archived_path.exists())
+        archived_text = archived_path.read_text()
+        self.assertIn("- [x] [sent] Follow up with Sam — [[Sam Patel]]", archived_text)
+        self.assertIn("    - [x] Send", archived_text)
+
+        monday = dt.datetime(2026, 7, 13, 10, 0)
+        mon_path = daily_note.generate_daily_note(self.brain_path, now=monday)
+        self.assertNotIn("Follow up with Sam", mon_path.read_text())
+
+    def test_close_preserves_unrecognized_indented_lines(self):
+        note_date = dt.datetime(2026, 7, 12, 10, 0)
+        note_path = self.brain_path / "2026-07-12.md"
+        note_path.write_text(
+            "---\ntype: daily-note\ndate: 2026-07-12\ntags:\n  - daily-note\n---\n\n"
+            "# Sunday, 12 July 2026\n\n"
+            "## Drafts to review and send\n"
+            "- [ ] [draft] Item — [[Sam Patel]]\n"
+            "    - [ ] Send\n"
+            "    Note: called Sam, he wants revised numbers first\n"
+            "    - [ ] Discard\n"
+            "    - [ ] Carry forward\n\n"
+        )
+        daily_note.close_daily_note(self.brain_path, now=note_date)
+        archived_path = self.archive_dir / "2026-07-12.md"
+        self.assertTrue(archived_path.exists())
+        archived_text = archived_path.read_text()
+        self.assertIn("Note: called Sam, he wants revised numbers first", archived_text)
+
+    def test_finding_4_docs_specify_header_tick_to_sent(self):
+        protocol_path = Path(__file__).parent.parent / "protocols" / "daily-note.md"
+        adr_path = Path(__file__).parent.parent / "docs" / "adr" / "0041-draft-lifecycle-and-carry-forward-in-the-daily-note.md"
+        proto_text = protocol_path.read_text()
+        adr_text = adr_path.read_text()
+        self.assertIn("ticking the top-level draft checkbox", proto_text)
+        self.assertIn("ticked top-level task checkbox", adr_text)
+
+    def test_finding_5_tag_parsing(self):
+        # Ensure all four valid tags parse cleanly
+        for tag in ("draft", "sent", "discarded", "carried-forward"):
+            text = (
+                "## Drafts to review and send\n"
+                f"- [ ] [{tag}] Test draft — [[Sam Patel]]\n"
+                "    - [ ] Send\n"
+                "    - [ ] Discard\n"
+                "    - [ ] Carry forward\n"
+            )
+            drafts = daily_note.parse_drafts(text)
+            self.assertEqual(len(drafts), 1)
+            self.assertEqual(drafts[0].tag, tag)
+
+
+
+
+
+
+
+
+
