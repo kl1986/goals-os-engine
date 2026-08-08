@@ -166,6 +166,10 @@ A bounded, interactive planning flow that reads unclassified active Tickets, pro
 The non-synced plain clone of a Brain that `/build` operates in when a Ticket's `target_repo` is the Brain (ADR-0039). Work reaches the Brain by push and the Version control routine's pull, never by editing the iCloud-synced tree directly. The vault stays canonical; the Build clone is disposable.
 _Avoid_: calling it a mirror or a backup — it holds no state the remote does not, and is not a recovery artefact
 
+**Routine Launcher Dispatcher**:
+The Engine's portable script (`scripts/routine_launcher.py`) that maps a whitelisted Routine identifier to a deterministic script or headless agent command, then emits a macOS notification upon completion or failure. It never accepts arbitrary commands.
+
+
 ## Scheduling
 
 **Schedule**:
